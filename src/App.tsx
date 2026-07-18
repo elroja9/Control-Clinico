@@ -61,7 +61,9 @@ import LoginView from './components/LoginView';
 import AgendaCalendar from './components/AgendaCalendar';
 
 export default function App() {
-  // --- Persistent Local Storage Core ---
+  // --- Persistent Storage Core (Synced with MySQL Backend) ---
+  const [dbStatus, setDbStatus] = useState<{connected: boolean; error: string | null; server?: string; port?: string; database?: string} | null>(null);
+  
   const [companies, setCompanies] = useState<Company[]>(() => {
     const local = localStorage.getItem('fisio_companies');
     return local ? JSON.parse(local) : defaultCompanies;
@@ -107,7 +109,93 @@ export default function App() {
     return local ? JSON.parse(local) : defaultNotificationLogs;
   });
 
-  // Save state updates to LocalStorage
+  // --- Initial MySQL Synchronization & Load ---
+  useEffect(() => {
+    // 1. Fetch DB Connection status
+    fetch('/api/db-status')
+      .then(res => res.json())
+      .then(data => setDbStatus(data))
+      .catch(err => console.error("Error fetching database status:", err));
+
+    // 2. Fetch companies from MySQL
+    fetch('/api/companies')
+      .then(res => {
+        if (!res.ok) throw new Error("API error");
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.length > 0) setCompanies(data);
+      })
+      .catch(err => console.log("MySQL offline, using local storage fallback for companies"));
+
+    // 3. Fetch users
+    fetch('/api/users')
+      .then(res => {
+        if (!res.ok) throw new Error("API error");
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.length > 0) setUsers(data);
+      })
+      .catch(err => console.log("MySQL offline, using local fallback for users"));
+
+    // 4. Fetch patients
+    fetch('/api/patients')
+      .then(res => {
+        if (!res.ok) throw new Error("API error");
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.length > 0) setPatients(data);
+      })
+      .catch(err => console.log("MySQL offline, using local fallback for patients"));
+
+    // 5. Fetch consultations
+    fetch('/api/consultations')
+      .then(res => {
+        if (!res.ok) throw new Error("API error");
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.length > 0) setConsultations(data);
+      })
+      .catch(err => console.log("MySQL offline, using local fallback for consultations"));
+
+    // 6. Fetch appointments
+    fetch('/api/citas')
+      .then(res => {
+        if (!res.ok) throw new Error("API error");
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.length > 0) setCitas(data);
+      })
+      .catch(err => console.log("MySQL offline, using local fallback for citas"));
+
+    // 7. Fetch SMTP configs
+    fetch('/api/smtp-configs')
+      .then(res => {
+        if (!res.ok) throw new Error("API error");
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.length > 0) setSmtpConfigs(data);
+      })
+      .catch(err => console.log("MySQL offline, using local fallback for SMTP configs"));
+
+    // 8. Fetch notification logs
+    fetch('/api/notification-logs')
+      .then(res => {
+        if (!res.ok) throw new Error("API error");
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.length > 0) setLogs(data);
+      })
+      .catch(err => console.log("MySQL offline, using local fallback for logs"));
+  }, []);
+
+  // Save state updates to LocalStorage as secondary local cache / fallback
   useEffect(() => {
     localStorage.setItem('fisio_companies', JSON.stringify(companies));
   }, [companies]);
@@ -170,8 +258,38 @@ export default function App() {
   };
 
   const handleRegisterCompany = (newCompany: Company, newAdminUser: User) => {
-    setCompanies(prev => [...prev, newCompany]);
-    setUsers(prev => [...prev, newAdminUser]);
+    fetch('/api/companies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newCompany)
+    })
+    .then(res => res.json())
+    .then(savedCompany => {
+      setCompanies(prev => {
+        const exists = prev.some(c => c.id === savedCompany.id);
+        return exists ? prev.map(c => c.id === savedCompany.id ? savedCompany : c) : [...prev, savedCompany];
+      });
+      
+      const userToSave = { ...newAdminUser, idCompania: savedCompany.id };
+      return fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(userToSave)
+      });
+    })
+    .then(res => res.json())
+    .then(savedUser => {
+      setUsers(prev => {
+        const exists = prev.some(u => u.id === savedUser.id);
+        return exists ? prev.map(u => u.id === savedUser.id ? savedUser : u) : [...prev, savedUser];
+      });
+    })
+    .catch(err => {
+      console.error("Error registering company to MySQL:", err);
+      // Local fallback
+      setCompanies(prev => [...prev, newCompany]);
+      setUsers(prev => [...prev, newAdminUser]);
+    });
   };
 
   const handleLogout = () => {
@@ -207,12 +325,27 @@ export default function App() {
 
   // --- Handlers ---
   const handleSavePatient = (savedPatient: Patient) => {
-    const exists = patients.some(p => p.id === savedPatient.id);
-    if (exists) {
-      setPatients(prev => prev.map(p => p.id === savedPatient.id ? savedPatient : p));
-    } else {
-      setPatients(prev => [...prev, savedPatient]);
-    }
+    fetch('/api/patients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(savedPatient)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setPatients(prev => {
+        const exists = prev.some(p => p.id === data.id);
+        return exists ? prev.map(p => p.id === data.id ? data : p) : [...prev, data];
+      });
+    })
+    .catch(err => {
+      console.error("Error saving patient to MySQL:", err);
+      const exists = patients.some(p => p.id === savedPatient.id);
+      if (exists) {
+        setPatients(prev => prev.map(p => p.id === savedPatient.id ? savedPatient : p));
+      } else {
+        setPatients(prev => [...prev, savedPatient]);
+      }
+    });
     setIsAddingPatient(false);
     setEditingPatient(null);
   };
@@ -224,9 +357,25 @@ export default function App() {
   };
 
   const handleSaveConsultation = (newConsultation: Consultation) => {
-    setConsultations(prev => [newConsultation, ...prev]);
+    fetch('/api/consultations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newConsultation)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setConsultations(prev => {
+        const exists = prev.some(c => c.id === data.id);
+        return exists ? prev.map(c => c.id === data.id ? data : c) : [data, ...prev];
+      });
+      setSelectedReportConsultation(data);
+    })
+    .catch(err => {
+      console.error("Error saving consultation to MySQL:", err);
+      setConsultations(prev => [newConsultation, ...prev]);
+      setSelectedReportConsultation(newConsultation);
+    });
     setActiveConsultationPatient(null);
-    setSelectedReportConsultation(newConsultation); // Immediately open report
   };
 
   const handleDeleteConsultation = (id: number) => {
@@ -237,31 +386,80 @@ export default function App() {
 
   // --- Agenda / Citas / SMTP / SOAP Integration Handlers ---
   const handleSaveCita = (savedCita: Cita) => {
-    const exists = citas.some(c => c.id === savedCita.id);
-    if (exists) {
-      setCitas(prev => prev.map(c => c.id === savedCita.id ? savedCita : c));
-    } else {
-      setCitas(prev => [...prev, savedCita]);
-    }
+    fetch('/api/citas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(savedCita)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setCitas(prev => {
+        const exists = prev.some(c => c.id === data.id);
+        return exists ? prev.map(c => c.id === data.id ? data : c) : [...prev, data];
+      });
+    })
+    .catch(err => {
+      console.error("Error saving cita to MySQL:", err);
+      const exists = citas.some(c => c.id === savedCita.id);
+      if (exists) {
+        setCitas(prev => prev.map(c => c.id === savedCita.id ? savedCita : c));
+      } else {
+        setCitas(prev => [...prev, savedCita]);
+      }
+    });
   };
 
   const handleDeleteCita = (id: number) => {
     if (confirm("¿Está seguro de que desea cancelar / eliminar esta cita?")) {
-      setCitas(prev => prev.filter(c => c.id !== id));
+      fetch(`/api/citas/${id}`, { method: 'DELETE' })
+        .then(() => {
+          setCitas(prev => prev.filter(c => c.id !== id));
+        })
+        .catch(err => {
+          console.error("Error deleting appointment from MySQL:", err);
+          setCitas(prev => prev.filter(c => c.id !== id));
+        });
     }
   };
 
   const handleUpdateSmtpConfig = (updatedSmtp: CompaniaSmtpConfig) => {
-    const exists = smtpConfigs.some(s => s.idCompania === updatedSmtp.idCompania);
-    if (exists) {
-      setSmtpConfigs(prev => prev.map(s => s.idCompania === updatedSmtp.idCompania ? updatedSmtp : s));
-    } else {
-      setSmtpConfigs(prev => [...prev, updatedSmtp]);
-    }
+    fetch('/api/smtp-configs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedSmtp)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setSmtpConfigs(prev => {
+        const exists = prev.some(s => s.idCompania === data.idCompania);
+        return exists ? prev.map(s => s.idCompania === data.idCompania ? data : s) : [...prev, data];
+      });
+    })
+    .catch(err => {
+      console.error("Error saving SMTP config to MySQL:", err);
+      const exists = smtpConfigs.some(s => s.idCompania === updatedSmtp.idCompania);
+      if (exists) {
+        setSmtpConfigs(prev => prev.map(s => s.idCompania === updatedSmtp.idCompania ? updatedSmtp : s));
+      } else {
+        setSmtpConfigs(prev => [...prev, updatedSmtp]);
+      }
+    });
   };
 
   const handleAddNotificationLog = (log: NotificationLog) => {
-    setLogs(prev => [log, ...prev]);
+    fetch('/api/notification-logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(log)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setLogs(prev => [data, ...prev]);
+    })
+    .catch(err => {
+      console.error("Error saving log to MySQL:", err);
+      setLogs(prev => [log, ...prev]);
+    });
   };
 
   const handleStartSoapFromCalendar = (idPaciente: number) => {
@@ -363,6 +561,16 @@ export default function App() {
                 <span>{filteredConsultationsByCompany.length} Consultas</span>
               </div>
             </div>
+
+            {/* Database connection status badge */}
+            {dbStatus && (
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-white/90 bg-black/10 px-3 py-1.5 rounded-xl border border-white/10" title={dbStatus.connected ? `Conectado a MySQL en ${dbStatus.server}:${dbStatus.port}` : `Error: ${dbStatus.error || 'No se pudo establecer conexión con MySQL'}`}>
+                <span className={`w-2 h-2 rounded-full ${dbStatus.connected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-pulse'}`} />
+                <span className="text-[10px] uppercase font-bold tracking-wider">
+                  {dbStatus.connected ? 'MySQL' : 'Local Fallback'}
+                </span>
+              </div>
+            )}
 
             {/* User Badge & Logout */}
             <div className="flex items-center gap-3 border-l border-white/15 pl-3.5">
