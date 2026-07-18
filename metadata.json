@@ -1,0 +1,6 @@
+{
+  "name": "FisioDB Costa Rica",
+  "description": "Visualizador, diseñador y exportador de bases de datos de fisioterapia y nutrición en Costa Rica con mapas de dolor interactivos y asistente de esquema impulsado por IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

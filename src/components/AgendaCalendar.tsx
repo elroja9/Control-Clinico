@@ -1,0 +1,809 @@
+import React, { useState, useEffect } from 'react';
+import { Patient, User, Cita, CompaniaSmtpConfig, NotificationLog } from '../data/mockData';
+import { 
+  Calendar as CalendarIcon, 
+  Clock, 
+  User as UserIcon, 
+  Plus, 
+  ChevronLeft, 
+  ChevronRight, 
+  Check, 
+  X, 
+  AlertCircle, 
+  Mail, 
+  Bell, 
+  Edit, 
+  Trash2, 
+  Settings, 
+  Sparkles, 
+  Activity, 
+  Maximize2,
+  Lock,
+  Eye,
+  ArrowRight,
+  UserCheck
+} from 'lucide-react';
+
+interface AgendaCalendarProps {
+  patients: Patient[];
+  users: User[];
+  citas: Cita[];
+  smtpConfigs: CompaniaSmtpConfig[];
+  logs: NotificationLog[];
+  activeCompanyId: number;
+  currentUser: User;
+  onSaveCita: (cita: Cita) => void;
+  onDeleteCita: (id: number) => void;
+  onTriggerNotification: (log: NotificationLog) => void;
+  onStartConsultation: (patient: Patient, citaId: number) => void;
+  themeColor: string;
+}
+
+export default function AgendaCalendar({
+  patients,
+  users,
+  citas,
+  smtpConfigs,
+  logs,
+  activeCompanyId,
+  currentUser,
+  onSaveCita,
+  onDeleteCita,
+  onTriggerNotification,
+  onStartConsultation,
+  themeColor
+}: AgendaCalendarProps) {
+  // Calendar views: 'day', 'week', 'month'
+  const [view, setView] = useState<'day' | 'week' | 'month'>('month');
+  const [currentDate, setCurrentDate] = useState<Date>(new Date(2026, 6, 17)); // Match mock database date: July 17, 2026
+  
+  // Filter by doctor
+  const [selectedDoctorId, setSelectedDoctorId] = useState<number>(currentUser.id);
+  
+  // Modals
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [selectedCita, setSelectedCita] = useState<Cita | null>(null);
+  
+  // Form state
+  const [formPatientId, setFormPatientId] = useState<string>('');
+  const [formDate, setFormDate] = useState<string>('');
+  const [formTime, setFormTime] = useState<string>('');
+  const [formDuration, setFormDuration] = useState<number>(30);
+  const [formNotes, setFormNotes] = useState<string>('');
+  const [formStatus, setFormStatus] = useState<Cita['estadoCita']>('PROGRAMADA');
+  const [formDoctorId, setFormDoctorId] = useState<number>(currentUser.id);
+  const [formError, setFormError] = useState<string>('');
+
+  // Auto-switch view on resize (Responsive view constraints)
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 768) {
+        setView('day'); // Mobile forces 'day'
+      } else {
+        setView('month'); // Tablet/Desktop defaults to 'month'
+      }
+    };
+    handleResize(); // trigger on mount
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Filter citas for the current company & selected doctor
+  const filteredCitas = citas.filter(c => 
+    c.idCompania === activeCompanyId && 
+    (selectedDoctorId === 0 || c.idUsuarioNutricionista === selectedDoctorId)
+  );
+
+  // Active SMTP Config
+  const activeSmtp = smtpConfigs.find(s => s.idCompania === activeCompanyId) || {
+    activo: false,
+    proveedor: 'OTRO',
+    smtpHost: '',
+    smtpPort: 587,
+    remitenteNombre: 'Clínica',
+    remitenteCorreo: '',
+    recordatorioHorasAntes: 24
+  };
+
+  // Helper: Date formatters
+  const formatDateString = (date: Date) => {
+    return date.toISOString().split('T')[0];
+  };
+
+  // Navigation handlers
+  const handlePrev = () => {
+    const newDate = new Date(currentDate);
+    if (view === 'day') {
+      newDate.setDate(currentDate.getDate() - 1);
+    } else if (view === 'week') {
+      newDate.setDate(currentDate.getDate() - 7);
+    } else {
+      newDate.setMonth(currentDate.getMonth() - 1);
+    }
+    setCurrentDate(newDate);
+  };
+
+  const handleNext = () => {
+    const newDate = new Date(currentDate);
+    if (view === 'day') {
+      newDate.setDate(currentDate.getDate() + 1);
+    } else if (view === 'week') {
+      newDate.setDate(currentDate.getDate() + 7);
+    } else {
+      newDate.setMonth(currentDate.getMonth() + 1);
+    }
+    setCurrentDate(newDate);
+  };
+
+  const handleToday = () => {
+    setCurrentDate(new Date(2026, 6, 17)); // Default mock day: July 17, 2026
+  };
+
+  // Open creation form
+  const handleOpenNewCita = (date?: string, timeSlot?: string) => {
+    setSelectedCita(null);
+    setFormPatientId(patients[0]?.id.toString() || '');
+    setFormDate(date || formatDateString(currentDate));
+    setFormTime(timeSlot || '09:00');
+    setFormDuration(30);
+    setFormNotes('');
+    setFormStatus('PROGRAMADA');
+    setFormDoctorId(currentUser.id);
+    setFormError('');
+    setIsFormOpen(true);
+  };
+
+  // Open edit form
+  const handleOpenEditCita = (cita: Cita, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedCita(cita);
+    setFormPatientId(cita.idPaciente.toString());
+    
+    const [d, t] = cita.fechaHora.split('T');
+    setFormDate(d);
+    setFormTime(t || '09:00');
+    setFormDuration(cita.duracionMinutos);
+    setFormNotes(cita.notas);
+    setFormStatus(cita.estadoCita);
+    setFormDoctorId(cita.idUsuarioNutricionista);
+    setFormError('');
+    setIsFormOpen(true);
+  };
+
+  // Save changes
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError('');
+
+    if (!formPatientId || !formDate || !formTime) {
+      setFormError('Por favor complete todos los datos obligatorios.');
+      return;
+    }
+
+    const patient = patients.find(p => p.id === parseInt(formPatientId));
+    if (!patient) return;
+
+    const fullFechaHora = `${formDate}T${formTime}`;
+    const nextId = selectedCita ? selectedCita.id : Math.max(...citas.map(c => c.id), 0) + 1;
+
+    const savedCita: Cita = {
+      id: nextId,
+      idCompania: activeCompanyId,
+      idPaciente: patient.id,
+      idUsuarioNutricionista: formDoctorId,
+      idConsulta: selectedCita ? selectedCita.idConsulta : null,
+      fechaHora: fullFechaHora,
+      duracionMinutos: formDuration,
+      estadoCita: formStatus,
+      notas: formNotes
+    };
+
+    onSaveCita(savedCita);
+    setIsFormOpen(false);
+
+    // --- Simulated SMTP Notification Triggers ---
+    if (activeSmtp.activo) {
+      let tipoNotif: NotificationLog['tipo'] = 'CONFIRMACION';
+      let asunto = '';
+      let cuerpo = '';
+
+      if (!selectedCita) {
+        tipoNotif = 'CONFIRMACION';
+        asunto = `Confirmación de Cita - ${activeSmtp.remitenteNombre}`;
+        cuerpo = `Estimado(a) ${patient.nombreCompleto},\n\nLe confirmamos que su cita ha sido programada con éxito:\n📅 Fecha: ${formDate}\n⏰ Hora: ${formTime}\n⏱ Duración: ${formDuration} minutos\n\nNotas del Profesional: ${formNotes || 'Ninguna'}\n\nGracias por su confianza. En caso de requerir modificaciones, contáctenos con al menos ${activeSmtp.recordatorioHorasAntes} horas de anticipación.`;
+      } else if (selectedCita.estadoCita !== formStatus && formStatus === 'CANCELADA') {
+        tipoNotif = 'CANCELACION';
+        asunto = `Cita Cancelada - ${activeSmtp.remitenteNombre}`;
+        cuerpo = `Estimado(a) ${patient.nombreCompleto},\n\nLe informamos que su cita programada para el ${formDate} a las ${formTime} ha sido CANCELADA.\n\nMotivo/Notas: ${formNotes || 'No especificadas'}\n\nSi desea re-programar, puede ponerse en contacto con nosotros en cualquier momento.`;
+      } else {
+        tipoNotif = 'MODIFICACION';
+        asunto = `Cita Modificada / Reprogramada - ${activeSmtp.remitenteNombre}`;
+        cuerpo = `Estimado(a) ${patient.nombreCompleto},\n\nLe informamos que su cita ha sido modificada. Los nuevos detalles son:\n📅 Fecha: ${formDate}\n⏰ Hora: ${formTime}\n⏱ Duración: ${formDuration} minutos\n📌 Estado: ${formStatus}\n\nNotas adicionales: ${formNotes || 'Ninguna'}\n\nAtentamente,\n${activeSmtp.remitenteNombre}`;
+      }
+
+      const logId = Math.max(...logs.map(l => l.id), 0) + 1;
+      const newLog: NotificationLog = {
+        id: logId,
+        idCompania: activeCompanyId,
+        idCita: nextId,
+        tipo: tipoNotif,
+        destinatario: patient.correoElectronico,
+        asunto: asunto,
+        cuerpo: cuerpo,
+        enviadoEn: new Date().toISOString()
+      };
+
+      onTriggerNotification(newLog);
+    }
+  };
+
+  const handleDelete = (id: number) => {
+    if (confirm('¿Está seguro de eliminar de forma permanente esta cita de la agenda?')) {
+      onDeleteCita(id);
+      setIsFormOpen(false);
+    }
+  };
+
+  // Helper: Get color classes for appointment status
+  const getStatusColor = (status: Cita['estadoCita']) => {
+    switch (status) {
+      case 'PROGRAMADA': return 'bg-sky-50 border-sky-200 text-sky-700 hover:bg-sky-100';
+      case 'CONFIRMADA': return 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100';
+      case 'CANCELADA': return 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100 line-through';
+      case 'COMPLETADA': return 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100';
+      case 'NO_ASISTIO': return 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100';
+      default: return 'bg-slate-50 border-slate-200 text-slate-700';
+    }
+  };
+
+  // Helper: Month calculations
+  const getDaysInMonth = (date: Date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const startDay = new Date(year, month, 1).getDay(); // 0 is Sunday
+    const totalDays = new Date(year, month + 1, 0).getDate();
+    return { startDay, totalDays };
+  };
+
+  // --- RENDERING VIEWS ---
+
+  // 1. MONTH VIEW
+  const renderMonthView = () => {
+    const { startDay, totalDays } = getDaysInMonth(currentDate);
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+
+    const days = [];
+    // Previous month empty paddings
+    for (let i = 0; i < startDay; i++) {
+      days.push(<div key={`prev-${i}`} className="h-28 border border-slate-100 bg-slate-50/50 p-1"></div>);
+    }
+
+    // Days in current month
+    for (let day = 1; day <= totalDays; day++) {
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const dayCitas = filteredCitas.filter(c => c.fechaHora.startsWith(dateStr));
+
+      days.push(
+        <div 
+          key={`day-${day}`} 
+          onClick={() => handleOpenNewCita(dateStr)}
+          className="h-28 border border-slate-100 hover:bg-slate-50/40 p-1.5 transition-colors cursor-pointer relative flex flex-col justify-between"
+        >
+          <span className="text-xs font-bold text-slate-500">{day}</span>
+          <div className="flex-1 overflow-y-auto space-y-1 mt-1 scrollbar-thin">
+            {dayCitas.map(cita => {
+              const patient = patients.find(p => p.id === cita.idPaciente);
+              const time = cita.fechaHora.split('T')[1] || '00:00';
+              return (
+                <div 
+                  key={cita.id}
+                  onClick={(e) => handleOpenEditCita(cita, e)}
+                  className={`p-1 rounded-md text-[9px] font-extrabold truncate border ${getStatusColor(cita.estadoCita)}`}
+                  title={`${time} - ${patient?.nombreCompleto}`}
+                >
+                  {time} - {patient?.nombreCompleto || 'Paciente'}
+                </div>
+              );
+            })}
+          </div>
+          {dayCitas.length > 0 && (
+            <span className="absolute bottom-1 right-1 bg-slate-200 text-slate-800 text-[8px] font-black px-1.5 py-0.2 rounded-full">
+              {dayCitas.length}
+            </span>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="grid grid-cols-7 bg-slate-100 text-center font-bold text-xs py-2.5 text-slate-500 border-b border-slate-200">
+          <div>Dom</div>
+          <div>Lun</div>
+          <div>Mar</div>
+          <div>Mié</div>
+          <div>Jue</div>
+          <div>Vie</div>
+          <div>Sáb</div>
+        </div>
+        <div className="grid grid-cols-7">
+          {days}
+        </div>
+      </div>
+    );
+  };
+
+  // 2. WEEK VIEW
+  const renderWeekView = () => {
+    // Calculate Mon-Sun dates for the selected week
+    const startOfWeek = new Date(currentDate);
+    const day = startOfWeek.getDay();
+    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1); // adjust when day is sunday
+    startOfWeek.setDate(diff);
+
+    const weekDays = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(startOfWeek);
+      d.setDate(startOfWeek.getDate() + i);
+      weekDays.push(d);
+    }
+
+    const hours = Array.from({ length: 11 }, (_, i) => 8 + i); // 8:00 AM to 6:00 PM
+
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="grid grid-cols-8 bg-slate-100 border-b border-slate-200 text-center font-bold text-xs py-2.5 text-slate-500">
+          <div className="border-r border-slate-200 flex items-center justify-center text-[10px]">Hora</div>
+          {weekDays.map((wd, i) => {
+            const isToday = formatDateString(wd) === formatDateString(new Date());
+            return (
+              <div key={i} className={`flex flex-col py-1 ${isToday ? 'bg-teal-50 text-teal-700 rounded-lg mx-1 font-black' : ''}`}>
+                <span className="text-[10px] uppercase">{['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][i]}</span>
+                <span className="text-xs">{wd.getDate()}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto">
+          {hours.map(h => {
+            const timeStr = `${String(h).padStart(2, '0')}:00`;
+            return (
+              <div key={h} className="grid grid-cols-8 min-h-16">
+                <div className="border-r border-slate-100 text-[10px] text-slate-400 font-bold flex items-center justify-center bg-slate-50/50">
+                  {timeStr}
+                </div>
+                {weekDays.map((wd, i) => {
+                  const dateStr = formatDateString(wd);
+                  const hourCitas = filteredCitas.filter(c => {
+                    const [cDate, cTime] = c.fechaHora.split('T');
+                    return cDate === dateStr && cTime.startsWith(String(h).padStart(2, '0'));
+                  });
+
+                  return (
+                    <div 
+                      key={i} 
+                      onClick={() => handleOpenNewCita(dateStr, timeStr)}
+                      className="border-r border-slate-100 hover:bg-slate-50/30 p-1 relative cursor-pointer min-h-16 flex flex-col gap-1 transition-colors"
+                    >
+                      {hourCitas.map(cita => {
+                        const patient = patients.find(p => p.id === cita.idPaciente);
+                        return (
+                          <div
+                            key={cita.id}
+                            onClick={(e) => handleOpenEditCita(cita, e)}
+                            className={`p-1.5 rounded-lg text-[9px] font-black border leading-tight ${getStatusColor(cita.estadoCita)}`}
+                          >
+                            <span className="block font-bold">{cita.fechaHora.split('T')[1]} ({cita.duracionMinutos}m)</span>
+                            <span className="block text-slate-800 truncate">{patient?.nombreCompleto}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  // 3. DAY VIEW (Recommended for Mobile)
+  const renderDayView = () => {
+    const dateStr = formatDateString(currentDate);
+    const hours = Array.from({ length: 11 }, (_, i) => 8 + i); // 8:00 AM to 6:00 PM
+    const dayCitas = filteredCitas.filter(c => c.fechaHora.startsWith(dateStr));
+
+    return (
+      <div className="space-y-4">
+        {/* Quick Day summary cards */}
+        <div className="bg-slate-900 text-white rounded-2xl p-4 flex justify-between items-center shadow-xs">
+          <div>
+            <span className="text-[10px] font-extrabold text-teal-400 uppercase tracking-widest block">Resumen del Día</span>
+            <h3 className="text-sm font-bold mt-0.5">
+              {currentDate.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long' })}
+            </h3>
+          </div>
+          <div className="bg-teal-500/10 border border-teal-500/20 px-3.5 py-1.5 rounded-xl text-center">
+            <span className="text-[10px] block font-extrabold text-teal-300">CITAS HOY</span>
+            <span className="text-xl font-black text-white">{dayCitas.length}</span>
+          </div>
+        </div>
+
+        {/* Timeline lists */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs divide-y divide-slate-100 overflow-hidden">
+          {hours.map(h => {
+            const timeStr = `${String(h).padStart(2, '0')}:00`;
+            const hourCitas = dayCitas.filter(c => {
+              const [, cTime] = c.fechaHora.split('T');
+              return cTime.startsWith(String(h).padStart(2, '0'));
+            });
+
+            return (
+              <div key={h} className="flex min-h-16">
+                <div className="w-20 border-r border-slate-100 text-xs text-slate-400 font-bold flex items-center justify-center bg-slate-50/50">
+                  {timeStr}
+                </div>
+                <div 
+                  onClick={() => handleOpenNewCita(dateStr, timeStr)}
+                  className="flex-1 p-2 hover:bg-slate-50/40 transition-colors cursor-pointer flex flex-col gap-1.5"
+                >
+                  {hourCitas.length === 0 ? (
+                    <span className="text-[10px] text-slate-300 italic font-medium block my-auto pl-2">Ranura disponible</span>
+                  ) : (
+                    hourCitas.map(cita => {
+                      const patient = patients.find(p => p.id === cita.idPaciente);
+                      return (
+                        <div
+                          key={cita.id}
+                          onClick={(e) => handleOpenEditCita(cita, e)}
+                          className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shadow-xs transition-all ${getStatusColor(cita.estadoCita)}`}
+                        >
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-black">{cita.fechaHora.split('T')[1]}</span>
+                              <span className="text-[9px] font-black uppercase bg-white/60 px-1.5 py-0.5 rounded-md border border-slate-300/20">{cita.estadoCita}</span>
+                            </div>
+                            <h4 className="text-xs font-bold text-slate-800">{patient?.nombreCompleto || 'Paciente'}</h4>
+                            <p className="text-[10px] text-slate-600 truncate max-w-sm">{cita.notas || 'Sin notas internas'}</p>
+                          </div>
+                          
+                          <div className="flex items-center gap-2 mt-1 sm:mt-0">
+                            {cita.idConsulta ? (
+                              <span className="text-[9px] font-bold bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-md px-2 py-0.5">
+                                Consulta Atendida ✓
+                              </span>
+                            ) : (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (patient) onStartConsultation(patient, cita.id);
+                                }}
+                                className="bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-extrabold px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs cursor-pointer transition-all shrink-0"
+                              >
+                                <Activity className="w-3 h-3 text-emerald-400" />
+                                Iniciar Consulta SOAP
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      
+      {/* Header toolbar */}
+      <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="flex items-center gap-3">
+          <div className="p-3 rounded-2xl bg-slate-950 text-white" style={{ backgroundColor: themeColor }}>
+            <CalendarIcon className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-base font-bold text-slate-800">Agenda Médica y Citas</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Control unificado de agenda clínica. Google Calendar Style.</p>
+          </div>
+        </div>
+
+        {/* Filters and View selectors */}
+        <div className="flex flex-wrap items-center gap-3.5 w-full md:w-auto">
+          {/* Doctor filter dropdown */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-extrabold text-slate-400 uppercase">Profesional:</span>
+            <select
+              value={selectedDoctorId}
+              onChange={(e) => setSelectedDoctorId(parseInt(e.target.value))}
+              className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-700 font-bold focus:outline-hidden"
+            >
+              <option value={0}>Todos los Especialistas</option>
+              {users.filter(u => u.idCompania === activeCompanyId).map(doc => (
+                <option key={doc.id} value={doc.id}>{doc.nombre}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* View Toggles (Hidden/Disabled on Mobile since it forces 'day' view) */}
+          <div className="hidden md:flex bg-slate-100 p-1 rounded-xl border border-slate-200">
+            <button
+              onClick={() => setView('month')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                view === 'month' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-500'
+              }`}
+            >
+              Mes
+            </button>
+            <button
+              onClick={() => setView('week')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                view === 'week' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-500'
+              }`}
+            >
+              Semana
+            </button>
+            <button
+              onClick={() => setView('day')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                view === 'day' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-500'
+              }`}
+            >
+              Día
+            </button>
+          </div>
+
+          <button
+            onClick={() => handleOpenNewCita()}
+            className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-extrabold px-4 py-2.5 rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer ml-auto md:ml-0"
+          >
+            <Plus className="w-4 h-4" />
+            Nueva Cita
+          </button>
+        </div>
+      </div>
+
+      {/* Navigation Controller */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <button onClick={handlePrev} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 p-2 rounded-xl transition-all">
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <button onClick={handleToday} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold px-3 py-2 rounded-xl transition-all">
+            Hoy
+          </button>
+          <button onClick={handleNext} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 p-2 rounded-xl transition-all">
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        <h3 className="text-sm font-black text-slate-800 uppercase tracking-wide">
+          {view === 'month' && currentDate.toLocaleDateString('es-CR', { month: 'long', year: 'numeric' })}
+          {view === 'week' && `Semana del ${currentDate.toLocaleDateString('es-CR', { day: 'numeric', month: 'short' })}`}
+          {view === 'day' && currentDate.toLocaleDateString('es-CR', { day: 'numeric', month: 'long', year: 'numeric' })}
+        </h3>
+
+        <div className="flex items-center gap-1.5 text-[10px] bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1 text-slate-600 font-bold uppercase">
+          <Bell className="w-3.5 h-3.5 text-orange-500" />
+          <span>SMTP: {activeSmtp.activo ? 'NOTIFICACIONES ACTIVADAS (SMS/EMAIL)' : 'NOTIFICACIONES APAGADAS'}</span>
+        </div>
+      </div>
+
+      {/* Render selected view */}
+      {view === 'month' && renderMonthView()}
+      {view === 'week' && renderWeekView()}
+      {view === 'day' && renderDayView()}
+
+      {/* Notification Logs History Section */}
+      <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Mail className="w-4 h-4 text-slate-500" />
+            <h3 className="text-xs font-black uppercase text-slate-700 tracking-wider">Historial de Notificaciones SMTP Enviadas</h3>
+          </div>
+          <span className="text-[10px] bg-teal-50 text-teal-700 font-bold border border-teal-200 px-2.5 py-0.5 rounded-full uppercase">
+            Log en Tiempo Real
+          </span>
+        </div>
+        
+        {logs.filter(l => l.idCompania === activeCompanyId).length === 0 ? (
+          <div className="text-center py-6 text-xs text-slate-400 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
+            No se han registrado envíos de correos SMTP aún. Las alertas se guardan al agendar o modificar citas.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-80 overflow-y-auto">
+            {logs.filter(l => l.idCompania === activeCompanyId).map(log => (
+              <div key={log.id} className="p-4 rounded-2xl border border-slate-150 bg-slate-50/50 hover:bg-slate-50 transition-all space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${
+                    log.tipo === 'CANCELACION' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
+                    log.tipo === 'CONFIRMACION' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
+                    'bg-sky-100 text-sky-700 border border-sky-200'
+                  }`}>
+                    {log.tipo}
+                  </span>
+                  <span className="text-[9px] text-slate-400 font-mono font-bold">
+                    {new Date(log.enviadoEn).toLocaleTimeString()}
+                  </span>
+                </div>
+                <div>
+                  <span className="font-bold text-slate-700 block">Destinatario: <span className="font-medium text-slate-500">{log.destinatario}</span></span>
+                  <span className="font-bold text-slate-700 block">Asunto: <span className="font-medium text-slate-500">{log.asunto}</span></span>
+                </div>
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200/60 text-[10px] font-mono text-slate-600 whitespace-pre-wrap max-h-24 overflow-y-auto">
+                  {log.cuerpo}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* SCHEDULING FORM MODAL */}
+      {isFormOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 overflow-hidden">
+            <div className="p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
+              <div className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-teal-400" />
+                <h3 className="text-sm font-bold">{selectedCita ? 'Gestionar Cita de Agenda' : 'Programar Nueva Cita Médica'}</h3>
+              </div>
+              <button onClick={() => setIsFormOpen(false)} className="text-white hover:text-slate-200 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleFormSubmit} className="p-5 space-y-4">
+              {formError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-100 text-rose-600 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
+              {/* Patient Selection */}
+              <div>
+                <label className="block text-slate-600 text-xs font-bold mb-1.5">Paciente Emisor *</label>
+                <select
+                  value={formPatientId}
+                  onChange={(e) => setFormPatientId(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                >
+                  <option value="">-- Seleccione un paciente --</option>
+                  {patients.map(p => (
+                    <option key={p.id} value={p.id}>{p.nombreCompleto} ({p.identificacion})</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Date, Time, Duration */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Fecha *</label>
+                  <input
+                    type="date"
+                    required
+                    value={formDate}
+                    onChange={(e) => setFormDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Hora Inicio *</label>
+                  <input
+                    type="time"
+                    required
+                    value={formTime}
+                    onChange={(e) => setFormTime(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Duración (Min) *</label>
+                  <select
+                    value={formDuration}
+                    onChange={(e) => setFormDuration(parseInt(e.target.value))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                  >
+                    <option value={15}>15 minutos</option>
+                    <option value={30}>30 minutos</option>
+                    <option value={45}>45 minutos</option>
+                    <option value={60}>60 minutos</option>
+                    <option value={90}>90 minutos</option>
+                    <option value={120}>120 minutos</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Specialist & Status */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Profesional Asignado *</label>
+                  <select
+                    value={formDoctorId}
+                    onChange={(e) => setFormDoctorId(parseInt(e.target.value))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                  >
+                    {users.filter(u => u.idCompania === activeCompanyId).map(doc => (
+                      <option key={doc.id} value={doc.id}>{doc.nombre}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Estado de la Cita *</label>
+                  <select
+                    value={formStatus}
+                    onChange={(e) => setFormStatus(e.target.value as Cita['estadoCita'])}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                  >
+                    <option value="PROGRAMADA">PROGRAMADA (Sin Confirmar)</option>
+                    <option value="CONFIRMADA">CONFIRMADA</option>
+                    <option value="CANCELADA">CANCELADA</option>
+                    <option value="COMPLETADA">COMPLETADA (Atendida)</option>
+                    <option value="NO_ASISTIO">NO ASISTIÓ</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-slate-600 text-xs font-bold mb-1.5">Notas Internas de Agenda (No se envían al paciente)</label>
+                <textarea
+                  value={formNotes}
+                  onChange={(e) => setFormNotes(e.target.value)}
+                  placeholder="ej: Paciente reporta dolor irradiado. Solicita enfoque suave."
+                  rows={2}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden resize-none"
+                />
+              </div>
+
+              {/* Actions Footer */}
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                {selectedCita ? (
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(selectedCita.id)}
+                    className="text-rose-600 hover:text-rose-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Eliminar
+                  </button>
+                ) : (
+                  <div></div>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsFormOpen(false)}
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-4 py-2 rounded-xl"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="text-white text-xs font-extrabold px-4 py-2 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                    style={{ backgroundColor: themeColor }}
+                  >
+                    <Check className="w-4 h-4" />
+                    {selectedCita ? 'Actualizar Cita' : 'Crear Cita'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
