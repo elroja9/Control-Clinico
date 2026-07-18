@@ -1,5 +1,5 @@
-import { Patient, Consultation, Company } from '../data/mockData';
-import { Printer, Download, Share2, Mail, CheckCircle2, Sliders, Calendar, User, Info, Heart, Dumbbell } from 'lucide-react';
+import { Patient, Consultation, Company, NotificationLog } from '../data/mockData';
+import { Printer, Download, Share2, Mail, CheckCircle2, Sliders, Calendar, User, Info, Heart, Dumbbell, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 
 interface ReportViewProps {
@@ -7,18 +7,40 @@ interface ReportViewProps {
   patient: Patient;
   company: Company;
   onClose: () => void;
+  onNotificationSent: (log: NotificationLog) => void;
 }
 
-export default function ReportView({ consultation, patient, company, onClose }: ReportViewProps) {
+export default function ReportView({ consultation, patient, company, onClose, onNotificationSent }: ReportViewProps) {
   const [emailSent, setEmailSent] = useState(false);
+  const [isSending, setIsSending] = useState(false);
 
   const triggerPrint = () => {
     window.print();
   };
 
-  const sendClientEmail = () => {
-    setEmailSent(true);
-    setTimeout(() => setEmailSent(false), 3000);
+  const sendClientEmail = async () => {
+    setIsSending(true);
+    try {
+      const res = await fetch('/api/notifications/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tipo: 'CONSULTA',
+          idCompania: company.id,
+          patient,
+          consultation
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo enviar el reporte.');
+      onNotificationSent(data);
+      setEmailSent(true);
+      setTimeout(() => setEmailSent(false), 3000);
+    } catch (err: any) {
+      alert(`No se pudo enviar el reporte por correo: ${err.message}`);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const getEvaLabel = (score: number) => {
@@ -39,10 +61,11 @@ export default function ReportView({ consultation, patient, company, onClose }: 
         <div className="flex gap-2 text-xs">
           <button
             onClick={sendClientEmail}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 px-3 rounded-xl border border-slate-200 transition-all flex items-center gap-1.5"
+            disabled={isSending}
+            className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 px-3 rounded-xl border border-slate-200 transition-all flex items-center gap-1.5 disabled:opacity-60"
           >
-            <Mail className="w-4 h-4" />
-            {emailSent ? '¡Correo Enviado!' : 'Enviar a Correo'}
+            {isSending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+            {isSending ? 'Enviando...' : emailSent ? '¡Correo Enviado!' : 'Enviar a Correo'}
           </button>
           <button
             onClick={triggerPrint}

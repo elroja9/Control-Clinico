@@ -462,19 +462,7 @@ export default function App() {
   };
 
   const handleAddNotificationLog = (log: NotificationLog) => {
-    fetch('/api/notification-logs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(log)
-    })
-    .then(res => res.json())
-    .then(data => {
-      setLogs(prev => [data, ...prev]);
-    })
-    .catch(err => {
-      console.error("Error saving log to MySQL:", err);
-      setLogs(prev => [log, ...prev]);
-    });
+    setLogs(prev => [log, ...prev]);
   };
 
   const handleStartSoapFromCalendar = (idPaciente: number) => {
@@ -701,6 +689,7 @@ export default function App() {
           patient={patients.find(p => p.id === selectedReportConsultation.idPaciente) || patients[0]}
           company={activeCompany}
           onClose={() => setSelectedReportConsultation(null)}
+          onNotificationSent={handleAddNotificationLog}
         />
       ) : activeConsultationPatient ? (
         // Open Consultation creator form
