@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import { GoogleGenAI } from "@google/genai";
@@ -73,7 +74,7 @@ async function setupDatabase() {
     await initConn.query(`CREATE DATABASE IF NOT EXISTS \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     await initConn.end();
 
-    // Reconnect to the database itself
+    // Reconnect to the database itself with multipleStatements enabled
     pool = mysql.createPool({
       host,
       port,
@@ -83,10 +84,11 @@ async function setupDatabase() {
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
-      connectTimeout: 5000
+      connectTimeout: 5000,
+      multipleStatements: true
     });
 
-    console.log(`[MySQL] Conexión establecida con éxito a '${database}'. Creando tablas...`);
+    console.log(`[MySQL] Conexión establecida con éxito a '${database}'. Inicializando esquema desde ConsultorioDB_schema.sql...`);
     await createTables();
     
     console.log(`[MySQL] Verificando y poblando datos de prueba si están vacíos...`);
@@ -106,145 +108,150 @@ async function setupDatabase() {
 async function createTables() {
   if (!pool) return;
 
-  // 1. companias
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS companias (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      nombreComercial VARCHAR(255) NOT NULL,
-      razonSocial VARCHAR(255) NOT NULL,
-      tipoIdentificacion VARCHAR(5) NOT NULL,
-      identificacion VARCHAR(50) NOT NULL,
-      correoEmisor VARCHAR(255) NOT NULL,
-      ivaPorDefecto DECIMAL(5,2) NOT NULL DEFAULT 4.00,
-      colorPrimario VARCHAR(50) NOT NULL DEFAULT '#0f766e',
-      colorSidebar VARCHAR(50) NOT NULL DEFAULT '#115e59',
-      logoUrl TEXT,
-      actividadEconomica TEXT,
-      perfilCompania VARCHAR(50) NOT NULL DEFAULT 'Ambas'
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
+  try {
+    console.log("[MySQL] Buscando archivo ConsultorioDB_schema.sql...");
+    const pathsToTry = [
+      path.join(process.cwd(), "ConsultorioDB_schema.sql"),
+      "/ConsultorioDB_schema.sql",
+      "./ConsultorioDB_schema.sql"
+    ];
 
-  // 2. usuarios
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS usuarios (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      idCompania INT NOT NULL,
-      nombre VARCHAR(255) NOT NULL,
-      usuario VARCHAR(255) NOT NULL,
-      correo VARCHAR(255) NOT NULL,
-      contrasena VARCHAR(255) NOT NULL,
-      rol VARCHAR(50) NOT NULL,
-      FOREIGN KEY (idCompania) REFERENCES companias(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
+    let sqlContent = "";
+    for (const p of pathsToTry) {
+      if (fs.existsSync(p)) {
+        console.log(`[MySQL] Leyendo esquema desde ruta: ${p}`);
+        sqlContent = fs.readFileSync(p, "utf8");
+        break;
+      }
+    }
 
-  // 3. pacientes
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS pacientes (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      idCompania INT NOT NULL,
-      nombreCompleto VARCHAR(255) NOT NULL,
-      fechaNacimiento VARCHAR(50) NOT NULL,
-      edad INT NOT NULL,
-      ocupacion VARCHAR(255),
-      correoElectronico VARCHAR(255) NOT NULL,
-      situacionVivienda VARCHAR(50),
-      tipoIdentificacion VARCHAR(5) NOT NULL,
-      identificacion VARCHAR(50) NOT NULL,
-      telefono VARCHAR(50),
-      provinciaId INT,
-      cantonId INT,
-      distritoId INT,
-      otrasSenas TEXT,
-      diabetes BOOLEAN NOT NULL DEFAULT FALSE,
-      hipertension BOOLEAN NOT NULL DEFAULT FALSE,
-      gastritis BOOLEAN NOT NULL DEFAULT FALSE,
-      estrenimiento BOOLEAN NOT NULL DEFAULT FALSE,
-      alergiasAlimentarias TEXT,
-      fracturas TEXT,
-      esguinces TEXT,
-      cirugiasOrtopedicas TEXT,
-      actividadFisica TEXT,
-      FOREIGN KEY (idCompania) REFERENCES companias(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
+    if (!sqlContent) {
+      throw new Error("No se pudo encontrar el archivo ConsultorioDB_schema.sql en ninguna de las rutas esperadas.");
+    }
 
-  // 4. consultas
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS consultas (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      idPaciente INT NOT NULL,
-      idCompania INT NOT NULL,
-      fecha VARCHAR(50) NOT NULL,
-      tipo VARCHAR(50) NOT NULL,
-      motivo TEXT NOT NULL,
-      horasSueno DECIMAL(4,1) NOT NULL,
-      compromiso INT NOT NULL,
-      antropometria JSON,
-      dieta JSON,
-      fisioterapia JSON,
-      anotacionesGenerales TEXT,
-      FOREIGN KEY (idPaciente) REFERENCES pacientes(id) ON DELETE CASCADE,
-      FOREIGN KEY (idCompania) REFERENCES companias(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
+    console.log("[MySQL] Ejecutando el script completo de la base de datos (más de 30 tablas)...");
+    await pool.query(sqlContent);
+    console.log("[MySQL] Script de la base de datos ejecutado con éxito.");
 
-  // 5. citas
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS citas (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      idCompania INT NOT NULL,
-      idPaciente INT NOT NULL,
-      idUsuarioNutricionista INT NOT NULL,
-      idConsulta INT NULL,
-      fechaHora VARCHAR(50) NOT NULL,
-      duracionMinutos INT NOT NULL DEFAULT 30,
-      estadoCita VARCHAR(50) NOT NULL DEFAULT 'PROGRAMADA',
-      notas TEXT,
-      confirmacionEnviadaEn VARCHAR(50),
-      recordatorioEnviadoEn VARCHAR(50),
-      cancelacionEnviadaEn VARCHAR(50),
-      FOREIGN KEY (idCompania) REFERENCES companias(id) ON DELETE CASCADE,
-      FOREIGN KEY (idPaciente) REFERENCES pacientes(id) ON DELETE CASCADE,
-      FOREIGN KEY (idUsuarioNutricionista) REFERENCES usuarios(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
+    console.log("[MySQL] Creando tablas del sistema de citas y notificaciones si no existen...");
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS citas (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        idPaciente INT NOT NULL,
+        idUsuarioNutricionista INT NOT NULL,
+        idConsulta INT NULL,
+        fechaHora VARCHAR(50) NOT NULL,
+        duracionMinutos INT NOT NULL DEFAULT 30,
+        estadoCita VARCHAR(50) NOT NULL DEFAULT 'PROGRAMADA',
+        notas TEXT,
+        confirmacionEnviadaEn VARCHAR(50),
+        recordatorioEnviadoEn VARCHAR(50),
+        cancelacionEnviadaEn VARCHAR(50)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
 
-  // 6. compania_smtp_config
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS compania_smtp_config (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      idCompania INT NOT NULL,
-      proveedor VARCHAR(50) NOT NULL DEFAULT 'OTRO',
-      smtpHost VARCHAR(255),
-      smtpPort INT NOT NULL DEFAULT 587,
-      smtpSeguridad VARCHAR(50) NOT NULL DEFAULT 'TLS',
-      smtpUsuario VARCHAR(255),
-      smtpPasswordCifrado VARCHAR(255),
-      remitenteNombre VARCHAR(255),
-      remitenteCorreo VARCHAR(255),
-      recordatorioHorasAntes INT NOT NULL DEFAULT 24,
-      activo BOOLEAN NOT NULL DEFAULT FALSE,
-      FOREIGN KEY (idCompania) REFERENCES companias(id) ON DELETE CASCADE,
-      UNIQUE KEY unique_compania (idCompania)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS compania_smtp_config (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        proveedor VARCHAR(50) NOT NULL DEFAULT 'OTRO',
+        smtpHost VARCHAR(255),
+        smtpPort INT NOT NULL DEFAULT 587,
+        smtpSeguridad VARCHAR(50) NOT NULL DEFAULT 'TLS',
+        smtpUsuario VARCHAR(255),
+        smtpPasswordCifrado VARCHAR(255),
+        remitenteNombre VARCHAR(255),
+        remitenteCorreo VARCHAR(255),
+        recordatorioHorasAntes INT NOT NULL DEFAULT 24,
+        activo BOOLEAN NOT NULL DEFAULT FALSE,
+        UNIQUE KEY unique_compania (idCompania)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
 
-  // 7. notification_logs
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS notification_logs (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      idCompania INT NOT NULL,
-      idCita INT NOT NULL,
-      tipo VARCHAR(50) NOT NULL,
-      destinatario VARCHAR(255) NOT NULL,
-      asunto VARCHAR(255) NOT NULL,
-      cuerpo TEXT NOT NULL,
-      enviadoEn VARCHAR(50) NOT NULL,
-      FOREIGN KEY (idCompania) REFERENCES companias(id) ON DELETE CASCADE,
-      FOREIGN KEY (idCita) REFERENCES citas(id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-  `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notification_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        idCita INT NOT NULL,
+        tipo VARCHAR(50) NOT NULL,
+        destinatario VARCHAR(255) NOT NULL,
+        asunto VARCHAR(255) NOT NULL,
+        cuerpo TEXT NOT NULL,
+        enviadoEn VARCHAR(50) NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    console.log("[MySQL] Aplicando columnas de compatibilidad camelCase y soporte para JSON clínico avanzado...");
+    
+    // companias
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS id INT NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS nombreComercial VARCHAR(255) NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS razonSocial VARCHAR(255) NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS tipoIdentificacion VARCHAR(5) NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS correoEmisor VARCHAR(255) NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS ivaPorDefecto DECIMAL(5,2) NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS colorPrimario VARCHAR(50) NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS colorSidebar VARCHAR(50) NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS logoUrl TEXT NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS actividadEconomica TEXT NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS perfilCompania VARCHAR(50) NULL`);
+
+    // usuarios
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS id INT NULL`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS idCompania INT NULL`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS usuario VARCHAR(255) NULL`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS correo VARCHAR(255) NULL`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS contrasena VARCHAR(255) NULL`);
+
+    // pacientes
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS id INT NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS idCompania INT NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS nombreCompleto VARCHAR(255) NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS fechaNacimiento VARCHAR(50) NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS correoElectronico VARCHAR(255) NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS situacionVivienda VARCHAR(50) NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS tipoIdentificacion VARCHAR(5) NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS identificacion VARCHAR(50) NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS telefono VARCHAR(50) NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS provinciaId INT NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS cantonId INT NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS distritoId INT NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS otrasSenas TEXT NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS diabetes BOOLEAN NOT NULL DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS hipertension BOOLEAN NOT NULL DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS gastritis BOOLEAN NOT NULL DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS estrenimiento BOOLEAN NOT NULL DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS alergiasAlimentarias TEXT NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS fracturas TEXT NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS esguinces TEXT NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS cirugiasOrtopedicas TEXT NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS actividadFisica TEXT NULL`);
+
+    // consultas
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS id INT NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS idPaciente INT NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS idCompania INT NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS fecha VARCHAR(50) NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS tipo VARCHAR(50) NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS motivo TEXT NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS horasSueno DECIMAL(4,1) NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS compromiso INT NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS antropometria JSON NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS dieta JSON NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS fisioterapia JSON NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS anotacionesGenerales TEXT NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS evaluacionAntropometrica JSON NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS evaluacionBioquimica JSON NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS evaluacionDietetica JSON NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS composicionSegmentada JSON NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS estiloVida JSON NULL`);
+
+    console.log("[MySQL] Columnas de compatibilidad añadidas con éxito.");
+  } catch (err: any) {
+    console.error("❌ [MySQL] Error al inicializar/migrar la base de datos:", err);
+    throw err;
+  }
 }
 
 async function seedDefaultData() {
@@ -328,6 +335,45 @@ async function seedDefaultData() {
   }
 }
 
+function normalizeRow(row: any): any {
+  if (!row) return row;
+  const copy = { ...row };
+  
+  // Normalize IDs
+  if (copy.id_compania !== undefined && copy.id === undefined) copy.id = copy.id_compania;
+  if (copy.id_usuario !== undefined && copy.id === undefined) copy.id = copy.id_usuario;
+  if (copy.id_paciente !== undefined && copy.id === undefined) copy.id = copy.id_paciente;
+  if (copy.id_consulta !== undefined && copy.id === undefined) copy.id = copy.id_consulta;
+  if (copy.id_cita !== undefined && copy.id === undefined) copy.id = copy.id_cita;
+
+  // companias
+  if (copy.nombre_comercial !== undefined && copy.nombreComercial === undefined) copy.nombreComercial = copy.nombre_comercial;
+  if (copy.razon_social !== undefined && copy.razonSocial === undefined) copy.razonSocial = copy.razon_social;
+  if (copy.tipo_identificacion !== undefined && copy.tipoIdentificacion === undefined) copy.tipoIdentificacion = copy.tipo_identificacion;
+  if (copy.correo_emisor !== undefined && copy.correoEmisor === undefined) copy.correoEmisor = copy.correo_emisor;
+  if (copy.iva_por_defecto !== undefined && copy.ivaPorDefecto === undefined) copy.ivaPorDefecto = parseFloat(copy.iva_por_defecto);
+  if (copy.color_primario !== undefined && copy.colorPrimario === undefined) copy.colorPrimario = copy.color_primario;
+  if (copy.color_sidebar !== undefined && copy.colorSidebar === undefined) copy.colorSidebar = copy.color_sidebar;
+  if (copy.logo_url !== undefined && copy.logoUrl === undefined) copy.logoUrl = copy.logo_url;
+  if (copy.cod_actividad_economica !== undefined && copy.actividadEconomica === undefined) copy.actividadEconomica = copy.cod_actividad_economica;
+
+  // usuarios
+  if (copy.id_compania !== undefined && copy.idCompania === undefined) copy.idCompania = copy.id_compania;
+  if (copy.email !== undefined && copy.correo === undefined) copy.correo = copy.email;
+  if (copy.password_hash !== undefined && copy.contrasena === undefined) copy.contrasena = copy.password_hash;
+  if (copy.usuario === undefined && copy.email !== undefined) copy.usuario = copy.email.split("@")[0];
+
+  // pacientes
+  if (copy.nombre_completo !== undefined && copy.nombreCompleto === undefined) copy.nombreCompleto = copy.nombre_completo;
+  if (copy.fecha_nacimiento !== undefined && copy.fechaNacimiento === undefined) copy.fechaNacimiento = copy.fecha_nacimiento;
+  if (copy.correo_electronico !== undefined && copy.correoElectronico === undefined) copy.correoElectronico = copy.correo_electronico;
+  if (copy.situacion_vivienda !== undefined && copy.situacionVivienda === undefined) copy.situacionVivienda = copy.situacion_vivienda;
+  if (copy.fact_tipo_identificacion !== undefined && copy.tipoIdentificacion === undefined) copy.tipoIdentificacion = copy.fact_tipo_identificacion;
+  if (copy.fact_identificacion !== undefined && copy.identificacion === undefined) copy.identificacion = copy.fact_identificacion;
+
+  return copy;
+}
+
 // Ensure database setup starts asynchronously
 setupDatabase();
 
@@ -354,7 +400,7 @@ async function startServer() {
     try {
       if (dbConnected && pool) {
         const [rows] = await pool.query("SELECT * FROM companias");
-        res.json(rows);
+        res.json((rows as any[]).map(normalizeRow));
       } else {
         res.json(localCompanies);
       }
@@ -368,18 +414,25 @@ async function startServer() {
       const c = req.body;
       if (dbConnected && pool) {
         if (c.id) {
-          const [exists] = await pool.query("SELECT id FROM companias WHERE id = ?", [c.id]);
+          const [exists] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [c.id, c.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ? WHERE id = ?",
-              [c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania, c.id]
+              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id = ? OR id_compania = ?",
+              [
+                c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
+                c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl,
+                c.id, c.id
+              ]
             );
             return res.json(c);
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania]
+          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, nombre_comercial, razon_social, tipo_identificacion, correo_emisor, iva_por_defecto, color_primario, color_sidebar, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
+            c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl
+          ]
         );
         c.id = (result as any).insertId;
         res.json(c);
@@ -402,7 +455,7 @@ async function startServer() {
     try {
       if (dbConnected && pool) {
         const [rows] = await pool.query("SELECT * FROM usuarios");
-        res.json(rows);
+        res.json((rows as any[]).map(normalizeRow));
       } else {
         res.json(localUsers);
       }
@@ -416,18 +469,18 @@ async function startServer() {
       const u = req.body;
       if (dbConnected && pool) {
         if (u.id) {
-          const [exists] = await pool.query("SELECT id FROM usuarios WHERE id = ?", [u.id]);
+          const [exists] = await pool.query("SELECT * FROM usuarios WHERE id = ? OR id_usuario = ?", [u.id, u.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE usuarios SET idCompania = ?, nombre = ?, usuario = ?, correo = ?, contrasena = ?, rol = ? WHERE id = ?",
-              [parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.contrasena, u.rol, u.id]
+              "UPDATE usuarios SET idCompania = ?, id_compania = ?, nombre = ?, usuario = ?, correo = ?, email = ?, contrasena = ?, password_hash = ?, rol = ? WHERE id = ? OR id_usuario = ?",
+              [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, u.contrasena, u.contrasena, u.rol, u.id, u.id]
             );
             return res.json(u);
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO usuarios (idCompania, nombre, usuario, correo, contrasena, rol) VALUES (?, ?, ?, ?, ?, ?)",
-          [parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.contrasena, u.rol]
+          "INSERT INTO usuarios (idCompania, id_compania, nombre, usuario, correo, email, contrasena, password_hash, rol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, u.contrasena, u.contrasena, u.rol]
         );
         u.id = (result as any).insertId;
         res.json(u);
@@ -450,13 +503,16 @@ async function startServer() {
     try {
       if (dbConnected && pool) {
         const [rows] = await pool.query("SELECT * FROM pacientes");
-        const formatted = (rows as any[]).map(row => ({
-          ...row,
-          diabetes: !!row.diabetes,
-          hipertension: !!row.hipertension,
-          gastritis: !!row.gastritis,
-          estrenimiento: !!row.estrenimiento
-        }));
+        const formatted = (rows as any[]).map(row => {
+          const norm = normalizeRow(row);
+          return {
+            ...norm,
+            diabetes: !!norm.diabetes,
+            hipertension: !!norm.hipertension,
+            gastritis: !!norm.gastritis,
+            estrenimiento: !!norm.estrenimiento
+          };
+        });
         res.json(formatted);
       } else {
         res.json(localPatients);
@@ -471,18 +527,23 @@ async function startServer() {
       const p = req.body;
       if (dbConnected && pool) {
         if (p.id) {
-          const [exists] = await pool.query("SELECT id FROM pacientes WHERE id = ?", [p.id]);
+          const [exists] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [p.id, p.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE pacientes SET idCompania = ?, nombreCompleto = ?, fechaNacimiento = ?, edad = ?, ocupacion = ?, correoElectronico = ?, situacionVivienda = ?, tipoIdentificacion = ?, identificacion = ?, telefono = ?, provinciaId = ?, cantonId = ?, distritoId = ?, otrasSenas = ?, diabetes = ?, hipertension = ?, gastritis = ?, estrenimiento = ?, alergiasAlimentarias = ?, fracturas = ?, esguinces = ?, cirugiasOrtopedicas = ?, actividadFisica = ? WHERE id = ?",
-              [parseInt(p.idCompania), p.nombreCompleto, p.fechaNacimiento, parseInt(p.edad), p.ocupacion, p.correoElectronico, p.situacionVivienda, p.tipoIdentificacion, p.identificacion, p.telefono, parseInt(p.provinciaId), parseInt(p.cantonId), parseInt(p.distritoId), p.otrasSenas, p.diabetes ? 1 : 0, p.hipertension ? 1 : 0, p.gastritis ? 1 : 0, p.estrenimiento ? 1 : 0, p.alergiasAlimentarias, p.fracturas, p.esguinces, p.cirugiasOrtopedicas, p.actividadFisica, p.id]
+              "UPDATE pacientes SET idCompania = ?, id_compania = ?, nombreCompleto = ?, nombre_completo = ?, fechaNacimiento = ?, fecha_nacimiento = ?, edad = ?, ocupacion = ?, correoElectronico = ?, correo_electronico = ?, situacionVivienda = ?, situacion_vivienda = ?, tipoIdentificacion = ?, fact_tipo_identificacion = ?, identificacion = ?, fact_identificacion = ?, telefono = ?, provinciaId = ?, cantonId = ?, distritoId = ?, otrasSenas = ?, diabetes = ?, hipertension = ?, gastritis = ?, estrenimiento = ?, alergiasAlimentarias = ?, fracturas = ?, esguinces = ?, cirugiasOrtopedicas = ?, actividadFisica = ? WHERE id = ? OR id_paciente = ?",
+              [
+                parseInt(p.idCompania), parseInt(p.idCompania), p.nombreCompleto, p.nombreCompleto, p.fechaNacimiento, p.fechaNacimiento, parseInt(p.edad), p.ocupacion, p.correoElectronico, p.correoElectronico, p.situacionVivienda, p.situacionVivienda, p.tipoIdentificacion, p.tipoIdentificacion, p.identificacion, p.identificacion, p.telefono, parseInt(p.provinciaId), parseInt(p.cantonId), parseInt(p.distritoId), p.otrasSenas, p.diabetes ? 1 : 0, p.hipertension ? 1 : 0, p.gastritis ? 1 : 0, p.estrenimiento ? 1 : 0, p.alergiasAlimentarias, p.fracturas, p.esguinces, p.cirugiasOrtopedicas, p.actividadFisica,
+                p.id, p.id
+              ]
             );
             return res.json(p);
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO pacientes (idCompania, nombreCompleto, fechaNacimiento, edad, ocupacion, correoElectronico, situacionVivienda, tipoIdentificacion, identificacion, telefono, provinciaId, cantonId, distritoId, otrasSenas, diabetes, hipertension, gastritis, estrenimiento, alergiasAlimentarias, fracturas, esguinces, cirugiasOrtopedicas, actividadFisica) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(p.idCompania), p.nombreCompleto, p.fechaNacimiento, parseInt(p.edad), p.ocupacion, p.correoElectronico, p.situacionVivienda, p.tipoIdentificacion, p.identificacion, p.telefono, parseInt(p.provinciaId), parseInt(p.cantonId), parseInt(p.distritoId), p.otrasSenas, p.diabetes ? 1 : 0, p.hipertension ? 1 : 0, p.gastritis ? 1 : 0, p.estrenimiento ? 1 : 0, p.alergiasAlimentarias, p.fracturas, p.esguinces, p.cirugiasOrtopedicas, p.actividadFisica]
+          "INSERT INTO pacientes (idCompania, id_compania, nombreCompleto, nombre_completo, fechaNacimiento, fecha_nacimiento, edad, ocupacion, correoElectronico, correo_electronico, situacionVivienda, situacion_vivienda, tipoIdentificacion, fact_tipo_identificacion, identificacion, fact_identificacion, telefono, provinciaId, cantonId, distritoId, otrasSenas, diabetes, hipertension, gastritis, estrenimiento, alergiasAlimentarias, fracturas, esguinces, cirugiasOrtopedicas, actividadFisica) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            parseInt(p.idCompania), parseInt(p.idCompania), p.nombreCompleto, p.nombreCompleto, p.fechaNacimiento, p.fechaNacimiento, parseInt(p.edad), p.ocupacion, p.correoElectronico, p.correoElectronico, p.situacionVivienda, p.situacionVivienda, p.tipoIdentificacion, p.tipoIdentificacion, p.identificacion, p.identificacion, p.telefono, parseInt(p.provinciaId), parseInt(p.cantonId), parseInt(p.distritoId), p.otrasSenas, p.diabetes ? 1 : 0, p.hipertension ? 1 : 0, p.gastritis ? 1 : 0, p.estrenimiento ? 1 : 0, p.alergiasAlimentarias, p.fracturas, p.esguinces, p.cirugiasOrtopedicas, p.actividadFisica
+          ]
         );
         p.id = (result as any).insertId;
         res.json(p);
@@ -505,12 +566,20 @@ async function startServer() {
     try {
       if (dbConnected && pool) {
         const [rows] = await pool.query("SELECT * FROM consultas");
-        const formatted = (rows as any[]).map(row => ({
-          ...row,
-          antropometria: typeof row.antropometria === 'string' ? JSON.parse(row.antropometria) : row.antropometria,
-          dieta: typeof row.dieta === 'string' ? JSON.parse(row.dieta) : row.dieta,
-          fisioterapia: typeof row.fisioterapia === 'string' ? JSON.parse(row.fisioterapia) : row.fisioterapia
-        }));
+        const formatted = (rows as any[]).map(row => {
+          const norm = normalizeRow(row);
+          return {
+            ...norm,
+            antropometria: typeof norm.antropometria === 'string' ? JSON.parse(norm.antropometria) : norm.antropometria,
+            dieta: typeof norm.dieta === 'string' ? JSON.parse(norm.dieta) : norm.dieta,
+            fisioterapia: typeof norm.fisioterapia === 'string' ? JSON.parse(norm.fisioterapia) : norm.fisioterapia,
+            evaluacionAntropometrica: typeof norm.evaluacionAntropometrica === 'string' ? JSON.parse(norm.evaluacionAntropometrica) : norm.evaluacionAntropometrica,
+            evaluacionBioquimica: typeof norm.evaluacionBioquimica === 'string' ? JSON.parse(norm.evaluacionBioquimica) : norm.evaluacionBioquimica,
+            evaluacionDietetica: typeof norm.evaluacionDietetica === 'string' ? JSON.parse(norm.evaluacionDietetica) : norm.evaluacionDietetica,
+            composicionSegmentada: typeof norm.composicionSegmentada === 'string' ? JSON.parse(norm.composicionSegmentada) : norm.composicionSegmentada,
+            estiloVida: typeof norm.estiloVida === 'string' ? JSON.parse(norm.estiloVida) : norm.estiloVida
+          };
+        });
         res.json(formatted);
       } else {
         res.json(localConsultations);
@@ -525,18 +594,25 @@ async function startServer() {
       const con = req.body;
       if (dbConnected && pool) {
         if (con.id) {
-          const [exists] = await pool.query("SELECT id FROM consultas WHERE id = ?", [con.id]);
+          const [exists] = await pool.query("SELECT * FROM consultas WHERE id = ? OR id_consulta = ?", [con.id, con.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE consultas SET idPaciente = ?, idCompania = ?, fecha = ?, tipo = ?, motivo = ?, horasSueno = ?, compromiso = ?, antropometria = ?, dieta = ?, fisioterapia = ?, anotacionesGenerales = ? WHERE id = ?",
-              [parseInt(con.idPaciente), parseInt(con.idCompania), con.fecha, con.tipo, con.motivo, parseFloat(con.horasSueno), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.id]
+              "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, dieta = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, evaluacionAntropometrica = ?, evaluacionBioquimica = ?, evaluacionDietetica = ?, composicionSegmentada = ?, estiloVida = ? WHERE id = ? OR id_consulta = ?",
+              [
+                parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
+                JSON.stringify(con.evaluacionAntropometrica || null), JSON.stringify(con.evaluacionBioquimica || null), JSON.stringify(con.evaluacionDietetica || null), JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null),
+                con.id, con.id
+              ]
             );
             return res.json(con);
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO consultas (idPaciente, idCompania, fecha, tipo, motivo, horasSueno, compromiso, antropometria, dieta, fisioterapia, anotacionesGenerales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(con.idPaciente), parseInt(con.idCompania), con.fecha, con.tipo, con.motivo, parseFloat(con.horasSueno), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales]
+          "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, antropometria, dieta, fisioterapia, anotacionesGenerales, comentarios_nutricionista, evaluacionAntropometrica, evaluacionBioquimica, evaluacionDietetica, composicionSegmentada, estiloVida) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [
+            parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
+            JSON.stringify(con.evaluacionAntropometrica || null), JSON.stringify(con.evaluacionBioquimica || null), JSON.stringify(con.evaluacionDietetica || null), JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null)
+          ]
         );
         con.id = (result as any).insertId;
         res.json(con);
@@ -559,7 +635,7 @@ async function startServer() {
     try {
       if (dbConnected && pool) {
         const [rows] = await pool.query("SELECT * FROM citas");
-        res.json(rows);
+        res.json((rows as any[]).map(normalizeRow));
       } else {
         res.json(localCitas);
       }
@@ -573,11 +649,11 @@ async function startServer() {
       const ct = req.body;
       if (dbConnected && pool) {
         if (ct.id) {
-          const [exists] = await pool.query("SELECT id FROM citas WHERE id = ?", [ct.id]);
+          const [exists] = await pool.query("SELECT * FROM citas WHERE id = ? OR id_cita = ?", [ct.id, ct.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE citas SET idCompania = ?, idPaciente = ?, idUsuarioNutricionista = ?, idConsulta = ?, fechaHora = ?, duracionMinutos = ?, estadoCita = ?, notas = ?, confirmacionEnviadaEn = ?, recordatorioEnviadoEn = ?, cancelacionEnviadaEn = ? WHERE id = ?",
-              [parseInt(ct.idCompania), parseInt(ct.idPaciente), parseInt(ct.idUsuarioNutricionista), ct.idConsulta || null, ct.fechaHora, parseInt(ct.duracionMinutos), ct.estadoCita, ct.notas || '', ct.confirmacionEnviadaEn || null, ct.recordatorioEnviadoEn || null, ct.cancelacionEnviadaEn || null, ct.id]
+              "UPDATE citas SET idCompania = ?, idPaciente = ?, idUsuarioNutricionista = ?, idConsulta = ?, fechaHora = ?, duracionMinutos = ?, estadoCita = ?, notas = ?, confirmacionEnviadaEn = ?, recordatorioEnviadoEn = ?, cancelacionEnviadaEn = ? WHERE id = ? OR id_cita = ?",
+              [parseInt(ct.idCompania), parseInt(ct.idPaciente), parseInt(ct.idUsuarioNutricionista), ct.idConsulta || null, ct.fechaHora, parseInt(ct.duracionMinutos), ct.estadoCita, ct.notas || '', ct.confirmacionEnviadaEn || null, ct.recordatorioEnviadoEn || null, ct.cancelacionEnviadaEn || null, ct.id, ct.id]
             );
             return res.json(ct);
           }
@@ -606,7 +682,7 @@ async function startServer() {
     try {
       const id = parseInt(req.params.id);
       if (dbConnected && pool) {
-        await pool.query("DELETE FROM citas WHERE id = ?", [id]);
+        await pool.query("DELETE FROM citas WHERE id = ? OR id_cita = ?", [id, id]);
         res.json({ success: true });
       } else {
         localCitas = localCitas.filter(item => item.id !== id);

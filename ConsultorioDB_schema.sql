@@ -1,461 +1,619 @@
 -- ============================================================================
 -- BASE DE DATOS: ConsultorioDB
 -- MOTOR DE ALMACENAMIENTO: InnoDB
--- JUEGO DE CARACTERES: utf8mb4_unicode_ci
--- DESCRIPCIÓN: Script SQL unificado y completo que incluye las tablas de 
---              fisioterapia (nuevas) y nutrición (existentes), geografía de CR,
---              facturación y configuraciones de SMTP.
--- TOTAL DE TABLAS: 21
+-- JUEGO DE CARACTERES: utf8mb4_general_ci
+-- DESCRIPCIÓN: Script SQL completo y detallado para la clínica, que incluye
+--              todos los módulos de Nutrición (evaluaciones, estilo de vida,
+--              antecedentes), geografía de Costa Rica, facturación y config.
 -- ============================================================================
 
--- 1. CREACIÓN DE LA BASE DE DATOS
-CREATE DATABASE IF NOT EXISTS `ConsultorioDB`
-  CHARACTER SET utf8mb4
-  COLLATE utf8mb4_unicode_ci;
-
+CREATE DATABASE IF NOT EXISTS `ConsultorioDB` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 USE `ConsultorioDB`;
 
--- Desactivar temporalmente restricciones de llaves foráneas para reinicio limpio
 SET FOREIGN_KEY_CHECKS = 0;
 
--- 2. ELIMINACIÓN DE TABLAS EXISTENTES EN ORDEN DE DEPENDENCIA
-DROP TABLE IF EXISTS `notification_logs`;
-DROP TABLE IF EXISTS `compania_smtp_config`;
-DROP TABLE IF EXISTS `citas`;
-DROP TABLE IF EXISTS `sesiones_evolucion_fisioterapia`;
-DROP TABLE IF EXISTS `plan_tratamiento_fisioterapia`;
-DROP TABLE IF EXISTS `examen_fisico_rom`;
-DROP TABLE IF EXISTS `evaluacion_dolor`;
-DROP TABLE IF EXISTS `evaluacion_fisioterapeutica`;
-DROP TABLE IF EXISTS `evaluacion_antropometrica`;
-DROP TABLE IF EXISTS `consultas`;
-DROP TABLE IF EXISTS `antecedentes_lesionales`;
+-- Drop existing tables to ensure a clean slate
 DROP TABLE IF EXISTS `antecedentes_familiares`;
 DROP TABLE IF EXISTS `antecedentes_personales`;
-DROP TABLE IF EXISTS `pacientes`;
-DROP TABLE IF EXISTS `usuarios`;
-DROP TABLE IF EXISTS `facturas`;
-DROP TABLE IF EXISTS `servicios`;
-DROP TABLE IF EXISTS `companias`;
-DROP TABLE IF EXISTS `distritos`;
+DROP TABLE IF EXISTS `barrios`;
 DROP TABLE IF EXISTS `cantones`;
+DROP TABLE IF EXISTS `companias`;
+DROP TABLE IF EXISTS `compania_direcciones`;
+DROP TABLE IF EXISTS `compania_hacienda_config`;
+DROP TABLE IF EXISTS `compania_telefonos`;
+DROP TABLE IF EXISTS `composicion_segmentada`;
+DROP TABLE IF EXISTS `consultas`;
+DROP TABLE IF EXISTS `dietas_recetas`;
+DROP TABLE IF EXISTS `distritos`;
+DROP TABLE IF EXISTS `estilo_vida`;
+DROP TABLE IF EXISTS `evaluacion_antropometrica`;
+DROP TABLE IF EXISTS `evaluacion_bioquimica`;
+DROP TABLE IF EXISTS `evaluacion_dietetica`;
+DROP TABLE IF EXISTS `facturas`;
+DROP TABLE IF EXISTS `factura_lineas`;
+DROP TABLE IF EXISTS `frecuencia_alimentos`;
+DROP TABLE IF EXISTS `historial_farmacologico`;
+DROP TABLE IF EXISTS `notificaciones_reevaluacion`;
+DROP TABLE IF EXISTS `pacientes`;
+DROP TABLE IF EXISTS `paciente_direcciones`;
+DROP TABLE IF EXISTS `paciente_telefonos`;
 DROP TABLE IF EXISTS `provincias`;
+DROP TABLE IF EXISTS `servicios`;
+DROP TABLE IF EXISTS `usuarios`;
 
--- Reactivar restricciones de llaves foráneas
 SET FOREIGN_KEY_CHECKS = 1;
 
-
--- ============================================================================
--- CATEGORÍA 1: CONFIGURACIÓN Y USUARIOS
--- ============================================================================
-
--- TABLA: companias (Clínicas / Sedes de Salud)
-CREATE TABLE `companias` (
-  `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `nombreComercial` VARCHAR(255) NOT NULL COMMENT 'Nombre fantasía del consultorio o clínica',
-  `razonSocial` VARCHAR(255) NOT NULL COMMENT 'Nombre legal/jurídico',
-  `tipoIdentificacion` VARCHAR(5) NOT NULL COMMENT '01: Física, 02: Jurídica, 03: DIMEX, 04: NITE',
-  `identificacion` VARCHAR(50) NOT NULL UNIQUE COMMENT 'Identificación tributaria única',
-  `correoEmisor` VARCHAR(255) NOT NULL COMMENT 'Correo de emisión para reportes y notificaciones',
-  `ivaPorDefecto` DECIMAL(5,2) NOT NULL DEFAULT 4.00 COMMENT 'IVA por servicios de salud (por defecto en Costa Rica es 4%)',
-  `colorPrimario` VARCHAR(50) NOT NULL DEFAULT '#0f766e' COMMENT 'Color primario de la marca (formato hex)',
-  `colorSidebar` VARCHAR(50) NOT NULL DEFAULT '#115e59' COMMENT 'Color lateral del panel de control',
-  `logoUrl` TEXT NULL COMMENT 'URL del logotipo de la clínica',
-  `actividadEconomica` TEXT NULL COMMENT 'Código o descripción de la actividad económica ante Hacienda',
-  `perfilCompania` VARCHAR(50) NOT NULL DEFAULT 'Ambas' COMMENT 'Nutrición, Fisioterapia o Ambas'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- TABLA: usuarios (Profesionales / Administradores)
-CREATE TABLE `usuarios` (
-  `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `idCompania` INT NOT NULL COMMENT 'Relación con la clínica correspondiente',
-  `nombre` VARCHAR(255) NOT NULL COMMENT 'Nombre completo del profesional o administrativo',
-  `usuario` VARCHAR(255) NOT NULL UNIQUE COMMENT 'Nombre de usuario único para login',
-  `correo` VARCHAR(255) NOT NULL UNIQUE COMMENT 'Correo electrónico del profesional',
-  `contrasena` VARCHAR(255) NOT NULL COMMENT 'Contraseña de acceso',
-  `rol` VARCHAR(50) NOT NULL COMMENT 'Administrador, Profesional o Asistente',
-  CONSTRAINT `fk_usuarios_compania` 
-    FOREIGN KEY (`idCompania`) REFERENCES `companias` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-
--- ============================================================================
--- CATEGORÍA 2: GEOGRAFÍA Y DIRECCIONES COSTA RICA
--- ============================================================================
-
--- TABLA: provincias
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `provincias`
+-- --------------------------------------------------------
 CREATE TABLE `provincias` (
-  `id_provincia` INT PRIMARY KEY COMMENT 'Identificador de la provincia (1 al 7)',
-  `cod_hacienda` VARCHAR(2) NOT NULL UNIQUE COMMENT 'Código oficial para Hacienda (ej: 01)',
-  `nombre` VARCHAR(50) NOT NULL COMMENT 'Nombre de la provincia',
-  `estado` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '1: Activo, 0: Inactivo'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `id_provincia` int(11) NOT NULL PRIMARY KEY,
+  `cod_hacienda` varchar(2) NOT NULL UNIQUE,
+  `nombre` varchar(50) NOT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- TABLA: cantones
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `cantones`
+-- --------------------------------------------------------
 CREATE TABLE `cantones` (
-  `id_canton` INT PRIMARY KEY COMMENT 'Código único del cantón (ej: 102)',
-  `id_provincia` INT NOT NULL COMMENT 'ID de la provincia a la que pertenece',
-  `cod_hacienda` VARCHAR(2) NOT NULL COMMENT 'Código oficial del cantón',
-  `nombre` VARCHAR(50) NOT NULL COMMENT 'Nombre del cantón',
-  CONSTRAINT `fk_cantones_provincia` 
-    FOREIGN KEY (`id_provincia`) REFERENCES `provincias` (`id_provincia`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `id_canton` int(11) NOT NULL PRIMARY KEY,
+  `id_provincia` int(11) NOT NULL,
+  `cod_hacienda` varchar(2) NOT NULL,
+  `nombre` varchar(50) NOT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_cantones_provincia` FOREIGN KEY (`id_provincia`) REFERENCES `provincias` (`id_provincia`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- TABLA: distritos
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `distritos`
+-- --------------------------------------------------------
 CREATE TABLE `distritos` (
-  `id_distrito` INT PRIMARY KEY COMMENT 'Código único del distrito (ej: 10203)',
-  `id_canton` INT NOT NULL COMMENT 'ID del cantón al que pertenece',
-  `cod_hacienda` VARCHAR(2) NOT NULL COMMENT 'Código de Hacienda del distrito',
-  `nombre` VARCHAR(50) NOT NULL COMMENT 'Nombre del distrito',
-  CONSTRAINT `fk_distritos_canton` 
-    FOREIGN KEY (`id_canton`) REFERENCES `cantones` (`id_canton`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `id_distrito` int(11) NOT NULL PRIMARY KEY,
+  `id_canton` int(11) NOT NULL,
+  `cod_hacienda` varchar(2) NOT NULL,
+  `nombre` varchar(50) NOT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_distritos_canton` FOREIGN KEY (`id_canton`) REFERENCES `cantones` (`id_canton`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `barrios`
+-- --------------------------------------------------------
+CREATE TABLE `barrios` (
+  `id_barrio` int(11) NOT NULL PRIMARY KEY,
+  `id_distrito` int(11) NOT NULL,
+  `cod_hacienda` varchar(2) NOT NULL,
+  `nombre` varchar(50) NOT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_barrios_distrito` FOREIGN KEY (`id_distrito`) REFERENCES `distritos` (`id_distrito`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- ============================================================================
--- CATEGORÍA 3: EXPEDIENTES Y PACIENTES (CENTRAL)
--- ============================================================================
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `companias`
+-- --------------------------------------------------------
+CREATE TABLE `companias` (
+  `id_compania` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `nombre_comercial` varchar(150) NOT NULL,
+  `razon_social` varchar(150) NOT NULL,
+  `tipo_identificacion` enum('01','02','03','04') NOT NULL COMMENT '01:Física, 02:Jurídica, 03:DIMEX, 04:NITE',
+  `identificacion` varchar(50) NOT NULL UNIQUE,
+  `cod_actividad_economica` varchar(10) DEFAULT NULL COMMENT 'Código ATV',
+  `correo_emisor` varchar(150) NOT NULL,
+  `iva_por_defecto` decimal(5,2) NOT NULL DEFAULT 13.00,
+  `sucursal_hacienda` varchar(3) NOT NULL DEFAULT '001',
+  `terminal_hacienda` varchar(5) NOT NULL DEFAULT '00001',
+  `siguiente_consecutivo_factura` int(11) NOT NULL DEFAULT 1,
+  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
+  `actualizado_en` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `color_primario` varchar(7) NOT NULL DEFAULT '#0d9488',
+  `color_sidebar` varchar(7) NOT NULL DEFAULT '#115e59',
+  `logo_url` varchar(255) DEFAULT NULL COMMENT 'Ruta al logo subido',
+  `estado` tinyint(1) NOT NULL DEFAULT 1
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- TABLA: pacientes (Expediente unificado de Salud)
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `usuarios`
+-- --------------------------------------------------------
+CREATE TABLE `usuarios` (
+  `id_usuario` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_compania` int(11) NOT NULL,
+  `nombre` varchar(150) NOT NULL,
+  `email` varchar(100) NOT NULL UNIQUE,
+  `password_hash` varchar(255) NOT NULL,
+  `rol` enum('ADMIN','NUTRICIONISTA','RECEPCION') DEFAULT 'NUTRICIONISTA',
+  `activo` tinyint(1) NOT NULL DEFAULT 1,
+  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
+  `actualizado_en` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_usuarios_compania` FOREIGN KEY (`id_compania`) REFERENCES `companias` (`id_compania`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `pacientes`
+-- --------------------------------------------------------
 CREATE TABLE `pacientes` (
-  `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `idCompania` INT NOT NULL COMMENT 'Clínica propietaria del expediente',
-  `nombreCompleto` VARCHAR(255) NOT NULL COMMENT 'Nombre completo del paciente',
-  `fechaNacimiento` VARCHAR(50) NOT NULL COMMENT 'Fecha de nacimiento YYYY-MM-DD',
-  `edad` INT NOT NULL COMMENT 'Edad calculada',
-  `ocupacion` VARCHAR(255) NULL COMMENT 'Profesión u oficio',
-  `correoElectronico` VARCHAR(255) NOT NULL COMMENT 'Destinatario de notificaciones y facturación',
-  `situacionVivienda` VARCHAR(50) NULL COMMENT 'SOLO, ACOMPAÑADO, FAMILIAR',
-  `tipoIdentificacion` VARCHAR(5) NOT NULL COMMENT '01: Física, 02: Jurídica, 03: DIMEX, 04: NITE, EXT: Pasaporte/Extranjero',
-  `identificacion` VARCHAR(50) NOT NULL COMMENT 'Número de cédula o identificación',
-  `telefono` VARCHAR(50) NULL,
-  `provinciaId` INT NULL,
-  `cantonId` INT NULL,
-  `distritoId` INT NULL,
-  `otrasSenas` TEXT NULL COMMENT 'Detalles adicionales de la dirección',
-  -- Antecedentes Nutricionales / Médicos Generales
-  `diabetes` BOOLEAN NOT NULL DEFAULT FALSE,
-  `hipertension` BOOLEAN NOT NULL DEFAULT FALSE,
-  `gastritis` BOOLEAN NOT NULL DEFAULT FALSE,
-  `estrenimiento` BOOLEAN NOT NULL DEFAULT FALSE,
-  `alergiasAlimentarias` TEXT NULL,
-  -- Resumen antecedentes Fisioterapia
-  `fracturas` TEXT NULL,
-  `esguinces` TEXT NULL,
-  `cirugiasOrtopedicas` TEXT NULL,
-  `actividadFisica` TEXT NULL,
-  CONSTRAINT `fk_pacientes_compania` 
-    FOREIGN KEY (`idCompania`) REFERENCES `companias` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_pacientes_provincia` 
-    FOREIGN KEY (`provinciaId`) REFERENCES `provincias` (`id_provincia`) 
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT `fk_pacientes_canton` 
-    FOREIGN KEY (`cantonId`) REFERENCES `cantones` (`id_canton`) 
-    ON DELETE SET NULL ON UPDATE CASCADE,
-  CONSTRAINT `fk_pacientes_distrito` 
-    FOREIGN KEY (`distritoId`) REFERENCES `distritos` (`id_distrito`) 
-    ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `id_paciente` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_compania` int(11) NOT NULL,
+  `nombre_completo` varchar(150) NOT NULL,
+  `fecha_nacimiento` date DEFAULT NULL,
+  `edad` int(11) DEFAULT NULL,
+  `ocupacion` varchar(150) DEFAULT NULL,
+  `correo_electronico` varchar(100) DEFAULT NULL,
+  `situacion_vivienda` enum('SOLO','ACOMPAÑADO','FAMILIAR') DEFAULT NULL,
+  `fact_tipo_identificacion` enum('01','02','03','04','EXT') DEFAULT NULL,
+  `fact_identificacion` varchar(50) DEFAULT NULL,
+  `fact_nombre` varchar(150) DEFAULT NULL,
+  `fact_correo` varchar(150) DEFAULT NULL,
+  `periodicidad_valoracion` enum('MENSUAL','BIMESTRAL','TRIMESTRAL','SEMESTRAL','ANUAL') NOT NULL DEFAULT 'MENSUAL',
+  `proxima_valoracion` date DEFAULT NULL,
+  `creado_por` int(11) DEFAULT NULL,
+  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
+  `actualizado_por` int(11) DEFAULT NULL,
+  `actualizado_en` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_pacientes_compania` FOREIGN KEY (`id_compania`) REFERENCES `companias` (`id_compania`) ON DELETE CASCADE,
+  CONSTRAINT `fk_pacientes_creado_por` FOREIGN KEY (`creado_por`) REFERENCES `usuarios` (`id_usuario`) ON DELETE SET NULL,
+  CONSTRAINT `fk_pacientes_actualizado_por` FOREIGN KEY (`actualizado_por`) REFERENCES `usuarios` (`id_usuario`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
-
--- ============================================================================
--- CATEGORÍA 4: ANTECEDENTES Y HISTORIALES CLÍNICOS DETALLADOS
--- ============================================================================
-
--- TABLA: antecedentes_personales (Módulo Nutrición)
-CREATE TABLE `antecedentes_personales` (
-  `id_paciente` INT PRIMARY KEY,
-  `diabetes` TINYINT(1) NULL DEFAULT 0,
-  `hipertension` TINYINT(1) NULL DEFAULT 0,
-  `enfermedad_cardiovascular` TINYINT(1) NULL DEFAULT 0,
-  `enfermedad_respiratoria` TINYINT(1) NULL DEFAULT 0,
-  `enfermedad_renal` TINYINT(1) NULL DEFAULT 0,
-  `problemas_tiroideos` TINYINT(1) NULL DEFAULT 0,
-  `gastritis` TINYINT(1) NULL DEFAULT 0,
-  `estrenimiento` TINYINT(1) NULL DEFAULT 0,
-  `cirugias` VARCHAR(255) NULL,
-  `observaciones` TEXT NULL,
-  `estado` TINYINT(1) NOT NULL DEFAULT 1,
-  CONSTRAINT `fk_ant_personales_paciente` 
-    FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- TABLA: antecedentes_familiares (Módulo Nutrición)
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `antecedentes_familiares`
+-- --------------------------------------------------------
 CREATE TABLE `antecedentes_familiares` (
-  `id_paciente` INT PRIMARY KEY,
-  `obesidad` TINYINT(1) NULL DEFAULT 0,
-  `cancer` TINYINT(1) NULL DEFAULT 0,
-  `diabetes` TINYINT(1) NULL DEFAULT 0,
-  `hipertension` TINYINT(1) NULL DEFAULT 0,
-  `observaciones` TEXT NULL COMMENT 'Detalles sobre parentesco de antecedentes',
-  `estado` TINYINT(1) NOT NULL DEFAULT 1,
-  CONSTRAINT `fk_ant_familiares_paciente` 
-    FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `id_paciente` int(11) NOT NULL PRIMARY KEY,
+  `obesidad` tinyint(1) DEFAULT 0,
+  `cancer` tinyint(1) DEFAULT 0,
+  `diabetes` tinyint(1) DEFAULT 0,
+  `dislipidemia` tinyint(1) DEFAULT 0,
+  `enfermedad_cardiovascular` tinyint(1) DEFAULT 0,
+  `hipertension` tinyint(1) DEFAULT 0,
+  `enfermedad_respiratoria` tinyint(1) DEFAULT 0,
+  `enfermedad_renal` tinyint(1) DEFAULT 0,
+  `problemas_tiroideos` tinyint(1) DEFAULT 0,
+  `epilepsia` tinyint(1) DEFAULT 0,
+  `artritis_reumatoide` tinyint(1) DEFAULT 0,
+  `problemas_psiquiatricos` tinyint(1) DEFAULT 0,
+  `lupus_inmunologicos` tinyint(1) DEFAULT 0,
+  `otros` varchar(255) DEFAULT NULL,
+  `observaciones` text DEFAULT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_ant_familiares_paciente` FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id_paciente`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- TABLA: antecedentes_lesionales (Módulo Fisioterapia)
-CREATE TABLE `antecedentes_lesionales` (
-  `id_paciente` INT PRIMARY KEY,
-  `fracturas` TEXT NULL COMMENT 'Historial de fracturas',
-  `esguinces` TEXT NULL COMMENT 'Historial de esguinces',
-  `luxaciones` TEXT NULL COMMENT 'Historial de luxaciones',
-  `desgarros` TEXT NULL COMMENT 'Registro de desgarros musculares o tendinopatías',
-  `cirugias_ortopedicas` TEXT NULL COMMENT 'Cirugías de columna, rodilla, hombros, etc.',
-  `actividad_fisica_frecuencia` VARCHAR(100) NULL COMMENT 'Deporte y frecuencia semanal',
-  `observaciones` TEXT NULL,
-  `estado` TINYINT(1) NOT NULL DEFAULT 1,
-  CONSTRAINT `fk_ant_lesionales_paciente` 
-    FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `antecedentes_personales`
+-- --------------------------------------------------------
+CREATE TABLE `antecedentes_personales` (
+  `id_paciente` int(11) NOT NULL PRIMARY KEY,
+  `diabetes` tinyint(1) DEFAULT 0,
+  `dislipidemia` tinyint(1) DEFAULT 0,
+  `enfermedad_respiratoria` tinyint(1) DEFAULT 0,
+  `enfermedad_cardiovascular` tinyint(1) DEFAULT 0,
+  `hipertension` tinyint(1) DEFAULT 0,
+  `enfermedad_renal` tinyint(1) DEFAULT 0,
+  `problemas_tiroideos` tinyint(1) DEFAULT 0,
+  `ulceras` tinyint(1) DEFAULT 0,
+  `cancer` tinyint(1) DEFAULT 0,
+  `cirugias` varchar(255) DEFAULT NULL,
+  `depresion` tinyint(1) DEFAULT 0,
+  `sida` tinyint(1) DEFAULT 0,
+  `intolerancia_alimento` varchar(255) DEFAULT NULL,
+  `problemas_dentales` tinyint(1) DEFAULT 0,
+  `problemas_masticacion_deglucion` tinyint(1) DEFAULT 0,
+  `hernia_hiatal` tinyint(1) DEFAULT 0,
+  `reflujo_gastroesofagico` tinyint(1) DEFAULT 0,
+  `gastritis` tinyint(1) DEFAULT 0,
+  `nauseas_frecuentes` tinyint(1) DEFAULT 0,
+  `vomitos` tinyint(1) DEFAULT 0,
+  `colon_irritable` tinyint(1) DEFAULT 0,
+  `estrenimiento` tinyint(1) DEFAULT 0,
+  `diarreas` tinyint(1) DEFAULT 0,
+  `colelitiasis` tinyint(1) DEFAULT 0,
+  `observaciones` text DEFAULT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_ant_personales_paciente` FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id_paciente`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `estilo_vida`
+-- --------------------------------------------------------
+CREATE TABLE `estilo_vida` (
+  `id_paciente` int(11) NOT NULL PRIMARY KEY,
+  `realiza_ejercicio` tinyint(1) DEFAULT 0,
+  `tiempo_entrenar` varchar(100) DEFAULT NULL,
+  `hace_cuanto_entrena` varchar(100) DEFAULT NULL,
+  `hora_entreno` varchar(50) DEFAULT NULL,
+  `tipo_ejercicio` varchar(100) DEFAULT NULL,
+  `frecuencia_ejercicio_semana` varchar(50) DEFAULT NULL,
+  `duracion_ejercicio` varchar(50) DEFAULT NULL,
+  `suplementos` varchar(255) DEFAULT NULL,
+  `consume_alcohol` tinyint(1) DEFAULT 0,
+  `tipo_alcohol` varchar(100) DEFAULT NULL,
+  `frecuencia_alcohol` varchar(100) DEFAULT NULL,
+  `cantidad_alcohol` varchar(100) DEFAULT NULL,
+  `fuma` tinyint(1) DEFAULT 0,
+  `frecuencia_fumado` varchar(100) DEFAULT NULL,
+  `cantidad_fumado` varchar(100) DEFAULT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_estilo_vida_paciente` FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id_paciente`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- ============================================================================
--- CATEGORÍA 5: SESIONES, CONSULTAS Y EVALUACIONES CLÍNICAS
--- ============================================================================
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `historial_farmacologico`
+-- --------------------------------------------------------
+CREATE TABLE `historial_farmacologico` (
+  `id_farmaco` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_paciente` int(11) NOT NULL,
+  `tipo_medicamento` varchar(100) NOT NULL,
+  `dosis` varchar(100) DEFAULT NULL,
+  `frecuencia_uso` varchar(100) DEFAULT NULL,
+  `observaciones` text DEFAULT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_farmacologico_paciente` FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id_paciente`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- TABLA: consultas (Evolución por encuentro de Salud)
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `paciente_direcciones`
+-- --------------------------------------------------------
+CREATE TABLE `paciente_direcciones` (
+  `id_direccion` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_paciente` int(11) NOT NULL,
+  `tipo_direccion` enum('CASA','TRABAJO','FACTURACION','OTRO') DEFAULT 'CASA',
+  `es_principal` tinyint(1) DEFAULT 1 COMMENT 'Usar esta para Hacienda por defecto',
+  `id_provincia` int(11) NOT NULL,
+  `id_canton` int(11) NOT NULL,
+  `id_distrito` int(11) NOT NULL,
+  `id_barrio` int(11) DEFAULT NULL,
+  `otras_senas` varchar(250) NOT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_paciente_dir_paciente` FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id_paciente`) ON DELETE CASCADE,
+  CONSTRAINT `fk_paciente_dir_provincia` FOREIGN KEY (`id_provincia`) REFERENCES `provincias` (`id_provincia`),
+  CONSTRAINT `fk_paciente_dir_canton` FOREIGN KEY (`id_canton`) REFERENCES `cantones` (`id_canton`),
+  CONSTRAINT `fk_paciente_dir_distrito` FOREIGN KEY (`id_distrito`) REFERENCES `distritos` (`id_distrito`),
+  CONSTRAINT `fk_paciente_dir_barrio` FOREIGN KEY (`id_barrio`) REFERENCES `barrios` (`id_barrio`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `paciente_telefonos`
+-- --------------------------------------------------------
+CREATE TABLE `paciente_telefonos` (
+  `id_telefono` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_paciente` int(11) NOT NULL,
+  `tipo_telefono` enum('MOVIL','CASA','TRABAJO','WHATSAPP','EMERGENCIA') DEFAULT 'MOVIL',
+  `codigo_pais` varchar(5) DEFAULT '506',
+  `numero` varchar(20) NOT NULL,
+  `es_principal` tinyint(1) DEFAULT 1 COMMENT 'Usar este para notificaciones y factura',
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_paciente_tel_paciente` FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id_paciente`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `consultas`
+-- --------------------------------------------------------
 CREATE TABLE `consultas` (
-  `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `idPaciente` INT NOT NULL,
-  `idCompania` INT NOT NULL,
-  `fecha` VARCHAR(50) NOT NULL COMMENT 'Fecha de la sesión',
-  `tipo` VARCHAR(50) NOT NULL COMMENT 'Nutrición, Fisioterapia, Integral',
-  `motivo` TEXT NOT NULL COMMENT 'Motivo principal de la visita',
-  `horasSueno` DECIMAL(4,1) NOT NULL DEFAULT 8.0,
-  `compromiso` INT NOT NULL DEFAULT 10 COMMENT 'Nivel de motivación (1 al 10)',
-  `antropometria` JSON NULL COMMENT 'Datos JSON de peso, grasa corporal, músculo, perímetros',
-  `dieta` JSON NULL COMMENT 'Macrodistribución, calorías y plan alimenticio en JSON',
-  `fisioterapia` JSON NULL COMMENT 'Dolor, pruebas musculares, rango de movilidad en JSON',
-  `anotacionesGenerales` TEXT NULL COMMENT 'Anotaciones privadas del profesional',
-  CONSTRAINT `fk_consultas_paciente` 
-    FOREIGN KEY (`idPaciente`) REFERENCES `pacientes` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_consultas_compania` 
-    FOREIGN KEY (`idCompania`) REFERENCES `companias` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `id_consulta` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_paciente` int(11) NOT NULL,
+  `id_compania` int(11) NOT NULL,
+  `fecha_consulta` date NOT NULL,
+  `motivo_expectativas` text DEFAULT NULL,
+  `horas_sueno` decimal(4,2) DEFAULT NULL,
+  `compromiso_cumplir` int(11) DEFAULT NULL,
+  `comentarios_nutricionista` text DEFAULT NULL,
+  `creado_por` int(11) DEFAULT NULL,
+  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
+  `actualizado_por` int(11) DEFAULT NULL,
+  `actualizado_en` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_consultas_paciente` FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id_paciente`) ON DELETE CASCADE,
+  CONSTRAINT `fk_consultas_compania` FOREIGN KEY (`id_compania`) REFERENCES `companias` (`id_compania`),
+  CONSTRAINT `fk_consultas_creado` FOREIGN KEY (`creado_por`) REFERENCES `usuarios` (`id_usuario`) ON DELETE SET NULL,
+  CONSTRAINT `fk_consultas_actualizado` FOREIGN KEY (`actualizado_por`) REFERENCES `usuarios` (`id_usuario`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
-
--- ============================================================================
--- SUB-CATEGORÍA 5.1: MÓDULO NUTRICIÓN (DISEÑO RELACIONAL DETALLADO)
--- ============================================================================
-
--- TABLA: evaluacion_antropometrica
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `evaluacion_antropometrica`
+-- --------------------------------------------------------
 CREATE TABLE `evaluacion_antropometrica` (
-  `id_antropometria` INT AUTO_INCREMENT PRIMARY KEY,
-  `id_consulta` INT NOT NULL UNIQUE COMMENT 'Relación única con la consulta',
-  `peso` DECIMAL(6,2) NULL COMMENT 'Peso en kilogramos',
-  `talla` DECIMAL(6,2) NULL COMMENT 'Talla en centímetros',
-  `imc` DECIMAL(6,2) NULL COMMENT 'Índice de masa corporal calculado',
-  `grasa_visceral` DECIMAL(5,2) NULL COMMENT 'Nivel de grasa visceral',
-  `masa_muscular` DECIMAL(6,2) NULL COMMENT 'Masa muscular en kg',
-  `cintura` DECIMAL(6,2) NULL COMMENT 'Perímetro de cintura en cm',
-  `abdominal` DECIMAL(6,2) NULL COMMENT 'Perímetro abdominal en cm',
-  CONSTRAINT `fk_antropometria_consulta` 
-    FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `id_antropometria` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_consulta` int(11) NOT NULL,
+  `peso` decimal(6,2) DEFAULT NULL,
+  `talla` decimal(6,2) DEFAULT NULL,
+  `imc` decimal(6,2) DEFAULT NULL,
+  `c_muneca` decimal(6,2) DEFAULT NULL,
+  `porcentaje_grasa_balanza` decimal(5,2) DEFAULT NULL,
+  `grasa_visceral` decimal(5,2) DEFAULT NULL,
+  `porcentaje_agua` decimal(5,2) DEFAULT NULL,
+  `masa_muscular` decimal(6,2) DEFAULT NULL,
+  `kg_magros` decimal(6,2) DEFAULT NULL,
+  `masa_osea` decimal(5,2) DEFAULT NULL,
+  `tmb` decimal(7,2) DEFAULT NULL,
+  `edad_metabolica` int(11) DEFAULT NULL,
+  `cintura` decimal(6,2) DEFAULT NULL,
+  `circunferencia_abdominal` decimal(6,2) DEFAULT NULL,
+  `pliegue_triceps` decimal(5,2) DEFAULT NULL,
+  `pliegue_subescapular` decimal(5,2) DEFAULT NULL,
+  `pliegue_biceps` decimal(5,2) DEFAULT NULL,
+  `pliegue_cresta_iliaca` decimal(5,2) DEFAULT NULL,
+  `pliegue_supraespinal` decimal(5,2) DEFAULT NULL,
+  `pliegue_abdominal` decimal(5,2) DEFAULT NULL,
+  `pliegue_muslo_medio` decimal(5,2) DEFAULT NULL,
+  `pliegue_pierna_medial` decimal(5,2) DEFAULT NULL,
+  `perimetro_brazo_relajado` decimal(6,2) DEFAULT NULL,
+  `perimetro_brazo_contraido` decimal(6,2) DEFAULT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  UNIQUE KEY `uq_eval_antropometria_consulta` (`id_consulta`),
+  CONSTRAINT `fk_antropometrica_consulta` FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id_consulta`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `composicion_segmentada`
+-- --------------------------------------------------------
+CREATE TABLE `composicion_segmentada` (
+  `id_segmentada` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_consulta` int(11) NOT NULL,
+  `tipo_medicion` enum('Grasa','Musculo') NOT NULL,
+  `total` decimal(5,2) DEFAULT NULL,
+  `mano_izquierda` decimal(5,2) DEFAULT NULL,
+  `mano_derecha` decimal(5,2) DEFAULT NULL,
+  `pierna_derecha` decimal(5,2) DEFAULT NULL,
+  `pierna_izquierda` decimal(5,2) DEFAULT NULL,
+  `tronco` decimal(5,2) DEFAULT NULL,
+  `calificacion_grasa` varchar(50) DEFAULT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  UNIQUE KEY `uq_composicion_consulta_tipo` (`id_consulta`,`tipo_medicion`),
+  CONSTRAINT `fk_composicion_consulta` FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id_consulta`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- ============================================================================
--- SUB-CATEGORÍA 5.2: MÓDULO FISIOTERAPIA (DISEÑO RELACIONAL DETALLADO)
--- ============================================================================
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `evaluacion_bioquimica`
+-- --------------------------------------------------------
+CREATE TABLE `evaluacion_bioquimica` (
+  `id_evaluacion` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_consulta` int(11) NOT NULL,
+  `indice_homa` decimal(6,2) DEFAULT NULL,
+  `hb1ac_glicosilada` decimal(6,2) DEFAULT NULL,
+  `vit_d` decimal(6,2) DEFAULT NULL,
+  `glicemia` decimal(6,2) DEFAULT NULL,
+  `insulinemia` decimal(6,2) DEFAULT NULL,
+  `hematocrito` decimal(6,2) DEFAULT NULL,
+  `hemoglobina` decimal(6,2) DEFAULT NULL,
+  `albumina` decimal(6,2) DEFAULT NULL,
+  `acido_urico` decimal(6,2) DEFAULT NULL,
+  `trigliceridos` decimal(6,2) DEFAULT NULL,
+  `colesterol_total` decimal(6,2) DEFAULT NULL,
+  `colesterol_hdl` decimal(6,2) DEFAULT NULL,
+  `colesterol_ldl` decimal(6,2) DEFAULT NULL,
+  `intolerancias_alimentarias` varchar(255) DEFAULT NULL,
+  `alergias` varchar(255) DEFAULT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  UNIQUE KEY `uq_evaluacion_bioquimica_consulta` (`id_consulta`),
+  CONSTRAINT `fk_bioquimica_consulta` FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id_consulta`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- TABLA: evaluacion_fisioterapeutica (Ficha de ingreso)
-CREATE TABLE `evaluacion_fisioterapeutica` (
-  `id_evaluacion_fisio` INT AUTO_INCREMENT PRIMARY KEY,
-  `id_consulta` INT NOT NULL COMMENT 'Consulta de terapia asociada',
-  `motivo_consulta` TEXT NOT NULL COMMENT 'Por qué asiste (dolor lumbar, rehabilitación poscirugía)',
-  `mecanismo_lesion` TEXT NULL COMMENT 'Cómo ocurrió la lesión (ej: caída, trauma deportivo)',
-  `diagnostico_medico` VARCHAR(255) NULL COMMENT 'Diagnóstico del médico general o traumatólogo',
-  `sintomas_principales` TEXT NULL COMMENT 'Entumecimiento, rigidez, debilidad',
-  `tiempo_evolucion` VARCHAR(100) NULL COMMENT 'Agudo, Subagudo, Crónico',
-  `estado` TINYINT(1) NOT NULL DEFAULT 1,
-  CONSTRAINT `fk_eval_fisio_consulta` 
-    FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `evaluacion_dietetica`
+-- --------------------------------------------------------
+CREATE TABLE `evaluacion_dietetica` (
+  `id_evaluacion` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_consulta` int(11) NOT NULL,
+  `tiempos_comida` enum('1-2','3-4','5-6') DEFAULT NULL,
+  `lugar_consumo` enum('Casa','Fuera','Ambos') DEFAULT NULL,
+  `quien_prepara` varchar(100) DEFAULT NULL,
+  `calificacion_apetito` enum('Bueno','Regular','Malo') DEFAULT NULL,
+  `tipo_grasas` varchar(100) DEFAULT NULL,
+  `coccion_asado` tinyint(1) DEFAULT 0,
+  `coccion_fritura` tinyint(1) DEFAULT 0,
+  `coccion_hervido` tinyint(1) DEFAULT 0,
+  `coccion_plancha` tinyint(1) DEFAULT 0,
+  `coccion_vapor` tinyint(1) DEFAULT 0,
+  `coccion_freidora_aire` tinyint(1) DEFAULT 0,
+  `agrega_sal` tinyint(1) DEFAULT 0,
+  `consume_azucar` tinyint(1) DEFAULT 0,
+  `utiliza_edulcorante` tinyint(1) DEFAULT 0,
+  `dietas_anteriores` text DEFAULT NULL,
+  `consume_agua` tinyint(1) DEFAULT 0,
+  `cantidad_agua` varchar(100) DEFAULT NULL,
+  `alimentos_no_consume` text DEFAULT NULL,
+  `alimentos_preferidos` text DEFAULT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  UNIQUE KEY `uq_evaluacion_dietetica_consulta` (`id_consulta`),
+  CONSTRAINT `fk_dietetica_consulta` FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id_consulta`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- TABLA: evaluacion_dolor (Se vincula con el Mapa de Dolor)
-CREATE TABLE `evaluacion_dolor` (
-  `id_dolor` INT AUTO_INCREMENT PRIMARY KEY,
-  `id_consulta` INT NOT NULL COMMENT 'Consulta asociada',
-  `escala_eva` INT NOT NULL COMMENT 'Escala Visual Analógica (0 al 10)',
-  `tipo_dolor` VARCHAR(100) NULL COMMENT 'Opresivo, Punzante, Quemante, Sordo, Irradiado',
-  `localizacion_anatomica` VARCHAR(150) NOT NULL COMMENT 'Ubicación corporal del dolor (ej: cervical, lumbar)',
-  `factores_agravantes` TEXT NULL COMMENT 'Qué aumenta el dolor',
-  `factores_atenuantes` TEXT NULL COMMENT 'Qué alivia el dolor',
-  `comportamiento_diario` VARCHAR(100) NULL COMMENT 'Mañana, tarde, noche, constante, intermitente',
-  `estado` TINYINT(1) NOT NULL DEFAULT 1,
-  CONSTRAINT `fk_eval_dolor_consulta` 
-    FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `frecuencia_alimentos`
+-- --------------------------------------------------------
+CREATE TABLE `frecuencia_alimentos` (
+  `id_frecuencia` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_consulta` int(11) NOT NULL,
+  `alimento` varchar(100) NOT NULL,
+  `frecuencia` varchar(100) DEFAULT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_frecuencia_consulta` FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id_consulta`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- TABLA: examen_fisico_rom (Rangos articulares, postura, pruebas especiales)
-CREATE TABLE `examen_fisico_rom` (
-  `id_examen_fisico` INT AUTO_INCREMENT PRIMARY KEY,
-  `id_consulta` INT NOT NULL COMMENT 'Consulta asociada',
-  `postura_observaciones` TEXT NULL COMMENT 'Hallazgos de la postura estática (ej: escoliosis)',
-  `palpacion_hallazgos` TEXT NULL COMMENT 'Hallazgos al tacto, contracturas, trigger points',
-  `rango_movimiento_rom` TEXT NULL COMMENT 'Rangos de movimiento articular activos y pasivos',
-  `fuerza_muscular_daniels` TEXT NULL COMMENT 'Fuerza muscular calificada en Escala Daniels (0 al 5)',
-  `pruebas_especiales` TEXT NULL COMMENT 'Pruebas ortopédicas y funcionales (ej: Phalen, Lachman)',
-  `estado` TINYINT(1) NOT NULL DEFAULT 1,
-  CONSTRAINT `fk_examen_fisico_consulta` 
-    FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `dietas_recetas`
+-- --------------------------------------------------------
+CREATE TABLE `dietas_recetas` (
+  `id_dieta` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_consulta` int(11) NOT NULL,
+  `id_paciente` int(11) NOT NULL,
+  `fecha_inicio` date DEFAULT NULL,
+  `fecha_fin` date DEFAULT NULL,
+  `total_calorias` int(11) DEFAULT NULL,
+  `comida_1_desayuno` text DEFAULT NULL,
+  `comida_2_merienda_manana` text DEFAULT NULL,
+  `comida_3_almuerzo` text DEFAULT NULL,
+  `comida_4_merienda_tarde` text DEFAULT NULL,
+  `comida_5_cena` text DEFAULT NULL,
+  `indicaciones_adicionales` text DEFAULT NULL,
+  `creado_por` int(11) DEFAULT NULL,
+  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
+  `actualizado_por` int(11) DEFAULT NULL,
+  `actualizado_en` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_dietas_consulta` FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id_consulta`) ON DELETE CASCADE,
+  CONSTRAINT `fk_dietas_paciente` FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id_paciente`) ON DELETE CASCADE,
+  CONSTRAINT `fk_dietas_creado_por` FOREIGN KEY (`creado_por`) REFERENCES `usuarios` (`id_usuario`) ON DELETE SET NULL,
+  CONSTRAINT `fk_dietas_actualizado_por` FOREIGN KEY (`actualizado_por`) REFERENCES `usuarios` (`id_usuario`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- TABLA: plan_tratamiento_fisioterapia (Prescripción y dosificación terapéutica)
-CREATE TABLE `plan_tratamiento_fisioterapia` (
-  `id_plan` INT AUTO_INCREMENT PRIMARY KEY,
-  `id_consulta` INT NOT NULL COMMENT 'Consulta asociada',
-  `objetivos_corto_plazo` TEXT NULL COMMENT 'Reducir el dolor, desinflamar',
-  `objetivos_largo_plazo` TEXT NULL COMMENT 'Retorno al deporte, recuperar movilidad completa',
-  `agentes_fisicos` TEXT NULL COMMENT 'Electroterapia, ultrasonido, láser, crioterapia, termoterapia',
-  `terapia_manual` TEXT NULL COMMENT 'Masaje, movilización pasiva, estiramiento manual',
-  `ejercicio_terapeutico` TEXT NULL COMMENT 'Plan de ejercicios en casa, control motor, propiocepción',
-  `frecuencia_sesiones_sugerida` VARCHAR(50) NULL COMMENT 'ej: 2 veces por semana',
-  `cantidad_sesiones_total` INT NULL COMMENT 'ej: 10 sesiones totales',
-  `estado` TINYINT(1) NOT NULL DEFAULT 1,
-  CONSTRAINT `fk_plan_fisio_consulta` 
-    FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `compania_direcciones`
+-- --------------------------------------------------------
+CREATE TABLE `compania_direcciones` (
+  `id_direccion` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_compania` int(11) NOT NULL,
+  `tipo_direccion` enum('MATRIZ','SUCURSAL','OTRA') DEFAULT 'MATRIZ',
+  `es_principal` tinyint(1) DEFAULT 1,
+  `id_provincia` int(11) NOT NULL,
+  `id_canton` int(11) NOT NULL,
+  `id_distrito` int(11) NOT NULL,
+  `id_barrio` int(11) DEFAULT NULL,
+  `otras_senas` varchar(250) NOT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_comp_dir_compania` FOREIGN KEY (`id_compania`) REFERENCES `companias` (`id_compania`) ON DELETE CASCADE,
+  CONSTRAINT `fk_comp_dir_provincia` FOREIGN KEY (`id_provincia`) REFERENCES `provincias` (`id_provincia`),
+  CONSTRAINT `fk_comp_dir_canton` FOREIGN KEY (`id_canton`) REFERENCES `cantones` (`id_canton`),
+  CONSTRAINT `fk_comp_dir_distrito` FOREIGN KEY (`id_distrito`) REFERENCES `distritos` (`id_distrito`),
+  CONSTRAINT `fk_comp_dir_barrio` FOREIGN KEY (`id_barrio`) REFERENCES `barrios` (`id_barrio`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- TABLA: sesiones_evolucion_fisioterapia (Historial de evolución diaria - SOAP)
-CREATE TABLE `sesiones_evolucion_fisioterapia` (
-  `id_sesion` INT AUTO_INCREMENT PRIMARY KEY,
-  `id_consulta` INT NOT NULL COMMENT 'Consulta de control o inicial',
-  `numero_sesion` INT NOT NULL COMMENT 'Correlativo (Sesión 1, 2, 3...)',
-  `fecha_sesion` DATE NOT NULL COMMENT 'Fecha de la rehabilitación física',
-  `subjetivo` TEXT NULL COMMENT 'S (SOAP): Percepción del dolor hoy, reporte del paciente',
-  `objetivo` TEXT NULL COMMENT 'O (SOAP): Hallazgos del terapeuta hoy, ejercicios tolerados',
-  `analisis` TEXT NULL COMMENT 'A (SOAP): Evaluación de progreso clínico o estancamiento',
-  `plan_siguiente_sesion` TEXT NULL COMMENT 'P (SOAP): Qué se priorizará en la próxima sesión',
-  `creado_por` INT NULL COMMENT 'Fisioterapeuta que atendió',
-  `estado` TINYINT(1) NOT NULL DEFAULT 1,
-  CONSTRAINT `fk_sesiones_ev_consulta` 
-    FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_sesiones_ev_usuario` 
-    FOREIGN KEY (`creado_por`) REFERENCES `usuarios` (`id`) 
-    ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `compania_telefonos`
+-- --------------------------------------------------------
+CREATE TABLE `compania_telefonos` (
+  `id_telefono` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_compania` int(11) NOT NULL,
+  `tipo_telefono` enum('MOVIL','OFICINA','WHATSAPP') DEFAULT 'OFICINA',
+  `codigo_pais` varchar(5) DEFAULT '506',
+  `numero` varchar(20) NOT NULL,
+  `es_principal` tinyint(1) DEFAULT 1,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_comp_tel_compania` FOREIGN KEY (`id_compania`) REFERENCES `companias` (`id_compania`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `compania_hacienda_config`
+-- --------------------------------------------------------
+CREATE TABLE `compania_hacienda_config` (
+  `id_compania` int(11) NOT NULL PRIMARY KEY,
+  `ambiente` enum('SANDBOX','PRODUCCION') NOT NULL DEFAULT 'SANDBOX',
+  `usuario_atv` varchar(50) DEFAULT NULL,
+  `password_atv_enc` varbinary(512) DEFAULT NULL,
+  `certificado_p12_enc` longblob DEFAULT NULL,
+  `certificado_password_enc` varbinary(512) DEFAULT NULL,
+  `certificado_nombre_archivo` varchar(255) DEFAULT NULL,
+  `certificado_vence_en` date DEFAULT NULL,
+  `actualizado_por` int(11) DEFAULT NULL,
+  `actualizado_en` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  CONSTRAINT `fk_hacienda_compania` FOREIGN KEY (`id_compania`) REFERENCES `companias` (`id_compania`) ON DELETE CASCADE,
+  CONSTRAINT `fk_hacienda_actualizado_por` FOREIGN KEY (`actualizado_por`) REFERENCES `usuarios` (`id_usuario`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- ============================================================================
--- CATEGORÍA 6: AGENDA, CITAS Y CORREOS ELECTRÓNICOS (SMTP)
--- ============================================================================
-
--- TABLA: citas (Agenda de citas médicas de la clínica)
-CREATE TABLE `citas` (
-  `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `idCompania` INT NOT NULL,
-  `idPaciente` INT NOT NULL,
-  `idUsuarioNutricionista` INT NOT NULL COMMENT 'Profesional que atenderá la cita',
-  `idConsulta` INT NULL COMMENT 'Consulta asignada al realizarse la cita',
-  `fechaHora` VARCHAR(50) NOT NULL COMMENT 'Fecha y hora de la cita (ISO YYYY-MM-DDTHH:MM)',
-  `duracionMinutos` INT NOT NULL DEFAULT 30,
-  `estadoCita` VARCHAR(50) NOT NULL DEFAULT 'PROGRAMADA' COMMENT 'PROGRAMADA, CONFIRMADA, CANCELADA, COMPLETADA, NO_ASISTIO',
-  `notas` TEXT NULL COMMENT 'Notas preparatorias de la cita',
-  `confirmacionEnviadaEn` VARCHAR(50) NULL,
-  `recordatorioEnviadoEn` VARCHAR(50) NULL,
-  `cancelacionEnviadaEn` VARCHAR(50) NULL,
-  CONSTRAINT `fk_citas_compania` 
-    FOREIGN KEY (`idCompania`) REFERENCES `companias` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_citas_paciente` 
-    FOREIGN KEY (`idPaciente`) REFERENCES `pacientes` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_citas_usuario` 
-    FOREIGN KEY (`idUsuarioNutricionista`) REFERENCES `usuarios` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- TABLA: compania_smtp_config (Parámetros del Servidor de Correo Saliente)
-CREATE TABLE `compania_smtp_config` (
-  `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `idCompania` INT NOT NULL COMMENT 'Clínica propietaria de esta configuración',
-  `proveedor` VARCHAR(50) NOT NULL DEFAULT 'OTRO' COMMENT 'GMAIL, OUTLOOK, OTRO',
-  `smtpHost` VARCHAR(255) NULL,
-  `smtpPort` INT NOT NULL DEFAULT 587,
-  `smtpSeguridad` VARCHAR(50) NOT NULL DEFAULT 'TLS' COMMENT 'TLS, SSL, NINGUNA',
-  `smtpUsuario` VARCHAR(255) NULL,
-  `smtpPasswordCifrado` VARCHAR(255) NULL,
-  `remitenteNombre` VARCHAR(255) NULL,
-  `remitenteCorreo` VARCHAR(255) NULL,
-  `recordatorioHorasAntes` INT NOT NULL DEFAULT 24 COMMENT 'Horas de anticipación de recordatorios',
-  `activo` BOOLEAN NOT NULL DEFAULT FALSE,
-  UNIQUE KEY `unique_smtp_compania` (`idCompania`),
-  CONSTRAINT `fk_smtp_compania` 
-    FOREIGN KEY (`idCompania`) REFERENCES `companias` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- TABLA: notification_logs (Historial de Correos Electrónicos Enviados)
-CREATE TABLE `notification_logs` (
-  `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `idCompania` INT NOT NULL,
-  `idCita` INT NOT NULL,
-  `tipo` VARCHAR(50) NOT NULL COMMENT 'CONFIRMACION, MODIFICACION, RECORDATORIO, CANCELACION',
-  `destinatario` VARCHAR(255) NOT NULL,
-  `asunto` VARCHAR(255) NOT NULL,
-  `cuerpo` TEXT NOT NULL,
-  `enviadoEn` VARCHAR(50) NOT NULL,
-  CONSTRAINT `fk_logs_compania` 
-    FOREIGN KEY (`idCompania`) REFERENCES `companias` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_logs_cita` 
-    FOREIGN KEY (`idCita`) REFERENCES `citas` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-
--- ============================================================================
--- CATEGORÍA 7: FACTURACIÓN ELECTRÓNICA Y SERVICIOS (CR - HACIENDA)
--- ============================================================================
-
--- TABLA: servicios (Catálogo de Terapias y Consultas con Código CABYS)
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `servicios`
+-- --------------------------------------------------------
 CREATE TABLE `servicios` (
-  `id_servicio` INT AUTO_INCREMENT PRIMARY KEY,
-  `nombre` VARCHAR(150) NOT NULL COMMENT 'Nombre del servicio brindado',
-  `codigo_cabys` VARCHAR(13) NULL COMMENT 'Código de Hacienda de 13 dígitos para Costa Rica',
-  `precio` DECIMAL(10,2) NOT NULL COMMENT 'Precio neto en colones',
-  `porcentaje_iva` DECIMAL(5,2) NULL COMMENT 'IVA (Generalmente 4% para servicios de salud privados)'
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `id_servicio` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_compania` int(11) NOT NULL,
+  `nombre` varchar(150) NOT NULL,
+  `codigo_cabys` varchar(13) DEFAULT NULL COMMENT 'Catálogo de Bienes y Servicios de Hacienda',
+  `precio` decimal(10,2) NOT NULL,
+  `porcentaje_iva` decimal(5,2) DEFAULT NULL COMMENT 'Si es NULL se usa companias.iva_por_defecto',
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
+  `actualizado_en` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  CONSTRAINT `fk_servicios_compania` FOREIGN KEY (`id_compania`) REFERENCES `companias` (`id_compania`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
--- TABLA: facturas (Comprobantes Electrónicos Emitidos)
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `facturas`
+-- --------------------------------------------------------
 CREATE TABLE `facturas` (
-  `id_factura` INT AUTO_INCREMENT PRIMARY KEY,
-  `id_compania` INT NOT NULL COMMENT 'Emisor de la factura',
-  `consecutivo` VARCHAR(20) NOT NULL COMMENT 'Consecutivo oficial de 20 dígitos',
-  `clave` VARCHAR(50) NOT NULL UNIQUE COMMENT 'Clave oficial de 50 dígitos del Ministerio de Hacienda',
-  `fecha_emision` DATETIME NOT NULL COMMENT 'Fecha de firma electrónica de la factura',
-  `medio_pago` ENUM('EFECTIVO','TARJETA','TRANSFERENCIA','SINPE','OTRO') NOT NULL,
-  `subtotal` DECIMAL(12,2) NOT NULL,
-  `total_iva` DECIMAL(12,2) NOT NULL,
-  `total_comprobante` DECIMAL(12,2) NOT NULL,
-  `estado_hacienda` ENUM('BORRADOR','PENDIENTE_ENVIO','ACEPTADO','RECHAZADO') NOT NULL,
-  CONSTRAINT `fk_facturas_compania` 
-    FOREIGN KEY (`id_compania`) REFERENCES `companias` (`id`) 
-    ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  `id_factura` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_compania` int(11) NOT NULL,
+  `id_consulta` int(11) NOT NULL,
+  `id_paciente` int(11) NOT NULL,
+  `consecutivo` varchar(20) NOT NULL COMMENT 'sucursal(3)+terminal(5)+tipo_doc(2)+numero(10)',
+  `clave` varchar(50) NOT NULL COMMENT 'Clave numérica de 50 dígitos (formato Hacienda)',
+  `fecha_emision` datetime NOT NULL DEFAULT current_timestamp(),
+  `condicion_venta` enum('CONTADO','CREDITO','OTROS') NOT NULL DEFAULT 'CONTADO',
+  `medio_pago` enum('EFECTIVO','TARJETA','TRANSFERENCIA','SINPE','OTRO') NOT NULL DEFAULT 'EFECTIVO',
+  `moneda` char(3) NOT NULL DEFAULT 'CRC',
+  `subtotal` decimal(12,2) NOT NULL,
+  `total_descuento` decimal(12,2) NOT NULL DEFAULT 0.00,
+  `total_iva` decimal(12,2) NOT NULL,
+  `total_comprobante` decimal(12,2) NOT NULL,
+  `estado_hacienda` enum('BORRADOR','PENDIENTE_ENVIO','ACEPTADO','RECHAZADO') NOT NULL DEFAULT 'BORRADOR',
+  `xml_firmado` longtext DEFAULT NULL,
+  `respuesta_hacienda` text DEFAULT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  `creado_por` int(11) DEFAULT NULL,
+  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
+  `actualizado_por` int(11) DEFAULT NULL,
+  `actualizado_en` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  UNIQUE KEY `uq_facturas_compania_consecutivo` (`id_compania`,`consecutivo`),
+  UNIQUE KEY `uq_facturas_clave` (`clave`),
+  UNIQUE KEY `uq_facturas_consulta` (`id_consulta`),
+  CONSTRAINT `fk_facturas_compania` FOREIGN KEY (`id_compania`) REFERENCES `companias` (`id_compania`),
+  CONSTRAINT `fk_facturas_consulta` FOREIGN KEY (`id_consulta`) REFERENCES `consultas` (`id_consulta`),
+  CONSTRAINT `fk_facturas_paciente` FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id_paciente`),
+  CONSTRAINT `fk_facturas_creado_por` FOREIGN KEY (`creado_por`) REFERENCES `usuarios` (`id_usuario`) ON DELETE SET NULL,
+  CONSTRAINT `fk_facturas_actualizado_por` FOREIGN KEY (`actualizado_por`) REFERENCES `usuarios` (`id_usuario`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `factura_lineas`
+-- --------------------------------------------------------
+CREATE TABLE `factura_lineas` (
+  `id_linea` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_factura` int(11) NOT NULL,
+  `id_servicio` int(11) DEFAULT NULL,
+  `detalle` varchar(200) NOT NULL,
+  `codigo_cabys` varchar(13) DEFAULT NULL,
+  `cantidad` decimal(10,2) NOT NULL DEFAULT 1.00,
+  `precio_unitario` decimal(10,2) NOT NULL,
+  `porcentaje_iva` decimal(5,2) NOT NULL DEFAULT 0.00,
+  `monto_iva` decimal(10,2) NOT NULL DEFAULT 0.00,
+  `monto_total` decimal(10,2) NOT NULL,
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_lineas_factura` FOREIGN KEY (`id_factura`) REFERENCES `facturas` (`id_factura`) ON DELETE CASCADE,
+  CONSTRAINT `fk_lineas_servicio` FOREIGN KEY (`id_servicio`) REFERENCES `servicios` (`id_servicio`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `notificaciones_reevaluacion`
+-- --------------------------------------------------------
+CREATE TABLE `notificaciones_reevaluacion` (
+  `id_notificacion` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_compania` int(11) NOT NULL,
+  `id_paciente` int(11) NOT NULL,
+  `id_consulta_previa` int(11) DEFAULT NULL,
+  `fecha_programada` date NOT NULL,
+  `medio_contacto` enum('WHATSAPP','EMAIL','TELEFONO') DEFAULT 'WHATSAPP',
+  `mensaje_personalizado` text DEFAULT NULL,
+  `estado_notificacion` enum('PENDIENTE','ENVIADA','RESPONDIDA','CANCELADA') DEFAULT 'PENDIENTE',
+  `creado_por` int(11) DEFAULT NULL,
+  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
+  `actualizado_por` int(11) DEFAULT NULL,
+  `actualizado_en` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  CONSTRAINT `fk_notif_compania` FOREIGN KEY (`id_compania`) REFERENCES `companias` (`id_compania`),
+  CONSTRAINT `fk_notif_paciente` FOREIGN KEY (`id_paciente`) REFERENCES `pacientes` (`id_paciente`) ON DELETE CASCADE,
+  CONSTRAINT `fk_notif_consulta` FOREIGN KEY (`id_consulta_previa`) REFERENCES `consultas` (`id_consulta`) ON DELETE SET NULL,
+  CONSTRAINT `fk_notif_creado_por` FOREIGN KEY (`creado_por`) REFERENCES `usuarios` (`id_usuario`) ON DELETE SET NULL,
+  CONSTRAINT `fk_notif_actualizado_por` FOREIGN KEY (`actualizado_por`) REFERENCES `usuarios` (`id_usuario`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 
 -- ============================================================================
--- 3. INSERCIÓN DE DATOS DE PRUEBA Y CATÁLOGOS INICIALES
+-- INSERCIÓN DE VALORES Y CATÁLOGOS INICIALES
 -- ============================================================================
 
--- 3.1 Provincias de Costa Rica
+-- 1. Provincias
 INSERT INTO `provincias` (`id_provincia`, `cod_hacienda`, `nombre`, `estado`) VALUES
 (1, '01', 'San José', 1),
 (2, '02', 'Alajuela', 1),
@@ -465,85 +623,74 @@ INSERT INTO `provincias` (`id_provincia`, `cod_hacienda`, `nombre`, `estado`) VA
 (6, '06', 'Puntarenas', 1),
 (7, '07', 'Limón', 1);
 
--- 3.2 Cantones de Costa Rica (Muestra representativa de Escazú y Alajuela)
-INSERT INTO `cantones` (`id_canton`, `id_provincia`, `cod_hacienda`, `nombre`) VALUES
-(102, 1, '02', 'Escazú'),
-(201, 2, '01', 'Alajuela');
+-- 2. Cantones (Muestra oficial)
+INSERT INTO `cantones` (`id_canton`, `id_provincia`, `cod_hacienda`, `nombre`, `estado`) VALUES
+(101, 1, '01', 'San José', 1),
+(102, 1, '02', 'Escazú', 1),
+(103, 1, '03', 'Desamparados', 1),
+(104, 1, '04', 'Puriscal', 1),
+(105, 1, '05', 'Tarrazú', 1),
+(106, 1, '06', 'Aserrí', 1),
+(107, 1, '07', 'Mora', 1),
+(108, 1, '08', 'Goicoechea', 1),
+(109, 1, '09', 'Santa Ana', 1),
+(110, 1, '10', 'Alajuelita', 1),
+(111, 1, '11', 'Vázquez de Coronado', 1),
+(112, 1, '12', 'Acosta', 1),
+(113, 1, '13', 'Tibás', 1),
+(114, 1, '14', 'Moravia', 1),
+(115, 1, '15', 'Montes de Oca', 1),
+(116, 1, '16', 'Turrubares', 1),
+(117, 1, '17', 'Dota', 1),
+(118, 1, '18', 'Curridabat', 1),
+(119, 1, '19', 'Pérez Zeledón', 1),
+(120, 1, '20', 'León Cortés', 1),
+(201, 2, '01', 'Alajuela', 1);
 
--- 3.3 Distritos de Costa Rica (Muestra representativa de San Rafael de Escazú y Alajuela Centro)
-INSERT INTO `distritos` (`id_distrito`, `id_canton`, `cod_hacienda`, `nombre`) VALUES
-(10203, 102, '03', 'San Rafael'),
-(20101, 201, '01', 'Alajuela');
+-- 3. Distritos (Muestra oficial)
+INSERT INTO `distritos` (`id_distrito`, `id_canton`, `cod_hacienda`, `nombre`, `estado`) VALUES
+(10101, 101, '01', 'Carmen', 1),
+(10102, 101, '02', 'Merced', 1),
+(10103, 101, '03', 'Hospital', 1),
+(10104, 101, '04', 'Catedral', 1),
+(10105, 101, '05', 'Zapote', 1),
+(10106, 101, '06', 'San Francisco de Dos Ríos', 1),
+(10107, 101, '07', 'Uruca', 1),
+(10108, 101, '08', 'Mata Redonda', 1),
+(10109, 101, '09', 'Pavas', 1),
+(10110, 101, '10', 'Hatillo', 1),
+(10111, 101, '11', 'San Sebástian', 1),
+(10201, 102, '01', 'Escazú', 1),
+(10202, 102, '02', 'San Antonio', 1),
+(10203, 102, '03', 'San Rafael', 1),
+(20101, 201, '01', 'ALAJUELA', 1);
 
--- 3.4 Clínicas / Compañías por defecto
-INSERT INTO `companias` (`id`, `nombreComercial`, `razonSocial`, `tipoIdentificacion`, `identificacion`, `correoEmisor`, `ivaPorDefecto`, `colorPrimario`, `colorSidebar`, `logoUrl`, `actividadEconomica`, `perfilCompania`) VALUES
-(1, 'FisioNutri Escazú', 'Clínicas de Salud Integral S.A.', '02', '3-101-445566', 'contacto@fisionutriescazu.com', 4.00, '#0f766e', '#115e59', 'https://images.unsplash.com/photo-1505751172876-fa1923c5c528?w=120&auto=format&fit=crop&q=60', '869001 (Servicios de Terapia Física y Nutrición)', 'Ambas'),
-(2, 'Clínica Elronutri Alajuela', 'Eliecer Rojas Nutrición y Terapia', '01', '5-0392-0984', 'eliecer.rojas9@gmail.com', 4.00, '#d97706', '#92400e', 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=120&auto=format&fit=crop&q=60', '851201 (Servicios de Nutrición)', 'Nutrición');
+-- 4. Clínica / Compañía por defecto
+INSERT INTO `companias` (`id_compania`, `nombre_comercial`, `razon_social`, `tipo_identificacion`, `identificacion`, `cod_actividad_economica`, `correo_emisor`, `iva_por_defecto`, `sucursal_hacienda`, `terminal_hacienda`, `siguiente_consecutivo_factura`, `color_primario`, `color_sidebar`, `logo_url`, `estado`) VALUES
+(7, 'ELRONUTRI', 'ELIECER ROJAS', '01', '503920984', '71101', 'eliecer.rojas9@gmail.com', 13.00, '001', '00001', 1, '#d27914', '#df9949', 'https://images.unsplash.com/photo-1505751172876-fa1923c5c528?auto=format&fit=crop&q=80&w=200', 1);
 
--- 3.5 Usuarios Iniciales
-INSERT INTO `usuarios` (`id`, `idCompania`, `nombre`, `usuario`, `correo`, `contrasena`, `rol`) VALUES
-(1, 1, 'Dr. Keneth Rojas', 'admin_escazu', 'contacto@fisionutriescazu.com', '123456', 'Administrador'),
-(2, 2, 'Dr. Eliecer Rojas', 'eliecer_alajuela', 'eliecer.rojas9@gmail.com', '123456', 'Administrador');
+-- 5. Usuario Administrador por defecto
+INSERT INTO `usuarios` (`id_usuario`, `id_compania`, `nombre`, `email`, `password_hash`, `rol`, `activo`, `estado`) VALUES
+(8, 7, 'ELRO', 'eliecer.rojas9@gmail.com', '$2b$10$MU3ObQnyNJLbGPvyy6BJ/ujh0tdA.O3LAKcjdmT43VsDarywtx//y', 'ADMIN', 1, 1);
 
--- 3.6 Servicios Médicos Brindados por Defecto (CABYS)
-INSERT INTO `servicios` (`id_servicio`, `nombre`, `codigo_cabys`, `precio`, `porcentaje_iva`) VALUES
-(1, 'Consulta Nutricional Completa', '9311100001000', 35000.00, 4.00),
-(2, 'Terapia Física de Descarga Muscular', '9311300002100', 25000.00, 4.00),
-(3, 'Evaluación Integral Fisioterapéutica', '9311300001000', 40000.00, 4.00);
+-- 6. Paciente por defecto
+INSERT INTO `pacientes` (`id_paciente`, `id_compania`, `nombre_completo`, `fecha_nacimiento`, `edad`, `ocupacion`, `correo_electronico`, `situacion_vivienda`, `fact_tipo_identificacion`, `fact_identificacion`, `fact_nombre`, `fact_correo`, `periodicidad_valoracion`, `proxima_valoracion`, `creado_por`, `estado`) VALUES
+(2, 7, 'KENETH ROJAS', '1994-08-13', 32, 'ADUANAS', 'KENETH.ROJAS@HOTMAIL.COM', 'SOLO', '01', '503990811', 'KENETH ROJAS', 'KENETH.ROJAS@HOTMAIL.COM', 'MENSUAL', '2026-08-16', 8, 1);
 
--- 3.7 Pacientes Iniciales (Alineados con el mock de React)
-INSERT INTO `pacientes` (`id`, `idCompania`, `nombreCompleto`, `fechaNacimiento`, `edad`, `ocupacion`, `correoElectronico`, `situacionVivienda`, `tipoIdentificacion`, `identificacion`, `telefono`, `provinciaId`, `cantonId`, `distritoId`, `otrasSenas`, `diabetes`, `hipertension`, `gastritis`, `estrenimiento`, `alergiasAlimentarias`, `fracturas`, `esguinces`, `cirugiasOrtopedicas`, `actividadFisica`) VALUES
-(1, 1, 'Keneth Rojas Delgado', '1994-08-13', 32, 'Agente de Aduanas', 'keneth.rojas@hotmail.com', 'SOLO', '01', '5-0399-0811', '8303-7805', 1, 102, 10203, 'De la Iglesia de San Rafael, 200m Oeste, casa de portón café.', 0, 1, 1, 0, 'Intolerancia a la lactosa y alergia a mariscos', 'Fractura de clavícula izquierda en 2018', 'Esguince de tobillo derecho grado II (2021)', 'Ninguna', 'Gimnasio 3 veces por semana'),
-(2, 2, 'María Elena Quesada Brenes', '1988-04-22', 38, 'Profesora de Primaria', 'maria.quesada@mep.go.cr', 'FAMILIAR', '01', '2-0456-0789', '8899-2233', 2, 201, 20101, 'Frente al parque de los niños, edificio esquinero.', 0, 0, 0, 0, 'Ninguna', 'Ninguna', 'Ninguno', 'Ninguna', 'Ninguna');
+-- 7. Teléfono de paciente
+INSERT INTO `paciente_telefonos` (`id_telefono`, `id_paciente`, `tipo_telefono`, `codigo_pais`, `numero`, `es_principal`, `estado`) VALUES
+(2, 2, 'MOVIL', '506', '83037805', 1, 1);
 
--- 3.8 Consultas SOAP Iniciales
-INSERT INTO `consultas` (`id`, `idPaciente`, `idCompania`, `fecha`, `tipo`, `motivo`, `horasSueno`, `compromiso`, `antropometria`, `dieta`, `fisioterapia`, `anotacionesGenerales`) VALUES
-(1, 1, 1, '2026-07-15', 'Fisioterapia', 'Fuerte dolor en hombro derecho tras entrenamiento de fuerza.', 6.5, 9, 
-'{"peso": 82.5, "talla": 178.0, "imc": 26.0, "grasaCorporal": 18.5, "grasaVisceral": 8.0, "masaMuscular": 36.5, "masaOsea": 4.2, "cintura": 88.0, "abdominal": 92.0}',
-'{"totalCalorias": 2200, "desayuno": "Gallo pinto, huevos revueltos, café negro sin azúcar", "meriendaManana": "Fruta de temporada con almendras", "almuerzo": "Casado con pechuga de pollo a la plancha y ensalada verde", "meriendaTarde": "Yogurt griego con granola", "cena": "Sopa de verduras con carne magra", "indicaciones": "Evitar lácteos enteros e incrementar hidratación a 3L diarios"}',
-'{"mecanismoLesion": "Movimiento brusco de abducción en press de banca plano", "diagnosticoMedico": "Tendinitis del supraespinoso (Hombro Derecho)", "evaDolor": 7, "zonaDolor": "Hombro Derecho", "tipoDolor": "Punzante al realizar abducción a más de 90 grados", "factoresAgravantes": "Cargar peso, dormir sobre el hombro derecho", "factoresAtenuantes": "Crioterapia, reposo, analgésico oral", "posturaObservaciones": "Ligera anteproyección de ambos hombros, mayor en el hombro derecho", "palpacionHallazgos": "Dolor severo a la palpación en tendón de supraespinoso e hipertonía en trapecio superior derecho", "romMedido": "Abducción activa limitada a 85 grados por dolor, flexión a 140 grados", "fuerzaDaniels": "Fuerza 3/5 en abducción de hombro derecho por dolor", "pruebasEspeciales": "Prueba de Neer positiva, Prueba de Hawkins-Kennedy positiva", "agentesFisicos": "Crioterapia por 15 minutos, Ultrasonido pulsado a 1.5 W/cm2 por 6 minutos", "terapiaManual": "Masoterapia de descarga en cuello y hombro derecho, liberación miofascial en trapecio", "ejercicioTerapeutico": "Ejercicios de péndulo de Codman en casa (3 series de 15 repeticiones, 2 veces al día)", "sesionesSugeridas": 10, "soapSubjetivo": "Paciente indica dolor agudo 7/10 en hombro derecho tras hacer press de banca.", "soapObjetivo": "Movilidad limitada, pruebas ortopédicas positivas para pinzamiento subacromial.", "soapAnalisis": "Presenta síndrome de pinzamiento del supraespinoso secundario a sobrecarga mecánica en gimnasio.", "soapPlan": "Controlar inflamación mediante agentes físicos y terapia manual. Iniciar péndulos y estiramientos suaves."}',
-'Paciente con buena actitud física pero con sobrecarga importante. Se requiere reposo de gimnasio por 1 semana.');
+-- 8. Antecedentes familiares por defecto
+INSERT INTO `antecedentes_familiares` (`id_paciente`, `obesidad`, `cancer`, `diabetes`, `dislipidemia`, `enfermedad_cardiovascular`, `hipertension`, `enfermedad_respiratoria`, `enfermedad_renal`, `problemas_tiroideos`, `epilepsia`, `artritis_reumatoide`, `problemas_psiquiatricos`, `lupus_inmunologicos`, `otros`, `observaciones`, `estado`) VALUES
+(2, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 'ABUELOS PATERNOS', 1);
 
--- 3.9 Diagnósticos de Antropometría Detallados
-INSERT INTO `evaluacion_antropometrica` (`id_antropometria`, `id_consulta`, `peso`, `talla`, `imc`, `grasa_visceral`, `masa_muscular`, `cintura`, `abdominal`) VALUES
-(1, 1, 82.50, 178.00, 26.00, 8.00, 36.50, 88.00, 92.00);
+-- 9. Antecedentes personales por defecto
+INSERT INTO `antecedentes_personales` (`id_paciente`, `diabetes`, `dislipidemia`, `enfermedad_respiratoria`, `enfermedad_cardiovascular`, `hipertension`, `enfermedad_renal`, `problemas_tiroideos`, `ulceras`, `cancer`, `cirugias`, `depresion`, `sida`, `intolerancia_alimento`, `problemas_dentales`, `problemas_masticacion_deglucion`, `hernia_hiatal`, `reflujo_gastroesofagico`, `gastritis`, `nauseas_frecuentes`, `vomitos`, `colon_irritable`, `estrenimiento`, `diarreas`, `colelitiasis`, `observaciones`, `estado`) VALUES
+(2, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 0, 0, NULL, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, NULL, 1);
 
--- 3.10 Evaluaciones de Fisioterapia Detalladas
-INSERT INTO `evaluacion_fisioterapeutica` (`id_evaluacion_fisio`, `id_consulta`, `motivo_consulta`, `mecanismo_lesion`, `diagnostico_medico`, `sintomas_principales`, `tiempo_evolucion`, `estado`) VALUES
-(1, 1, 'Fuerte dolor en hombro derecho tras entrenamiento de fuerza.', 'Movimiento brusco de abducción en press de banca plano', 'Tendinitis del supraespinoso', 'Dolor punzante, incapacidad de elevar brazo derecho', '2 días', 1);
+-- 10. Consulta por defecto
+INSERT INTO `consultas` (`id_consulta`, `id_paciente`, `id_compania`, `fecha_consulta`, `motivo_expectativas`, `horas_sueno`, `compromiso_cumplir`, `comentarios_nutricionista`, `creado_por`, `estado`) VALUES
+(4, 2, 7, '2026-07-16', 'Control de peso y porcentaje de grasa corporal.', 6.00, 8, 'Presenta buena disposición para seguir el plan alimentario recomendado.', 8, 1);
 
--- 3.11 Mapeos de Dolor
-INSERT INTO `evaluacion_dolor` (`id_dolor`, `id_consulta`, `escala_eva`, `tipo_dolor`, `localizacion_anatomica`, `factores_agravantes`, `factores_atenuantes`, `comportamiento_diario`, `estado`) VALUES
-(1, 1, 7, 'Punzante', 'Hombro Derecho', 'Movimientos por encima de la cabeza, cargar bolsas de compras', 'Reposo y compresas frías', 'Empeora en la noche al acostarse de ese lado', 1);
-
--- 3.12 Examen Físico ROM
-INSERT INTO `examen_fisico_rom` (`id_examen_fisico`, `id_consulta`, `postura_observaciones`, `palpacion_hallazgos`, `rango_movimiento_rom`, `fuerza_muscular_daniels`, `pruebas_especiales`, `estado`) VALUES
-(1, 1, 'Ligera anteproyección de hombros, más severo en el hombro derecho', 'Hipertonía severa en trapecio superior derecho y dolor intenso en fosa supraespinosa', 'Abducción activa limitada a 85° por dolor agudo', 'Escala Daniels: 3/5 en abducción de hombro', 'Neer (+), Hawkins-Kennedy (+)', 1);
-
--- 3.13 Planes de Tratamiento
-INSERT INTO `plan_tratamiento_fisioterapia` (`id_plan`, `id_consulta`, `objetivos_corto_plazo`, `objetivos_largo_plazo`, `agentes_fisicos`, `terapia_manual`, `ejercicio_terapeutico`, `frecuencia_sesiones_sugerida`, `cantidad_sesiones_total`, `estado`) VALUES
-(1, 1, 'Disminuir el dolor de 7/10 a 3/10 y desinflamar la articulación acromioclavicular', 'Recuperar el rango completo de movilidad (abducción a 180°) y retorno seguro al gimnasio', 'Ultrasonido pulsátil y termocrioterapia selectiva', 'Liberación miofascial y estiramientos pasivos asistidos', 'Ejercicios de péndulo Codman y fortalecimiento excéntrico de manguito rotador con bandas elásticas', '2 veces por semana', 10, 1);
-
--- 3.14 Sesiones de nota SOAP diarias
-INSERT INTO `sesiones_evolucion_fisioterapia` (`id_sesion`, `id_consulta`, `numero_sesion`, `fecha_sesion`, `subjetivo`, `objetivo`, `analisis`, `plan_siguiente_sesion`, `creado_por`, `estado`) VALUES
-(1, 1, 1, '2026-07-16', 'Paciente indica mejoría leve tras aplicar frío en casa, amanece con dolor 6/10', 'Se realiza terapia manual, abducción mejora pasivamente a 100°', 'Buena respuesta a la dosificación física inicial', 'Mantener agentes físicos e iniciar movilizaciones activas asistidas', 1, 1);
-
--- 3.15 Citas agendadas por defecto
-INSERT INTO `citas` (`id`, `idCompania`, `idPaciente`, `idUsuarioNutricionista`, `idConsulta`, `fechaHora`, `duracionMinutos`, `estadoCita`, `notas`, `confirmacionEnviadaEn`, `recordatorioEnviadoEn`, `cancelacionEnviadaEn`) VALUES
-(1, 1, 1, 1, 1, '2026-07-20 09:00', 45, 'PROGRAMADA', 'Seguimiento de rehabilitación de hombro y antropometría', NULL, NULL, NULL),
-(2, 2, 2, 2, NULL, '2026-07-22 14:00', 30, 'PROGRAMADA', 'Consulta inicial de hábitos alimenticios y peso', NULL, NULL, NULL);
-
--- 3.16 Parámetros SMTP por Defecto
-INSERT INTO `compania_smtp_config` (`id`, `idCompania`, `proveedor`, `smtpHost`, `smtpPort`, `smtpSeguridad`, `smtpUsuario`, `smtpPasswordCifrado`, `remitenteNombre`, `remitenteCorreo`, `recordatorioHorasAntes`, `activo`) VALUES
-(1, 1, 'OTRO', 'mail.fisionutriescazu.com', 587, 'TLS', 'notificaciones@fisionutriescazu.com', 'ClaveSegura123', 'FisioNutri Notificaciones', 'notificaciones@fisionutriescazu.com', 24, 1),
-(2, 2, 'GMAIL', 'smtp.gmail.com', 465, 'SSL', 'notificaciones.elronutri@gmail.com', 'AppPassword123', 'Elronutri Alajuela Notificaciones', 'notificaciones.elronutri@gmail.com', 24, 0);
-
--- ============================================================================
--- ÍNDICES DE OPTIMIZACIÓN DE BÚSQUEDAS
--- ============================================================================
-CREATE INDEX `idx_pacientes_identificacion` ON `pacientes` (`identificacion`);
-CREATE INDEX `idx_citas_fechahora` ON `citas` (`fechaHora`);
-CREATE INDEX `idx_consultas_fecha` ON `consultas` (`fecha`);
-CREATE INDEX `idx_notification_logs_enviado` ON `notification_logs` (`enviadoEn`);
-
--- Fin del Script completo
+-- Fin de Script completo de Creación e Inicialización de Tablas

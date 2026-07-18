@@ -126,6 +126,106 @@ export interface Consultation {
     cena: string;
     indicaciones: string;
   };
+  evaluacionAntropometrica?: {
+    peso: number;
+    talla: number;
+    imc: number;
+    c_muneca?: number;
+    porcentaje_grasa_balanza?: number;
+    grasa_visceral?: number;
+    porcentaje_agua?: number;
+    masa_muscular?: number;
+    kg_magros?: number;
+    masa_osea?: number;
+    tmb?: number;
+    edad_metabolica?: number;
+    cintura?: number;
+    circunferencia_abdominal?: number;
+    pliegue_triceps?: number;
+    pliegue_subescapular?: number;
+    pliegue_biceps?: number;
+    pliegue_cresta_iliaca?: number;
+    pliegue_supraespinal?: number;
+    pliegue_abdominal?: number;
+    pliegue_muslo_medio?: number;
+    pliegue_pierna_medial?: number;
+    perimetro_brazo_relajado?: number;
+    perimetro_brazo_contraido?: number;
+  };
+  evaluacionBioquimica?: {
+    indice_homa?: number;
+    hb1ac_glicosilada?: number;
+    vit_d?: number;
+    glicemia?: number;
+    insulinemia?: number;
+    hematocrito?: number;
+    hemoglobina?: number;
+    albumina?: number;
+    acido_urico?: number;
+    trigliceridos?: number;
+    colesterol_total?: number;
+    colesterol_hdl?: number;
+    colesterol_ldl?: number;
+    intolerancias_alimentarias?: string;
+    alergias?: string;
+  };
+  evaluacionDietetica?: {
+    tiempos_comida?: '1-2' | '3-4' | '5-6';
+    lugar_consumo?: 'Casa' | 'Fuera' | 'Ambos';
+    quien_prepara?: string;
+    calificacion_apetito?: 'Bueno' | 'Regular' | 'Malo';
+    tipo_grasas?: string;
+    coccion_asado?: boolean;
+    coccion_fritura?: boolean;
+    coccion_hervido?: boolean;
+    coccion_plancha?: boolean;
+    coccion_vapor?: boolean;
+    coccion_freidora_aire?: boolean;
+    agrega_sal?: boolean;
+    consume_azucar?: boolean;
+    utiliza_edulcorante?: boolean;
+    dietas_anteriores?: string;
+    consume_agua?: boolean;
+    cantidad_agua?: string;
+    alimentos_no_consume?: string;
+    alimentos_preferidos?: string;
+  };
+  composicionSegmentada?: {
+    grasa?: {
+      total?: number;
+      mano_izquierda?: number;
+      mano_derecha?: number;
+      pierna_derecha?: number;
+      pierna_izquierda?: number;
+      tronco?: number;
+      calificacion_grasa?: string;
+    };
+    musculo?: {
+      total?: number;
+      mano_izquierda?: number;
+      mano_derecha?: number;
+      pierna_derecha?: number;
+      pierna_izquierda?: number;
+      tronco?: number;
+    };
+  };
+  estiloVida?: {
+    realiza_ejercicio?: boolean;
+    tiempo_entrenar?: string;
+    hace_cuanto_entrena?: string;
+    hora_entreno?: string;
+    tipo_ejercicio?: string;
+    frecuencia_ejercicio_semana?: string;
+    duracion_ejercicio?: string;
+    suplementos?: string;
+    consume_alcohol?: boolean;
+    tipo_alcohol?: string;
+    frecuencia_alcohol?: string;
+    cantidad_alcohol?: string;
+    fuma?: boolean;
+    frecuencia_fumado?: string;
+    cantidad_fumado?: string;
+  };
 
   // Fisioterapia específica
   fisioterapia?: {
