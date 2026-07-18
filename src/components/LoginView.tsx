@@ -1,6 +1,16 @@
 import React, { useState } from 'react';
+import bcrypt from 'bcryptjs';
 import { Company, User, defaultUsers } from '../data/mockData';
 import { Building, Key, User as UserIcon, Mail, Briefcase, Palette, Shield, Sparkles, AlertCircle, ArrowRight, Clipboard } from 'lucide-react';
+
+const BCRYPT_HASH_PATTERN = /^\$2[aby]\$\d{2}\$/;
+
+function passwordMatches(stored: string, input: string): boolean {
+  if (BCRYPT_HASH_PATTERN.test(stored)) {
+    return bcrypt.compareSync(input, stored);
+  }
+  return stored === input;
+}
 
 interface LoginViewProps {
   companies: Company[];
@@ -48,7 +58,7 @@ export default function LoginView({
       return;
     }
 
-    if (foundUser.contrasena !== password) {
+    if (!passwordMatches(foundUser.contrasena, password)) {
       setLoginError('Contraseña incorrecta. Intente de nuevo.');
       return;
     }
