@@ -1,0 +1,18 @@
+{
+  "D:/Control-Clinico/server.ts": 1456475945,
+  "D:/Control-Clinico/src/App.tsx": 2515866843,
+  "D:/Control-Clinico/src/components/AgendaCalendar.tsx": 864685863,
+  "D:/Control-Clinico/src/components/CompanySettings.tsx": 277977517,
+  "D:/Control-Clinico/src/components/ConsultationForm.tsx": 3081824146,
+  "D:/Control-Clinico/src/components/LoginView.tsx": 3068502627,
+  "D:/Control-Clinico/src/components/PainMapSelector.tsx": 1543151191,
+  "D:/Control-Clinico/src/components/PatientForm.tsx": 3145451613,
+  "D:/Control-Clinico/src/components/ReportView.tsx": 3438857370,
+  "D:/Control-Clinico/src/data/mockData.ts": 979420210,
+  "D:/Control-Clinico/src/data/schema.ts": 4145710766,
+  "D:/Control-Clinico/src/main.tsx": 1390935990,
+  "D:/Control-Clinico/vite.config.ts": 2244806312,
+  "__graphify_meta__": {
+    "total_words": 29731
+  }
+}

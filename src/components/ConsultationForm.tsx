@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Patient, Consultation } from '../data/mockData';
-import { Sparkles, Save, X, Calendar, ClipboardList, Activity, Heart, RefreshCw, Dumbbell, ChevronRight } from 'lucide-react';
+import { Sparkles, Save, X, Calendar, ClipboardList, Activity, Heart, Dumbbell, ChevronRight } from 'lucide-react';
 import PainMapSelector from './PainMapSelector';
 
 interface ConsultationFormProps {
@@ -29,9 +29,6 @@ export default function ConsultationForm({ patient, onSave, onCancel, themeColor
   const [horasSueno, setHorasSueno] = useState(7);
   const [compromiso, setCompromiso] = useState(8);
   const [anotaciones, setAnotaciones] = useState('');
-
-  // IA Loading states
-  const [isAiGenerating, setIsAiGenerating] = useState(false);
 
   // Nutrition Specific
   const [peso, setPeso] = useState(75);
@@ -167,78 +164,6 @@ export default function ConsultationForm({ patient, onSave, onCancel, themeColor
 
   // Auto-calculate IMC
   const calculatedImc = parseFloat((peso / ((talla / 100) * (talla / 100))).toFixed(1));
-
-  // AI Generation triggers
-  const handleAiPrescribeNutrition = async () => {
-    setIsAiGenerating(true);
-    try {
-      const prompt = `Como nutricionista clínica en Costa Rica, diseña una recomendación de dieta diaria express de ${calorias} kcal para el paciente ${patient.nombreCompleto} de ${patient.edad} años, con diagnóstico de gastritis: ${patient.gastritis ? 'Sí' : 'No'}, diabetes: ${patient.diabetes ? 'Sí' : 'No'}, hipertensión: ${patient.hipertension ? 'Sí' : 'No'}. Alergias: ${patient.alergiasAlimentarias}.
-Conserva un formato JSON estricto con las claves: desayuno, meriendaManana, almuerzo, meriendaTarde, cena, indicaciones adicionales. Usa platillos de la gastronomía costarricense saludables (gallo pinto ligero, papaya, cas, queso tierno, aguacate, pescado). Retorna SOLO el JSON sin markdown ni explicaciones adicionales.`;
-
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: prompt, schemaContext: '' })
-      });
-
-      const data = await res.json();
-      if (data.text) {
-        // Parse JSON safely
-        const cleanJsonStr = data.text.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsed = JSON.parse(cleanJsonStr);
-        setDesayuno(parsed.desayuno || '');
-        setMeriendaMan(parsed.meriendaManana || '');
-        setAlmuerzo(parsed.almuerzo || '');
-        setMeriendaTar(parsed.meriendaTarde || '');
-        setCena(parsed.cena || '');
-        setIndicacionesDieta(parsed.indicaciones || '');
-        setAnotaciones("Prescripción nutricional sugerida automáticamente por el Copilot de IA.");
-      }
-    } catch (e) {
-      console.error(e);
-      alert("No se pudo conectar con el motor de IA. Por favor, ingresa los datos de la dieta manualmente.");
-    } finally {
-      setIsAiGenerating(false);
-    }
-  };
-
-  const handleAiPrescribeFisio = async () => {
-    setIsAiGenerating(true);
-    try {
-      const prompt = `Como fisioterapeuta kinesiologo experto en Costa Rica, prescribe un tratamiento de terapia física y redacta la nota SOAP para un dolor localizado en "${zonaDolor}" de intensidad EVA ${evaDolor}/10, tipo de dolor "${tipoDolor}". El paciente es ${patient.nombreCompleto}.
-Retorna un objeto JSON estricto con las siguientes claves: postura, palpacion, rom, daniels, pruebas, agentesFisicos, terapiaManual, ejercicios, subjetivo, objetivo, analisis, plan. Retorna SOLO el JSON sin explicaciones adicionales.`;
-
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: prompt, schemaContext: '' })
-      });
-
-      const data = await res.json();
-      if (data.text) {
-        const cleanJsonStr = data.text.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsed = JSON.parse(cleanJsonStr);
-        setPosturaObservaciones(parsed.postura || '');
-        setPalpacionHallazgos(parsed.palpacion || '');
-        setRomMedido(parsed.rom || '');
-        setFuerzaDaniels(parsed.daniels || '');
-        setPruebasEspeciales(parsed.pruebas || '');
-        setAgentesFisicos(parsed.agentesFisicos || '');
-        setTerapiaManual(parsed.terapiaManual || '');
-        setEjercicioTerapeutico(parsed.ejercicios || '');
-        setSoapSubjetivo(parsed.subjetivo || '');
-        setSoapObjetivo(parsed.objetivo || '');
-        setSoapAnalisis(parsed.analisis || '');
-        setSoapPlan(parsed.plan || '');
-        setAnotaciones("Plan fisioterapéutico y notas SOAP optimizados por el Copilot de IA.");
-      }
-    } catch (e) {
-      console.error(e);
-      alert("No se pudo conectar con la IA. Por favor, rellena los campos clínicos del examen físico manualmente.");
-    } finally {
-      setIsAiGenerating(false);
-    }
-  };
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1494,41 +1419,16 @@ Retorna un objeto JSON estricto con las siguientes claves: postura, palpacion, r
               </div>
             </details>
 
-            {/* Accordion 7: Dieta de Recetas e IA */}
+            {/* Accordion 7: Dieta de Recetas */}
             <details className="group border border-slate-200 rounded-xl overflow-hidden bg-slate-50/45">
               <summary className="flex justify-between items-center font-bold p-3 text-slate-700 bg-white cursor-pointer select-none border-b border-slate-100 hover:bg-slate-50 transition-all">
                 <div className="flex items-center gap-2">
                   <Heart className="w-4 h-4 text-emerald-600 animate-pulse" />
-                  <span>Diseño del Menú Semanal & Generador de Recetas con IA</span>
+                  <span>Diseño del Menú Semanal & Generador de Recetas</span>
                 </div>
                 <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-400" />
               </summary>
               <div className="p-4 space-y-4">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 bg-emerald-50/30 p-3 rounded-lg border border-emerald-100/50">
-                  <div className="text-xs">
-                    <span className="font-bold text-slate-700 block">¿Deseas ayuda clínica con Inteligencia Artificial?</span>
-                    <span className="text-slate-500 text-[10.5px]">Genera recetas personalizadas adaptadas a Costa Rica (ingredientes locales, gallo pinto ligero, chayote, queso tierno).</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleAiPrescribeNutrition}
-                    disabled={isAiGenerating}
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs py-1.5 px-3 rounded-lg shadow-md transition-all flex items-center gap-1.5 shrink-0 self-end sm:self-auto"
-                  >
-                    {isAiGenerating ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        Prescribiendo Dieta...
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="w-3.5 h-3.5" />
-                        Generar Menú con IA Costa Rica
-                      </>
-                    )}
-                  </button>
-                </div>
-
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 w-56">
                     <label className="block text-slate-600 font-bold mb-1">Presupuesto Calórico Diario (kcal)</label>
@@ -1618,24 +1518,6 @@ Retorna un objeto JSON estricto con las siguientes claves: postura, palpacion, r
                 <Dumbbell className="w-4 h-4 text-teal-600" />
                 Valoración Mecánica, Dolor & Kinesiología
               </h4>
-              <button
-                type="button"
-                onClick={handleAiPrescribeFisio}
-                disabled={isAiGenerating}
-                className="bg-teal-700 hover:bg-teal-600 text-white font-semibold text-xs py-1.5 px-3 rounded-lg shadow-md transition-all flex items-center gap-1.5"
-              >
-                {isAiGenerating ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    Prescribiendo Tratamiento...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-3.5 h-3.5" />
-                    Generar Plan Completo con IA
-                  </>
-                )}
-              </button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
