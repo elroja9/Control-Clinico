@@ -50,7 +50,8 @@ import {
   User,
   Cita,
   CompaniaSmtpConfig,
-  NotificationLog
+  NotificationLog,
+  SmtpConfigInput
 } from './data/mockData';
 
 import CompanySettings from './components/CompanySettings';
@@ -422,7 +423,7 @@ export default function App() {
     }
   };
 
-  const handleUpdateSmtpConfig = (updatedSmtp: CompaniaSmtpConfig) => {
+  const handleUpdateSmtpConfig = (updatedSmtp: SmtpConfigInput) => {
     fetch('/api/smtp-configs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -437,12 +438,26 @@ export default function App() {
     })
     .catch(err => {
       console.error("Error saving SMTP config to MySQL:", err);
-      const exists = smtpConfigs.some(s => s.idCompania === updatedSmtp.idCompania);
-      if (exists) {
-        setSmtpConfigs(prev => prev.map(s => s.idCompania === updatedSmtp.idCompania ? updatedSmtp : s));
-      } else {
-        setSmtpConfigs(prev => [...prev, updatedSmtp]);
-      }
+      setSmtpConfigs(prev => {
+        const existing = prev.find(s => s.idCompania === updatedSmtp.idCompania);
+        const merged: CompaniaSmtpConfig = {
+          id: existing ? existing.id : Math.max(0, ...prev.map(s => s.id)) + 1,
+          idCompania: updatedSmtp.idCompania,
+          proveedor: updatedSmtp.proveedor,
+          smtpHost: updatedSmtp.smtpHost,
+          smtpPort: updatedSmtp.smtpPort,
+          smtpSeguridad: updatedSmtp.smtpSeguridad,
+          smtpUsuario: updatedSmtp.smtpUsuario,
+          smtpPasswordCifrado: existing?.smtpPasswordCifrado || '',
+          remitenteNombre: updatedSmtp.remitenteNombre,
+          remitenteCorreo: updatedSmtp.remitenteCorreo,
+          recordatorioHorasAntes: updatedSmtp.recordatorioHorasAntes,
+          activo: updatedSmtp.activo,
+          tieneContrasena: !!existing?.smtpPasswordCifrado
+        };
+        const exists = prev.some(s => s.idCompania === updatedSmtp.idCompania);
+        return exists ? prev.map(s => s.idCompania === updatedSmtp.idCompania ? merged : s) : [...prev, merged];
+      });
     });
   };
 

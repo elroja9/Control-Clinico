@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Company, CompaniaSmtpConfig } from '../data/mockData';
+import { Company, CompaniaSmtpConfig, SmtpConfigInput } from '../data/mockData';
 import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Database, Copy, Mail, Server } from 'lucide-react';
 
 interface CompanySettingsProps {
@@ -9,7 +9,7 @@ interface CompanySettingsProps {
   onUpdateCompany: (company: Company) => void;
   onAddCompany: (company: Company) => void;
   smtpConfigs: CompaniaSmtpConfig[];
-  onUpdateSmtpConfig: (config: CompaniaSmtpConfig) => void;
+  onUpdateSmtpConfig: (config: SmtpConfigInput) => void;
 }
 
 export default function CompanySettings({
@@ -49,6 +49,7 @@ export default function CompanySettings({
   const [smtpRemitenteCorreo, setSmtpRemitenteCorreo] = useState('');
   const [smtpRecordatorioHoras, setSmtpRecordatorioHoras] = useState(24);
   const [smtpActivo, setSmtpActivo] = useState(false);
+  const [smtpTieneContrasena, setSmtpTieneContrasena] = useState(false);
 
   // Sync SMTP fields when company changes
   useEffect(() => {
@@ -71,7 +72,8 @@ export default function CompanySettings({
     setSmtpPort(matched.smtpPort);
     setSmtpSeguridad(matched.smtpSeguridad);
     setSmtpUsuario(matched.smtpUsuario);
-    setSmtpPassword(matched.smtpPasswordCifrado);
+    setSmtpPassword('');
+    setSmtpTieneContrasena(!!(matched as CompaniaSmtpConfig).tieneContrasena);
     setSmtpRemitenteNombre(matched.remitenteNombre);
     setSmtpRemitenteCorreo(matched.remitenteCorreo);
     setSmtpRecordatorioHoras(matched.recordatorioHorasAntes);
@@ -81,7 +83,7 @@ export default function CompanySettings({
   const handleSaveSmtp = (e: React.FormEvent) => {
     e.preventDefault();
     const matched = smtpConfigs.find(s => s.idCompania === selectedCompanyId);
-    const updatedSmtp: CompaniaSmtpConfig = {
+    const updatedSmtp: SmtpConfigInput = {
       id: matched ? matched.id : Math.max(...smtpConfigs.map(s => s.id), 0) + 1,
       idCompania: selectedCompanyId,
       proveedor: smtpProveedor,
@@ -89,7 +91,7 @@ export default function CompanySettings({
       smtpPort: smtpPort,
       smtpSeguridad: smtpSeguridad,
       smtpUsuario: smtpUsuario,
-      smtpPasswordCifrado: smtpPassword,
+      ...(smtpPassword.trim() ? { smtpPassword: smtpPassword.trim() } : {}),
       remitenteNombre: smtpRemitenteNombre,
       remitenteCorreo: smtpRemitenteCorreo,
       recordatorioHorasAntes: smtpRecordatorioHoras,
@@ -389,9 +391,10 @@ export default function CompanySettings({
               <label className="block text-slate-600 mb-1 font-semibold">Contraseña SMTP / App Password</label>
               <input
                 type="password"
-                required
+                required={!smtpTieneContrasena}
                 value={smtpPassword}
                 onChange={(e) => setSmtpPassword(e.target.value)}
+                placeholder={smtpTieneContrasena ? '•••••••• (dejar en blanco para mantener la actual)' : 'Ingresa la contraseña o App Password'}
                 className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
               />
             </div>
