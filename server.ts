@@ -838,6 +838,45 @@ async function startServer() {
         return res.status(400).json({ error: "Las notificaciones SMTP no están activas para esta empresa." });
       }
 
+      async function fetchPatientById(id: number): Promise<Patient | undefined> {
+        if (dbConnected && pool) {
+          const [rows] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [id, id]);
+          return (rows as any[]).map(normalizeRow)[0];
+        }
+        return localPatients.find(p => p.id === id);
+      }
+
+      async function fetchCitaById(id: number): Promise<Cita | undefined> {
+        if (dbConnected && pool) {
+          // Note: unlike pacientes/consultas, the dynamically-created `citas` table (see CREATE TABLE
+          // IF NOT EXISTS citas above) has no `id_cita` column at all -- its real PK is just `id`.
+          // Querying "id_cita" here throws "Unknown column 'id_cita'" (verified live), so we only match on `id`.
+          const [rows] = await pool.query("SELECT * FROM citas WHERE id = ?", [id]);
+          return (rows as any[]).map(normalizeRow)[0];
+        }
+        return localCitas.find(c => c.id === id);
+      }
+
+      async function fetchConsultationById(id: number): Promise<Consultation | undefined> {
+        if (dbConnected && pool) {
+          const [rows] = await pool.query("SELECT * FROM consultas WHERE id = ? OR id_consulta = ?", [id, id]);
+          const row = (rows as any[]).map(normalizeRow)[0];
+          if (!row) return undefined;
+          return {
+            ...row,
+            antropometria: typeof row.antropometria === 'string' ? JSON.parse(row.antropometria) : row.antropometria,
+            dieta: typeof row.dieta === 'string' ? JSON.parse(row.dieta) : row.dieta,
+            fisioterapia: typeof row.fisioterapia === 'string' ? JSON.parse(row.fisioterapia) : row.fisioterapia,
+            evaluacionAntropometrica: typeof row.evaluacionAntropometrica === 'string' ? JSON.parse(row.evaluacionAntropometrica) : row.evaluacionAntropometrica,
+            evaluacionBioquimica: typeof row.evaluacionBioquimica === 'string' ? JSON.parse(row.evaluacionBioquimica) : row.evaluacionBioquimica,
+            evaluacionDietetica: typeof row.evaluacionDietetica === 'string' ? JSON.parse(row.evaluacionDietetica) : row.evaluacionDietetica,
+            composicionSegmentada: typeof row.composicionSegmentada === 'string' ? JSON.parse(row.composicionSegmentada) : row.composicionSegmentada,
+            estiloVida: typeof row.estiloVida === 'string' ? JSON.parse(row.estiloVida) : row.estiloVida
+          };
+        }
+        return localConsultations.find(c => c.id === id);
+      }
+
       let rendered;
       let idCita: number | null = null;
       let idConsulta: number | null = null;
@@ -845,15 +884,35 @@ async function startServer() {
       let tipoLog: string;
 
       if (body.tipo === "CITA") {
-        const patient: Patient = body.patient;
-        const cita: Cita = body.cita;
-        rendered = renderCitaEmail({ company, patient, cita, tipoNotif: body.tipoNotif });
+        const idPaciente = parseInt(body.patient?.id);
+        const idCitaBody = parseInt(body.cita?.id);
+        if (!idPaciente || !idCitaBody) {
+          return res.status(400).json({ error: "Falta el identificador del paciente o de la cita." });
+        }
+        const tipoNotif = body.tipoNotif;
+        if (tipoNotif !== "CONFIRMACION" && tipoNotif !== "CANCELACION" && tipoNotif !== "MODIFICACION") {
+          return res.status(400).json({ error: "tipoNotif inválido." });
+        }
+        const patient = await fetchPatientById(idPaciente);
+        const cita = await fetchCitaById(idCitaBody);
+        if (!patient || !cita) {
+          return res.status(400).json({ error: "Paciente o cita no encontrados." });
+        }
+        rendered = renderCitaEmail({ company, patient, cita, tipoNotif });
         idCita = cita.id;
         destinatario = patient.correoElectronico;
-        tipoLog = body.tipoNotif;
+        tipoLog = tipoNotif;
       } else if (body.tipo === "CONSULTA") {
-        const patient: Patient = body.patient;
-        const consultation: Consultation = body.consultation;
+        const idPaciente = parseInt(body.patient?.id);
+        const idConsultaBody = parseInt(body.consultation?.id);
+        if (!idPaciente || !idConsultaBody) {
+          return res.status(400).json({ error: "Falta el identificador del paciente o de la consulta." });
+        }
+        const patient = await fetchPatientById(idPaciente);
+        const consultation = await fetchConsultationById(idConsultaBody);
+        if (!patient || !consultation) {
+          return res.status(400).json({ error: "Paciente o consulta no encontrados." });
+        }
         rendered = renderConsultaEmail({ company, patient, consultation });
         idConsulta = consultation.id;
         destinatario = patient.correoElectronico;
