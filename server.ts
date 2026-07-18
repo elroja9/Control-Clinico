@@ -3,6 +3,8 @@ import path from "path";
 import fs from "fs";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
+import { encryptSecret } from "./server/crypto";
+import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
   defaultCompanies,
@@ -678,16 +680,19 @@ async function startServer() {
   // 6. SMTP Configs
   app.get("/api/smtp-configs", async (req, res) => {
     try {
+      let rows: CompaniaSmtpConfig[];
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM compania_smtp_config");
-        const formatted = (rows as any[]).map(row => ({
-          ...row,
-          activo: !!row.activo
-        }));
-        res.json(formatted);
+        const [dbRows] = await pool.query("SELECT * FROM compania_smtp_config");
+        rows = (dbRows as any[]).map(row => ({ ...row, activo: !!row.activo }));
       } else {
-        res.json(localSmtpConfigs);
+        rows = localSmtpConfigs;
       }
+      const sanitized = rows.map(row => ({
+        ...row,
+        smtpPasswordCifrado: "",
+        tieneContrasena: !!row.smtpPasswordCifrado
+      }));
+      res.json(sanitized);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -696,30 +701,56 @@ async function startServer() {
   app.post("/api/smtp-configs", async (req, res) => {
     try {
       const s = req.body;
+      const idCompania = parseInt(s.idCompania);
+
+      let existingPassword = "";
       if (dbConnected && pool) {
-        const [exists] = await pool.query("SELECT id FROM compania_smtp_config WHERE idCompania = ?", [parseInt(s.idCompania)]);
+        const [existingRows] = await pool.query("SELECT smtpPasswordCifrado FROM compania_smtp_config WHERE idCompania = ?", [idCompania]);
+        existingPassword = (existingRows as any[])[0]?.smtpPasswordCifrado || "";
+      } else {
+        existingPassword = localSmtpConfigs.find(c => c.idCompania === idCompania)?.smtpPasswordCifrado || "";
+      }
+
+      const smtpPasswordCifrado = s.smtpPassword && String(s.smtpPassword).trim()
+        ? encryptSecret(String(s.smtpPassword).trim())
+        : existingPassword;
+
+      if (dbConnected && pool) {
+        const [exists] = await pool.query("SELECT id FROM compania_smtp_config WHERE idCompania = ?", [idCompania]);
         if ((exists as any).length > 0) {
           await pool.query(
             "UPDATE compania_smtp_config SET proveedor = ?, smtpHost = ?, smtpPort = ?, smtpSeguridad = ?, smtpUsuario = ?, smtpPasswordCifrado = ?, remitenteNombre = ?, remitenteCorreo = ?, recordatorioHorasAntes = ?, activo = ? WHERE idCompania = ?",
-            [s.provider || s.proveedor, s.smtpHost, parseInt(s.smtpPort), s.smtpSeguridad, s.smtpUsuario, s.smtpPasswordCifrado, s.remitenteNombre, s.remitenteCorreo, parseInt(s.recordatorioHorasAntes), s.activo ? 1 : 0, parseInt(s.idCompania)]
+            [s.provider || s.proveedor, s.smtpHost, parseInt(s.smtpPort), s.smtpSeguridad, s.smtpUsuario, smtpPasswordCifrado, s.remitenteNombre, s.remitenteCorreo, parseInt(s.recordatorioHorasAntes), s.activo ? 1 : 0, idCompania]
           );
-          return res.json(s);
-        }
-        const [result] = await pool.query(
-          "INSERT INTO compania_smtp_config (idCompania, proveedor, smtpHost, smtpPort, smtpSeguridad, smtpUsuario, smtpPasswordCifrado, remitenteNombre, remitenteCorreo, recordatorioHorasAntes, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(s.idCompania), s.provider || s.proveedor, s.smtpHost, parseInt(s.smtpPort), s.smtpSeguridad, s.smtpUsuario, s.smtpPasswordCifrado, s.remitenteNombre, s.remitenteCorreo, parseInt(s.recordatorioHorasAntes), s.activo ? 1 : 0]
-        );
-        s.id = (result as any).insertId;
-        res.json(s);
-      } else {
-        const index = localSmtpConfigs.findIndex(item => item.idCompania === s.idCompania);
-        if (index !== -1) {
-          localSmtpConfigs[index] = s;
         } else {
-          s.id = Math.max(0, ...localSmtpConfigs.map(item => item.id)) + 1;
-          localSmtpConfigs.push(s);
+          await pool.query(
+            "INSERT INTO compania_smtp_config (idCompania, proveedor, smtpHost, smtpPort, smtpSeguridad, smtpUsuario, smtpPasswordCifrado, remitenteNombre, remitenteCorreo, recordatorioHorasAntes, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [idCompania, s.provider || s.proveedor, s.smtpHost, parseInt(s.smtpPort), s.smtpSeguridad, s.smtpUsuario, smtpPasswordCifrado, s.remitenteNombre, s.remitenteCorreo, parseInt(s.recordatorioHorasAntes), s.activo ? 1 : 0]
+          );
         }
-        res.json(s);
+        res.json({ ...s, idCompania, smtpPasswordCifrado: "", tieneContrasena: !!smtpPasswordCifrado });
+      } else {
+        const index = localSmtpConfigs.findIndex(item => item.idCompania === idCompania);
+        const stored: CompaniaSmtpConfig = {
+          id: index !== -1 ? localSmtpConfigs[index].id : Math.max(0, ...localSmtpConfigs.map(item => item.id)) + 1,
+          idCompania,
+          proveedor: s.proveedor,
+          smtpHost: s.smtpHost,
+          smtpPort: parseInt(s.smtpPort),
+          smtpSeguridad: s.smtpSeguridad,
+          smtpUsuario: s.smtpUsuario,
+          smtpPasswordCifrado,
+          remitenteNombre: s.remitenteNombre,
+          remitenteCorreo: s.remitenteCorreo,
+          recordatorioHorasAntes: parseInt(s.recordatorioHorasAntes),
+          activo: !!s.activo
+        };
+        if (index !== -1) {
+          localSmtpConfigs[index] = stored;
+        } else {
+          localSmtpConfigs.push(stored);
+        }
+        res.json({ ...stored, smtpPasswordCifrado: "", tieneContrasena: !!smtpPasswordCifrado });
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
