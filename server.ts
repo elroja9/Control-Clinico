@@ -717,18 +717,35 @@ async function startServer() {
 
       if (dbConnected && pool) {
         const [exists] = await pool.query("SELECT id FROM compania_smtp_config WHERE idCompania = ?", [idCompania]);
+        let responseId: number;
         if ((exists as any).length > 0) {
           await pool.query(
             "UPDATE compania_smtp_config SET proveedor = ?, smtpHost = ?, smtpPort = ?, smtpSeguridad = ?, smtpUsuario = ?, smtpPasswordCifrado = ?, remitenteNombre = ?, remitenteCorreo = ?, recordatorioHorasAntes = ?, activo = ? WHERE idCompania = ?",
             [s.provider || s.proveedor, s.smtpHost, parseInt(s.smtpPort), s.smtpSeguridad, s.smtpUsuario, smtpPasswordCifrado, s.remitenteNombre, s.remitenteCorreo, parseInt(s.recordatorioHorasAntes), s.activo ? 1 : 0, idCompania]
           );
+          responseId = (exists as any)[0].id;
         } else {
-          await pool.query(
+          const [result] = await pool.query(
             "INSERT INTO compania_smtp_config (idCompania, proveedor, smtpHost, smtpPort, smtpSeguridad, smtpUsuario, smtpPasswordCifrado, remitenteNombre, remitenteCorreo, recordatorioHorasAntes, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [idCompania, s.provider || s.proveedor, s.smtpHost, parseInt(s.smtpPort), s.smtpSeguridad, s.smtpUsuario, smtpPasswordCifrado, s.remitenteNombre, s.remitenteCorreo, parseInt(s.recordatorioHorasAntes), s.activo ? 1 : 0]
           );
+          responseId = (result as any).insertId;
         }
-        res.json({ ...s, idCompania, smtpPasswordCifrado: "", tieneContrasena: !!smtpPasswordCifrado });
+        res.json({
+          id: responseId,
+          idCompania,
+          proveedor: s.provider || s.proveedor,
+          smtpHost: s.smtpHost,
+          smtpPort: parseInt(s.smtpPort),
+          smtpSeguridad: s.smtpSeguridad,
+          smtpUsuario: s.smtpUsuario,
+          remitenteNombre: s.remitenteNombre,
+          remitenteCorreo: s.remitenteCorreo,
+          recordatorioHorasAntes: parseInt(s.recordatorioHorasAntes),
+          activo: !!s.activo,
+          smtpPasswordCifrado: "",
+          tieneContrasena: !!smtpPasswordCifrado
+        });
       } else {
         const index = localSmtpConfigs.findIndex(item => item.idCompania === idCompania);
         const stored: CompaniaSmtpConfig = {
