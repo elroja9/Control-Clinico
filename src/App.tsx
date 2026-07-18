@@ -44,6 +44,7 @@ import {
   defaultCitas,
   defaultSmtpConfigs,
   defaultNotificationLogs,
+  defaultCalendarBlocks,
   Company,
   Patient,
   Consultation,
@@ -51,7 +52,8 @@ import {
   Cita,
   CompaniaSmtpConfig,
   NotificationLog,
-  SmtpConfigInput
+  SmtpConfigInput,
+  CalendarBlock
 } from './data/mockData';
 
 import CompanySettings from './components/CompanySettings';
@@ -108,6 +110,11 @@ export default function App() {
   const [logs, setLogs] = useState<NotificationLog[]>(() => {
     const local = localStorage.getItem('fisio_notification_logs');
     return local ? JSON.parse(local) : defaultNotificationLogs;
+  });
+
+  const [calendarBlocks, setCalendarBlocks] = useState<CalendarBlock[]>(() => {
+    const local = localStorage.getItem('fisio_calendar_blocks');
+    return local ? JSON.parse(local) : defaultCalendarBlocks;
   });
 
   // --- Initial MySQL Synchronization & Load ---
@@ -194,6 +201,17 @@ export default function App() {
         if (data && data.length > 0) setLogs(data);
       })
       .catch(err => console.log("MySQL offline, using local fallback for logs"));
+
+    // 9. Fetch calendar blocks
+    fetch('/api/calendar-blocks')
+      .then(res => {
+        if (!res.ok) throw new Error("API error");
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.length > 0) setCalendarBlocks(data);
+      })
+      .catch(err => console.log("MySQL offline, using local fallback for calendar blocks"));
   }, []);
 
   // Save state updates to LocalStorage as secondary local cache / fallback
@@ -212,6 +230,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('fisio_citas', JSON.stringify(citas));
   }, [citas]);
+
+  useEffect(() => {
+    localStorage.setItem('fisio_calendar_blocks', JSON.stringify(calendarBlocks));
+  }, [calendarBlocks]);
 
   useEffect(() => {
     localStorage.setItem('fisio_smtp_configs', JSON.stringify(smtpConfigs));
@@ -421,6 +443,39 @@ export default function App() {
           setCitas(prev => prev.filter(c => c.id !== id));
         });
     }
+  };
+
+  const handleSaveCalendarBlock = (block: CalendarBlock) => {
+    fetch('/api/calendar-blocks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(block)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setCalendarBlocks(prev => {
+        const exists = prev.some(b => b.id === data.id);
+        return exists ? prev.map(b => b.id === data.id ? data : b) : [...prev, data];
+      });
+    })
+    .catch(err => {
+      console.error("Error saving calendar block to MySQL:", err);
+      setCalendarBlocks(prev => {
+        const exists = prev.some(b => b.id === block.id);
+        return exists ? prev.map(b => b.id === block.id ? block : b) : [...prev, block];
+      });
+    });
+  };
+
+  const handleDeleteCalendarBlock = (id: number) => {
+    fetch(`/api/calendar-blocks/${id}`, { method: 'DELETE' })
+      .then(() => {
+        setCalendarBlocks(prev => prev.filter(b => b.id !== id));
+      })
+      .catch(err => {
+        console.error("Error deleting calendar block from MySQL:", err);
+        setCalendarBlocks(prev => prev.filter(b => b.id !== id));
+      });
   };
 
   const handleUpdateSmtpConfig = (updatedSmtp: SmtpConfigInput) => {
@@ -1257,6 +1312,9 @@ export default function App() {
                 onDeleteCita={handleDeleteCita}
                 onTriggerNotification={handleAddNotificationLog}
                 onStartConsultation={(patient) => handleStartSoapFromCalendar(patient.id)}
+                calendarBlocks={calendarBlocks}
+                onSaveCalendarBlock={handleSaveCalendarBlock}
+                onDeleteCalendarBlock={handleDeleteCalendarBlock}
                 themeColor={activeCompany.colorPrimario}
               />
             )}
