@@ -127,6 +127,20 @@ export default function AgendaCalendar({
     return date.toISOString().split('T')[0];
   };
 
+  // Returns the block covering (dateStr, timeStr) for the currently-filtered specialist, or undefined.
+  // No block shading applies when "Todos los Especialistas" (id 0) is selected — a block is only
+  // meaningful in relation to one specific specialist's calendar.
+  const isSlotBlocked = (dateStr: string, timeStr?: string): CalendarBlock | undefined => {
+    if (selectedDoctorId === 0) return undefined;
+    return calendarBlocks.find(b => {
+      if (b.idCompania !== activeCompanyId || b.idUsuarioNutricionista !== selectedDoctorId) return false;
+      if (dateStr < b.fechaInicio || dateStr > b.fechaFin) return false;
+      if (!b.horaInicio || !b.horaFin) return true;
+      if (!timeStr) return false;
+      return timeStr >= b.horaInicio && timeStr < b.horaFin;
+    });
+  };
+
   // Navigation handlers
   const handlePrev = () => {
     const newDate = new Date(currentDate);
@@ -255,6 +269,21 @@ export default function AgendaCalendar({
     if (!patient) return;
 
     const fullFechaHora = `${formDate}T${formTime}`;
+
+    const slotChanged = !selectedCita || selectedCita.fechaHora !== fullFechaHora || selectedCita.idUsuarioNutricionista !== formDoctorId;
+    if (slotChanged) {
+      const blockingBlock = calendarBlocks.find(b => {
+        if (b.idCompania !== activeCompanyId || b.idUsuarioNutricionista !== formDoctorId) return false;
+        if (formDate < b.fechaInicio || formDate > b.fechaFin) return false;
+        if (!b.horaInicio || !b.horaFin) return true;
+        return formTime >= b.horaInicio && formTime < b.horaFin;
+      });
+      if (blockingBlock) {
+        setFormError(`Este horario está bloqueado${blockingBlock.motivo ? `: ${blockingBlock.motivo}` : '.'} Elige otra fecha/hora.`);
+        return;
+      }
+    }
+
     const nextId = selectedCita ? selectedCita.id : Math.max(...citas.map(c => c.id), 0) + 1;
 
     const savedCita: Cita = {
@@ -352,14 +381,26 @@ export default function AgendaCalendar({
     for (let day = 1; day <= totalDays; day++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const dayCitas = filteredCitas.filter(c => c.fechaHora.startsWith(dateStr));
+      const dayBlock = isSlotBlocked(dateStr);
 
       days.push(
-        <div 
-          key={`day-${day}`} 
-          onClick={() => handleOpenNewCita(dateStr)}
-          className="h-28 border border-slate-100 hover:bg-slate-50/40 p-1.5 transition-colors cursor-pointer relative flex flex-col justify-between"
+        <div
+          key={`day-${day}`}
+          onClick={() => {
+            if (dayBlock) {
+              alert(`Este día está bloqueado${dayBlock.motivo ? `: ${dayBlock.motivo}` : '.'}`);
+              return;
+            }
+            handleOpenNewCita(dateStr);
+          }}
+          className={`h-28 border border-slate-100 p-1.5 transition-colors cursor-pointer relative flex flex-col justify-between ${
+            dayBlock ? 'bg-slate-100/70 bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(100,116,139,0.08)_6px,rgba(100,116,139,0.08)_12px)]' : 'hover:bg-slate-50/40'
+          }`}
         >
-          <span className="text-xs font-bold text-slate-500">{day}</span>
+          <span className="text-xs font-bold text-slate-500 flex items-center gap-1">
+            {day}
+            {dayBlock && <Lock className="w-3 h-3 text-slate-400" />}
+          </span>
           <div className="flex-1 overflow-y-auto space-y-1 mt-1 scrollbar-thin">
             {dayCitas.map(cita => {
               const patient = patients.find(p => p.id === cita.idPaciente);
@@ -450,12 +491,25 @@ export default function AgendaCalendar({
                     return cDate === dateStr && cTime.startsWith(String(h).padStart(2, '0'));
                   });
 
+                  const slotBlock = isSlotBlocked(dateStr, timeStr);
+
                   return (
-                    <div 
-                      key={i} 
-                      onClick={() => handleOpenNewCita(dateStr, timeStr)}
-                      className="border-r border-slate-100 hover:bg-slate-50/30 p-1 relative cursor-pointer min-h-16 flex flex-col gap-1 transition-colors"
+                    <div
+                      key={i}
+                      onClick={() => {
+                        if (slotBlock) {
+                          alert(`Este horario está bloqueado${slotBlock.motivo ? `: ${slotBlock.motivo}` : '.'}`);
+                          return;
+                        }
+                        handleOpenNewCita(dateStr, timeStr);
+                      }}
+                      className={`border-r border-slate-100 p-1 relative cursor-pointer min-h-16 flex flex-col gap-1 transition-colors ${
+                        slotBlock ? 'bg-slate-100/70 bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(100,116,139,0.08)_6px,rgba(100,116,139,0.08)_12px)]' : 'hover:bg-slate-50/30'
+                      }`}
                     >
+                      {slotBlock && hourCitas.length === 0 && (
+                        <Lock className="w-3 h-3 text-slate-400 m-auto" />
+                      )}
                       {hourCitas.map(cita => {
                         const patient = patients.find(p => p.id === cita.idPaciente);
                         return (
@@ -516,12 +570,27 @@ export default function AgendaCalendar({
                 <div className="w-20 border-r border-slate-100 text-xs text-slate-400 font-bold flex items-center justify-center bg-slate-50/50">
                   {timeStr}
                 </div>
-                <div 
-                  onClick={() => handleOpenNewCita(dateStr, timeStr)}
-                  className="flex-1 p-2 hover:bg-slate-50/40 transition-colors cursor-pointer flex flex-col gap-1.5"
+                <div
+                  onClick={() => {
+                    const slotBlock = isSlotBlocked(dateStr, timeStr);
+                    if (slotBlock) {
+                      alert(`Este horario está bloqueado${slotBlock.motivo ? `: ${slotBlock.motivo}` : '.'}`);
+                      return;
+                    }
+                    handleOpenNewCita(dateStr, timeStr);
+                  }}
+                  className={`flex-1 p-2 transition-colors cursor-pointer flex flex-col gap-1.5 ${
+                    isSlotBlocked(dateStr, timeStr) ? 'bg-slate-100/70 bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(100,116,139,0.08)_6px,rgba(100,116,139,0.08)_12px)]' : 'hover:bg-slate-50/40'
+                  }`}
                 >
                   {hourCitas.length === 0 ? (
-                    <span className="text-[10px] text-slate-300 italic font-medium block my-auto pl-2">Ranura disponible</span>
+                    isSlotBlocked(dateStr, timeStr) ? (
+                      <span className="text-[10px] text-slate-400 italic font-bold flex items-center gap-1 my-auto pl-2">
+                        <Lock className="w-3 h-3" /> Bloqueado{isSlotBlocked(dateStr, timeStr)?.motivo ? `: ${isSlotBlocked(dateStr, timeStr)?.motivo}` : ''}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-300 italic font-medium block my-auto pl-2">Ranura disponible</span>
+                    )
                   ) : (
                     hourCitas.map(cita => {
                       const patient = patients.find(p => p.id === cita.idPaciente);
