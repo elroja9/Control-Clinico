@@ -82,13 +82,19 @@ export interface CompaniaSmtpConfig {
   remitenteCorreo: string;
   recordatorioHorasAntes: number;
   activo: boolean;
+  tieneContrasena?: boolean;
 }
+
+export type SmtpConfigInput = Omit<CompaniaSmtpConfig, 'smtpPasswordCifrado' | 'tieneContrasena'> & {
+  smtpPassword?: string;
+};
 
 export interface NotificationLog {
   id: number;
   idCompania: number;
-  idCita: number;
-  tipo: 'CONFIRMACION' | 'MODIFICACION' | 'RECORDATORIO' | 'CANCELACION';
+  idCita?: number | null;
+  idConsulta?: number | null;
+  tipo: 'CONFIRMACION' | 'MODIFICACION' | 'RECORDATORIO' | 'CANCELACION' | 'CONSULTA';
   destinatario: string;
   asunto: string;
   cuerpo: string;

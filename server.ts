@@ -161,6 +161,9 @@ async function createTables() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
+    await pool.query(`ALTER TABLE notification_logs MODIFY COLUMN idCita INT NULL`);
+    await pool.query(`ALTER TABLE notification_logs ADD COLUMN IF NOT EXISTS idConsulta INT NULL`);
+
     console.log("[MySQL] Aplicando columnas de compatibilidad camelCase y soporte para JSON clínico avanzado...");
     
     // companias
