@@ -1,0 +1,200 @@
+import type { Company, Patient, Cita, Consultation } from "../src/data/mockData";
+
+export interface RenderedEmail {
+  subject: string;
+  html: string;
+  text: string;
+}
+
+function escapeHtml(value: string | number | null | undefined): string {
+  const str = String(value ?? "");
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function emailShell(company: Company, title: string, bodyHtml: string): string {
+  return `<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background-color:#f1f5f9;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f1f5f9;padding:24px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e2e8f0;">
+            <tr>
+              <td style="background-color:${escapeHtml(company.colorSidebar)};padding:20px 24px;">
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td width="56" style="vertical-align:middle;">
+                      <img src="${escapeHtml(company.logoUrl)}" width="48" height="48" alt="${escapeHtml(company.nombreComercial)}" style="border-radius:10px;display:block;object-fit:cover;" />
+                    </td>
+                    <td style="vertical-align:middle;padding-left:12px;">
+                      <span style="color:#ffffff;font-size:16px;font-weight:bold;display:block;">${escapeHtml(company.nombreComercial)}</span>
+                      <span style="color:#ffffff;opacity:0.85;font-size:11px;">${escapeHtml(company.razonSocial)}</span>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px 24px 0 24px;">
+                <h1 style="color:${escapeHtml(company.colorPrimario)};font-size:18px;margin:16px 0 8px 0;">${escapeHtml(title)}</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 24px 24px 24px;color:#1e293b;font-size:13px;line-height:1.6;">
+                ${bodyHtml}
+              </td>
+            </tr>
+            <tr>
+              <td style="background-color:#f8fafc;padding:16px 24px;border-top:1px solid #e2e8f0;">
+                <span style="color:#94a3b8;font-size:10px;">${escapeHtml(company.nombreComercial)} &middot; ${escapeHtml(company.correoEmisor)}</span>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+function infoCard(label: string, value: string): string {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:8px;">
+    <tr>
+      <td style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;">
+        <span style="display:block;color:#64748b;font-size:10px;text-transform:uppercase;font-weight:bold;">${escapeHtml(label)}</span>
+        <span style="display:block;color:#1e293b;font-size:13px;font-weight:600;">${value}</span>
+      </td>
+    </tr>
+  </table>`;
+}
+
+const CITA_TITLES: Record<"CONFIRMACION" | "CANCELACION" | "MODIFICACION", string> = {
+  CONFIRMACION: "Confirmación de Cita",
+  CANCELACION: "Cita Cancelada",
+  MODIFICACION: "Cita Modificada / Reprogramada",
+};
+
+export function renderCitaEmail(params: {
+  company: Company;
+  patient: Patient;
+  cita: Cita;
+  tipoNotif: "CONFIRMACION" | "CANCELACION" | "MODIFICACION";
+}): RenderedEmail {
+  const { company, patient, cita, tipoNotif } = params;
+  const [fecha, hora] = cita.fechaHora.split("T");
+  const title = CITA_TITLES[tipoNotif];
+  const subject = `${title} - ${company.nombreComercial}`;
+
+  const detailsHtml =
+    infoCard("Fecha", escapeHtml(fecha)) +
+    infoCard("Hora", escapeHtml(hora || "")) +
+    infoCard("Duración", `${cita.duracionMinutos} minutos`) +
+    infoCard("Estado", escapeHtml(cita.estadoCita)) +
+    (cita.notas ? infoCard("Notas del Profesional", escapeHtml(cita.notas)) : "");
+
+  const intro =
+    tipoNotif === "CONFIRMACION"
+      ? "Le confirmamos que su cita ha sido programada con éxito:"
+      : tipoNotif === "CANCELACION"
+      ? "Le informamos que su cita ha sido CANCELADA:"
+      : "Le informamos que su cita ha sido modificada. Estos son los nuevos detalles:";
+
+  const bodyHtml = `
+    <p>Estimado(a) ${escapeHtml(patient.nombreCompleto)},</p>
+    <p>${intro}</p>
+    ${detailsHtml}
+    <p style="margin-top:16px;">Gracias por su confianza. Ante cualquier consulta, contáctenos con anticipación.</p>
+    <p style="margin-top:16px;font-weight:bold;">${escapeHtml(company.nombreComercial)}</p>
+  `;
+
+  const text = `${title}\n\nEstimado(a) ${patient.nombreCompleto},\n${intro}\nFecha: ${fecha}\nHora: ${hora || ""}\nDuración: ${cita.duracionMinutos} minutos\nEstado: ${cita.estadoCita}\n${cita.notas ? `Notas: ${cita.notas}\n` : ""}\n${company.nombreComercial}`;
+
+  return { subject, html: emailShell(company, title, bodyHtml), text };
+}
+
+export function renderConsultaEmail(params: {
+  company: Company;
+  patient: Patient;
+  consultation: Consultation;
+}): RenderedEmail {
+  const { company, patient, consultation } = params;
+  const subject = `Reporte de Consulta - ${company.nombreComercial}`;
+  const title = consultation.tipo === "Nutrición" ? "Reporte de Consulta Nutricional" : "Reporte de Sesión de Fisioterapia";
+
+  let sectionHtml = "";
+  let sectionText = "";
+
+  if (consultation.tipo === "Nutrición" && consultation.antropometria) {
+    const a = consultation.antropometria;
+    sectionHtml += `
+      <h2 style="color:${escapeHtml(company.colorPrimario)};font-size:13px;text-transform:uppercase;margin-top:20px;">Composición Corporal</h2>
+      ${infoCard("Peso Corporal", `${a.peso} kg`)}
+      ${infoCard("IMC", `${a.imc}`)}
+      ${infoCard("Grasa Corporal", `${a.grasaCorporal}%`)}
+      ${infoCard("Masa Muscular", `${a.masaMuscular} kg`)}
+    `;
+    sectionText += `Composición Corporal\nPeso: ${a.peso} kg | IMC: ${a.imc} | Grasa Corporal: ${a.grasaCorporal}% | Masa Muscular: ${a.masaMuscular} kg\n\n`;
+
+    if (consultation.dieta) {
+      const d = consultation.dieta;
+      sectionHtml += `
+        <h2 style="color:${escapeHtml(company.colorPrimario)};font-size:13px;text-transform:uppercase;margin-top:20px;">Plan Alimentario Recomendado (${d.totalCalorias} kcal)</h2>
+        ${infoCard("Desayuno", escapeHtml(d.desayuno))}
+        ${d.meriendaManana ? infoCard("Colación AM", escapeHtml(d.meriendaManana)) : ""}
+        ${infoCard("Almuerzo", escapeHtml(d.almuerzo))}
+        ${d.meriendaTarde ? infoCard("Colación PM", escapeHtml(d.meriendaTarde)) : ""}
+        ${infoCard("Cena", escapeHtml(d.cena))}
+        ${d.indicaciones ? infoCard("Indicaciones", escapeHtml(d.indicaciones)) : ""}
+      `;
+      sectionText += `Plan Alimentario (${d.totalCalorias} kcal)\nDesayuno: ${d.desayuno}\nAlmuerzo: ${d.almuerzo}\nCena: ${d.cena}\n${d.indicaciones ? `Indicaciones: ${d.indicaciones}\n` : ""}\n`;
+    }
+  }
+
+  if (consultation.tipo === "Fisioterapia" && consultation.fisioterapia) {
+    const f = consultation.fisioterapia;
+    sectionHtml += `
+      <h2 style="color:${escapeHtml(company.colorPrimario)};font-size:13px;text-transform:uppercase;margin-top:20px;">Valoración de Dolor</h2>
+      ${infoCard("Zona de Dolor", escapeHtml(f.zonaDolor))}
+      ${infoCard("Escala EVA", `${f.evaDolor} de 10`)}
+      ${infoCard("Tipo de Dolor", escapeHtml(f.tipoDolor))}
+      ${infoCard("Factores Agravantes", escapeHtml(f.factoresAgravantes))}
+      ${infoCard("Factores Atenuantes", escapeHtml(f.factoresAtenuantes))}
+
+      <h2 style="color:${escapeHtml(company.colorPrimario)};font-size:13px;text-transform:uppercase;margin-top:20px;">Examen Físico</h2>
+      ${infoCard("Postura", escapeHtml(f.posturaObservaciones))}
+      ${infoCard("Palpación", escapeHtml(f.palpacionHallazgos))}
+      ${infoCard("ROM", escapeHtml(f.romMedido))}
+      ${infoCard("Fuerza (Daniels)", escapeHtml(f.fuerzaDaniels))}
+      ${infoCard("Pruebas Especiales", escapeHtml(f.pruebasEspeciales))}
+
+      <h2 style="color:${escapeHtml(company.colorPrimario)};font-size:13px;text-transform:uppercase;margin-top:20px;">Prescripción Terapéutica (${f.sesionesSugeridas} sesiones sugeridas)</h2>
+      ${infoCard("Agentes Físicos", escapeHtml(f.agentesFisicos))}
+      ${infoCard("Terapia Manual", escapeHtml(f.terapiaManual))}
+      ${infoCard("Ejercicio Terapéutico", escapeHtml(f.ejercicioTerapeutico))}
+
+      <h2 style="color:${escapeHtml(company.colorPrimario)};font-size:13px;text-transform:uppercase;margin-top:20px;">Nota SOAP</h2>
+      ${infoCard("Subjetivo", escapeHtml(f.soapSubjetivo))}
+      ${infoCard("Objetivo", escapeHtml(f.soapObjetivo))}
+      ${infoCard("Análisis", escapeHtml(f.soapAnalisis))}
+      ${infoCard("Plan", escapeHtml(f.soapPlan))}
+    `;
+    sectionText += `Valoración de Dolor\nZona: ${f.zonaDolor} | EVA: ${f.evaDolor}/10 | Tipo: ${f.tipoDolor}\n\nNota SOAP\nS: ${f.soapSubjetivo}\nO: ${f.soapObjetivo}\nA: ${f.soapAnalisis}\nP: ${f.soapPlan}\n`;
+  }
+
+  const bodyHtml = `
+    <p>Estimado(a) ${escapeHtml(patient.nombreCompleto)},</p>
+    <p>Adjuntamos el reporte de su ${consultation.tipo === "Nutrición" ? "consulta nutricional" : "sesión de fisioterapia"} del ${escapeHtml(consultation.fecha)}.</p>
+    ${infoCard("Motivo de la Consulta", escapeHtml(consultation.motivo))}
+    ${sectionHtml}
+    ${consultation.anotacionesGenerales ? infoCard("Recomendaciones del Profesional", escapeHtml(consultation.anotacionesGenerales)) : ""}
+    <p style="margin-top:16px;font-weight:bold;">${escapeHtml(company.nombreComercial)}</p>
+  `;
+
+  const text = `${title}\n\nEstimado(a) ${patient.nombreCompleto},\nFecha: ${consultation.fecha}\nMotivo: ${consultation.motivo}\n\n${sectionText}${consultation.anotacionesGenerales ? `Recomendaciones: ${consultation.anotacionesGenerales}\n` : ""}\n${company.nombreComercial}`;
+
+  return { subject, html: emailShell(company, title, bodyHtml), text };
+}
