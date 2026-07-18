@@ -201,39 +201,37 @@ export default function AgendaCalendar({
     onSaveCita(savedCita);
     setIsFormOpen(false);
 
-    // --- Simulated SMTP Notification Triggers ---
+    // --- Real SMTP Notification Triggers ---
     if (activeSmtp.activo) {
-      let tipoNotif: NotificationLog['tipo'] = 'CONFIRMACION';
-      let asunto = '';
-      let cuerpo = '';
-
+      let tipoNotif: 'CONFIRMACION' | 'CANCELACION' | 'MODIFICACION' = 'CONFIRMACION';
       if (!selectedCita) {
         tipoNotif = 'CONFIRMACION';
-        asunto = `Confirmación de Cita - ${activeSmtp.remitenteNombre}`;
-        cuerpo = `Estimado(a) ${patient.nombreCompleto},\n\nLe confirmamos que su cita ha sido programada con éxito:\n📅 Fecha: ${formDate}\n⏰ Hora: ${formTime}\n⏱ Duración: ${formDuration} minutos\n\nNotas del Profesional: ${formNotes || 'Ninguna'}\n\nGracias por su confianza. En caso de requerir modificaciones, contáctenos con al menos ${activeSmtp.recordatorioHorasAntes} horas de anticipación.`;
       } else if (selectedCita.estadoCita !== formStatus && formStatus === 'CANCELADA') {
         tipoNotif = 'CANCELACION';
-        asunto = `Cita Cancelada - ${activeSmtp.remitenteNombre}`;
-        cuerpo = `Estimado(a) ${patient.nombreCompleto},\n\nLe informamos que su cita programada para el ${formDate} a las ${formTime} ha sido CANCELADA.\n\nMotivo/Notas: ${formNotes || 'No especificadas'}\n\nSi desea re-programar, puede ponerse en contacto con nosotros en cualquier momento.`;
       } else {
         tipoNotif = 'MODIFICACION';
-        asunto = `Cita Modificada / Reprogramada - ${activeSmtp.remitenteNombre}`;
-        cuerpo = `Estimado(a) ${patient.nombreCompleto},\n\nLe informamos que su cita ha sido modificada. Los nuevos detalles son:\n📅 Fecha: ${formDate}\n⏰ Hora: ${formTime}\n⏱ Duración: ${formDuration} minutos\n📌 Estado: ${formStatus}\n\nNotas adicionales: ${formNotes || 'Ninguna'}\n\nAtentamente,\n${activeSmtp.remitenteNombre}`;
       }
 
-      const logId = Math.max(...logs.map(l => l.id), 0) + 1;
-      const newLog: NotificationLog = {
-        id: logId,
-        idCompania: activeCompanyId,
-        idCita: nextId,
-        tipo: tipoNotif,
-        destinatario: patient.correoElectronico,
-        asunto: asunto,
-        cuerpo: cuerpo,
-        enviadoEn: new Date().toISOString()
-      };
-
-      onTriggerNotification(newLog);
+      fetch('/api/notifications/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tipo: 'CITA',
+          idCompania: activeCompanyId,
+          tipoNotif,
+          patient,
+          cita: savedCita
+        })
+      })
+        .then(async (res) => {
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'No se pudo enviar la notificación.');
+          onTriggerNotification(data);
+        })
+        .catch((err: any) => {
+          console.error('Error enviando notificación SMTP:', err);
+          alert(`La cita se guardó, pero no se pudo enviar la notificación por correo: ${err.message}`);
+        });
     }
   };
 
@@ -627,6 +625,7 @@ export default function AgendaCalendar({
                   <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${
                     log.tipo === 'CANCELACION' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
                     log.tipo === 'CONFIRMACION' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
+                    log.tipo === 'CONSULTA' ? 'bg-violet-100 text-violet-700 border border-violet-200' :
                     'bg-sky-100 text-sky-700 border border-sky-200'
                   }`}>
                     {log.tipo}
