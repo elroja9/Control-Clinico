@@ -538,3 +538,16 @@ export const defaultNotificationLogs: NotificationLog[] = [
     enviadoEn: "2026-07-16T18:00:00Z"
   }
 ];
+
+export interface CalendarBlock {
+  id: number;
+  idCompania: number;
+  idUsuarioNutricionista: number;
+  fechaInicio: string; // YYYY-MM-DD
+  fechaFin: string; // YYYY-MM-DD
+  horaInicio: string | null; // HH:MM
+  horaFin: string | null; // HH:MM
+  motivo: string;
+}
+
+export const defaultCalendarBlocks: CalendarBlock[] = [];

@@ -6,7 +6,7 @@ import { encryptSecret } from "./server/crypto";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
 import { renderCitaEmail, renderConsultaEmail } from "./server/emailTemplates";
-import type { Company, Patient, Cita, Consultation } from "./src/data/mockData";
+import type { Company, Patient, Cita, Consultation, CalendarBlock } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
   defaultCompanies,
@@ -15,7 +15,8 @@ import {
   defaultConsultations,
   defaultCitas,
   defaultSmtpConfigs,
-  defaultNotificationLogs
+  defaultNotificationLogs,
+  defaultCalendarBlocks
 } from "./src/data/mockData";
 
 dotenv.config();
@@ -33,6 +34,7 @@ let localConsultations = [...defaultConsultations];
 let localCitas = [...defaultCitas];
 let localSmtpConfigs = [...defaultSmtpConfigs];
 let localLogs = [...defaultNotificationLogs];
+let localCalendarBlocks = [...defaultCalendarBlocks];
 
 async function setupDatabase() {
   const host = process.env.DB_HOST || "172.28.185.50";
@@ -107,6 +109,19 @@ async function createTables() {
         confirmacionEnviadaEn VARCHAR(50),
         recordatorioEnviadoEn VARCHAR(50),
         cancelacionEnviadaEn VARCHAR(50)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS calendar_blocks (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        idUsuarioNutricionista INT NOT NULL,
+        fechaInicio VARCHAR(10) NOT NULL,
+        fechaFin VARCHAR(10) NOT NULL,
+        horaInicio VARCHAR(5) NULL,
+        horaFin VARCHAR(5) NULL,
+        motivo VARCHAR(255)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
@@ -649,6 +664,69 @@ async function startServer() {
         res.json({ success: true });
       } else {
         localCitas = localCitas.filter(item => item.id !== id);
+        res.json({ success: true });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 9. Calendar Blocks (specialist agenda blocking)
+  app.get("/api/calendar-blocks", async (req, res) => {
+    try {
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM calendar_blocks");
+        res.json(rows);
+      } else {
+        res.json(localCalendarBlocks);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/calendar-blocks", async (req, res) => {
+    try {
+      const b = req.body;
+      if (dbConnected && pool) {
+        if (b.id) {
+          const [exists] = await pool.query("SELECT id FROM calendar_blocks WHERE id = ?", [b.id]);
+          if ((exists as any).length > 0) {
+            await pool.query(
+              "UPDATE calendar_blocks SET idCompania = ?, idUsuarioNutricionista = ?, fechaInicio = ?, fechaFin = ?, horaInicio = ?, horaFin = ?, motivo = ? WHERE id = ?",
+              [parseInt(b.idCompania), parseInt(b.idUsuarioNutricionista), b.fechaInicio, b.fechaFin, b.horaInicio || null, b.horaFin || null, b.motivo || '', b.id]
+            );
+            return res.json(b);
+          }
+        }
+        const [result] = await pool.query(
+          "INSERT INTO calendar_blocks (idCompania, idUsuarioNutricionista, fechaInicio, fechaFin, horaInicio, horaFin, motivo) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [parseInt(b.idCompania), parseInt(b.idUsuarioNutricionista), b.fechaInicio, b.fechaFin, b.horaInicio || null, b.horaFin || null, b.motivo || '']
+        );
+        b.id = (result as any).insertId;
+        res.json(b);
+      } else {
+        if (b.id) {
+          localCalendarBlocks = localCalendarBlocks.map(item => item.id === b.id ? b : item);
+        } else {
+          b.id = Math.max(0, ...localCalendarBlocks.map(item => item.id)) + 1;
+          localCalendarBlocks.push(b);
+        }
+        res.json(b);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/calendar-blocks/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (dbConnected && pool) {
+        await pool.query("DELETE FROM calendar_blocks WHERE id = ?", [id]);
+        res.json({ success: true });
+      } else {
+        localCalendarBlocks = localCalendarBlocks.filter(item => item.id !== id);
         res.json({ success: true });
       }
     } catch (err: any) {
