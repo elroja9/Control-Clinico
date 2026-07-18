@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import fs from "fs";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import { encryptSecret } from "./server/crypto";
@@ -93,30 +92,6 @@ async function createTables() {
   if (!pool) return;
 
   try {
-    console.log("[MySQL] Buscando archivo ConsultorioDB_schema.sql...");
-    const pathsToTry = [
-      path.join(process.cwd(), "ConsultorioDB_schema.sql"),
-      "/ConsultorioDB_schema.sql",
-      "./ConsultorioDB_schema.sql"
-    ];
-
-    let sqlContent = "";
-    for (const p of pathsToTry) {
-      if (fs.existsSync(p)) {
-        console.log(`[MySQL] Leyendo esquema desde ruta: ${p}`);
-        sqlContent = fs.readFileSync(p, "utf8");
-        break;
-      }
-    }
-
-    if (!sqlContent) {
-      throw new Error("No se pudo encontrar el archivo ConsultorioDB_schema.sql en ninguna de las rutas esperadas.");
-    }
-
-    console.log("[MySQL] Ejecutando el script completo de la base de datos (más de 30 tablas)...");
-    await pool.query(sqlContent);
-    console.log("[MySQL] Script de la base de datos ejecutado con éxito.");
-
     console.log("[MySQL] Creando tablas del sistema de citas y notificaciones si no existen...");
     await pool.query(`
       CREATE TABLE IF NOT EXISTS citas (
@@ -326,37 +301,38 @@ function normalizeRow(row: any): any {
   if (!row) return row;
   const copy = { ...row };
   
-  // Normalize IDs
-  if (copy.id_compania !== undefined && copy.id === undefined) copy.id = copy.id_compania;
-  if (copy.id_usuario !== undefined && copy.id === undefined) copy.id = copy.id_usuario;
-  if (copy.id_paciente !== undefined && copy.id === undefined) copy.id = copy.id_paciente;
-  if (copy.id_consulta !== undefined && copy.id === undefined) copy.id = copy.id_consulta;
-  if (copy.id_cita !== undefined && copy.id === undefined) copy.id = copy.id_cita;
+  // Normalize IDs — table-specific primary keys must win over the id_compania
+  // foreign key, which every table also carries.
+  if (copy.id_usuario != null && copy.id == null) copy.id = copy.id_usuario;
+  if (copy.id_paciente != null && copy.id == null) copy.id = copy.id_paciente;
+  if (copy.id_consulta != null && copy.id == null) copy.id = copy.id_consulta;
+  if (copy.id_cita != null && copy.id == null) copy.id = copy.id_cita;
+  if (copy.id_compania != null && copy.id == null) copy.id = copy.id_compania;
 
   // companias
-  if (copy.nombre_comercial !== undefined && copy.nombreComercial === undefined) copy.nombreComercial = copy.nombre_comercial;
-  if (copy.razon_social !== undefined && copy.razonSocial === undefined) copy.razonSocial = copy.razon_social;
-  if (copy.tipo_identificacion !== undefined && copy.tipoIdentificacion === undefined) copy.tipoIdentificacion = copy.tipo_identificacion;
-  if (copy.correo_emisor !== undefined && copy.correoEmisor === undefined) copy.correoEmisor = copy.correo_emisor;
-  if (copy.iva_por_defecto !== undefined && copy.ivaPorDefecto === undefined) copy.ivaPorDefecto = parseFloat(copy.iva_por_defecto);
-  if (copy.color_primario !== undefined && copy.colorPrimario === undefined) copy.colorPrimario = copy.color_primario;
-  if (copy.color_sidebar !== undefined && copy.colorSidebar === undefined) copy.colorSidebar = copy.color_sidebar;
-  if (copy.logo_url !== undefined && copy.logoUrl === undefined) copy.logoUrl = copy.logo_url;
-  if (copy.cod_actividad_economica !== undefined && copy.actividadEconomica === undefined) copy.actividadEconomica = copy.cod_actividad_economica;
+  if (copy.nombre_comercial != null && copy.nombreComercial == null) copy.nombreComercial = copy.nombre_comercial;
+  if (copy.razon_social != null && copy.razonSocial == null) copy.razonSocial = copy.razon_social;
+  if (copy.tipo_identificacion != null && copy.tipoIdentificacion == null) copy.tipoIdentificacion = copy.tipo_identificacion;
+  if (copy.correo_emisor != null && copy.correoEmisor == null) copy.correoEmisor = copy.correo_emisor;
+  if (copy.iva_por_defecto != null && copy.ivaPorDefecto == null) copy.ivaPorDefecto = parseFloat(copy.iva_por_defecto);
+  if (copy.color_primario != null && copy.colorPrimario == null) copy.colorPrimario = copy.color_primario;
+  if (copy.color_sidebar != null && copy.colorSidebar == null) copy.colorSidebar = copy.color_sidebar;
+  if (copy.logo_url != null && copy.logoUrl == null) copy.logoUrl = copy.logo_url;
+  if (copy.cod_actividad_economica != null && copy.actividadEconomica == null) copy.actividadEconomica = copy.cod_actividad_economica;
 
   // usuarios
-  if (copy.id_compania !== undefined && copy.idCompania === undefined) copy.idCompania = copy.id_compania;
-  if (copy.email !== undefined && copy.correo === undefined) copy.correo = copy.email;
-  if (copy.password_hash !== undefined && copy.contrasena === undefined) copy.contrasena = copy.password_hash;
-  if (copy.usuario === undefined && copy.email !== undefined) copy.usuario = copy.email.split("@")[0];
+  if (copy.id_compania != null && copy.idCompania == null) copy.idCompania = copy.id_compania;
+  if (copy.email != null && copy.correo == null) copy.correo = copy.email;
+  if (copy.password_hash != null && copy.contrasena == null) copy.contrasena = copy.password_hash;
+  if (copy.usuario == null && copy.email != null) copy.usuario = copy.email.split("@")[0];
 
   // pacientes
-  if (copy.nombre_completo !== undefined && copy.nombreCompleto === undefined) copy.nombreCompleto = copy.nombre_completo;
-  if (copy.fecha_nacimiento !== undefined && copy.fechaNacimiento === undefined) copy.fechaNacimiento = copy.fecha_nacimiento;
-  if (copy.correo_electronico !== undefined && copy.correoElectronico === undefined) copy.correoElectronico = copy.correo_electronico;
-  if (copy.situacion_vivienda !== undefined && copy.situacionVivienda === undefined) copy.situacionVivienda = copy.situacion_vivienda;
-  if (copy.fact_tipo_identificacion !== undefined && copy.tipoIdentificacion === undefined) copy.tipoIdentificacion = copy.fact_tipo_identificacion;
-  if (copy.fact_identificacion !== undefined && copy.identificacion === undefined) copy.identificacion = copy.fact_identificacion;
+  if (copy.nombre_completo != null && copy.nombreCompleto == null) copy.nombreCompleto = copy.nombre_completo;
+  if (copy.fecha_nacimiento != null && copy.fechaNacimiento == null) copy.fechaNacimiento = copy.fecha_nacimiento;
+  if (copy.correo_electronico != null && copy.correoElectronico == null) copy.correoElectronico = copy.correo_electronico;
+  if (copy.situacion_vivienda != null && copy.situacionVivienda == null) copy.situacionVivienda = copy.situacion_vivienda;
+  if (copy.fact_tipo_identificacion != null && copy.tipoIdentificacion == null) copy.tipoIdentificacion = copy.fact_tipo_identificacion;
+  if (copy.fact_identificacion != null && copy.identificacion == null) copy.identificacion = copy.fact_identificacion;
 
   return copy;
 }
