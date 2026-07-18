@@ -5,6 +5,9 @@ import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import { encryptSecret } from "./server/crypto";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
+import { sendMail } from "./server/mailer";
+import { renderCitaEmail, renderConsultaEmail } from "./server/emailTemplates";
+import type { Company, Patient, Cita, Consultation } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
   defaultCompanies,
@@ -805,6 +808,88 @@ async function startServer() {
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 8. Real-time notification sending (Cita + Consulta)
+  app.post("/api/notifications/send", async (req: express.Request, res: express.Response) => {
+    try {
+      const body = req.body;
+      const idCompania = parseInt(body.idCompania);
+
+      let company: Company | undefined;
+      let smtpConfig: CompaniaSmtpConfig | undefined;
+
+      if (dbConnected && pool) {
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        company = (companyRows as any[]).map(normalizeRow)[0];
+        const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [idCompania]);
+        const smtpRow = (smtpRows as any[])[0];
+        smtpConfig = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
+      } else {
+        company = localCompanies.find(c => c.id === idCompania);
+        smtpConfig = localSmtpConfigs.find(s => s.idCompania === idCompania);
+      }
+
+      if (!company) {
+        return res.status(400).json({ error: "Empresa no encontrada." });
+      }
+      if (!smtpConfig || !smtpConfig.activo) {
+        return res.status(400).json({ error: "Las notificaciones SMTP no están activas para esta empresa." });
+      }
+
+      let rendered;
+      let idCita: number | null = null;
+      let idConsulta: number | null = null;
+      let destinatario: string;
+      let tipoLog: string;
+
+      if (body.tipo === "CITA") {
+        const patient: Patient = body.patient;
+        const cita: Cita = body.cita;
+        rendered = renderCitaEmail({ company, patient, cita, tipoNotif: body.tipoNotif });
+        idCita = cita.id;
+        destinatario = patient.correoElectronico;
+        tipoLog = body.tipoNotif;
+      } else if (body.tipo === "CONSULTA") {
+        const patient: Patient = body.patient;
+        const consultation: Consultation = body.consultation;
+        rendered = renderConsultaEmail({ company, patient, consultation });
+        idConsulta = consultation.id;
+        destinatario = patient.correoElectronico;
+        tipoLog = "CONSULTA";
+      } else {
+        return res.status(400).json({ error: "Tipo de notificación inválido." });
+      }
+
+      await sendMail(smtpConfig, { to: destinatario, subject: rendered.subject, html: rendered.html, text: rendered.text });
+
+      const log: any = {
+        idCompania,
+        idCita,
+        idConsulta,
+        tipo: tipoLog,
+        destinatario,
+        asunto: rendered.subject,
+        cuerpo: rendered.text,
+        enviadoEn: new Date().toISOString()
+      };
+
+      if (dbConnected && pool) {
+        const [result] = await pool.query(
+          "INSERT INTO notification_logs (idCompania, idCita, idConsulta, tipo, destinatario, asunto, cuerpo, enviadoEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          [log.idCompania, log.idCita, log.idConsulta, log.tipo, log.destinatario, log.asunto, log.cuerpo, log.enviadoEn]
+        );
+        log.id = (result as any).insertId;
+      } else {
+        log.id = Math.max(0, ...localLogs.map(item => item.id), 0) + 1;
+        localLogs.push(log);
+      }
+
+      res.json(log);
+    } catch (err: any) {
+      console.error("Error enviando notificación:", err);
+      res.status(500).json({ error: err.message || "No se pudo enviar la notificación." });
     }
   });
 
