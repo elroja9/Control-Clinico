@@ -627,11 +627,11 @@ async function startServer() {
       const ct = req.body;
       if (dbConnected && pool) {
         if (ct.id) {
-          const [exists] = await pool.query("SELECT * FROM citas WHERE id = ? OR id_cita = ?", [ct.id, ct.id]);
+          const [exists] = await pool.query("SELECT * FROM citas WHERE id = ?", [ct.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE citas SET idCompania = ?, idPaciente = ?, idUsuarioNutricionista = ?, idConsulta = ?, fechaHora = ?, duracionMinutos = ?, estadoCita = ?, notas = ?, confirmacionEnviadaEn = ?, recordatorioEnviadoEn = ?, cancelacionEnviadaEn = ? WHERE id = ? OR id_cita = ?",
-              [parseInt(ct.idCompania), parseInt(ct.idPaciente), parseInt(ct.idUsuarioNutricionista), ct.idConsulta || null, ct.fechaHora, parseInt(ct.duracionMinutos), ct.estadoCita, ct.notas || '', ct.confirmacionEnviadaEn || null, ct.recordatorioEnviadoEn || null, ct.cancelacionEnviadaEn || null, ct.id, ct.id]
+              "UPDATE citas SET idCompania = ?, idPaciente = ?, idUsuarioNutricionista = ?, idConsulta = ?, fechaHora = ?, duracionMinutos = ?, estadoCita = ?, notas = ?, confirmacionEnviadaEn = ?, recordatorioEnviadoEn = ?, cancelacionEnviadaEn = ? WHERE id = ?",
+              [parseInt(ct.idCompania), parseInt(ct.idPaciente), parseInt(ct.idUsuarioNutricionista), ct.idConsulta || null, ct.fechaHora, parseInt(ct.duracionMinutos), ct.estadoCita, ct.notas || '', ct.confirmacionEnviadaEn || null, ct.recordatorioEnviadoEn || null, ct.cancelacionEnviadaEn || null, ct.id]
             );
             return res.json(ct);
           }
@@ -660,7 +660,7 @@ async function startServer() {
     try {
       const id = parseInt(req.params.id);
       if (dbConnected && pool) {
-        await pool.query("DELETE FROM citas WHERE id = ? OR id_cita = ?", [id, id]);
+        await pool.query("DELETE FROM citas WHERE id = ?", [id]);
         res.json({ success: true });
       } else {
         localCitas = localCitas.filter(item => item.id !== id);
