@@ -3,7 +3,7 @@ import path from "path";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import { encryptSecret, decryptSecret } from "./server/crypto";
-import { verificarLlaveP12 } from "./server/haciendaSigner";
+import { verificarLlaveP12, firmarXadesEpes } from "./server/haciendaSigner";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
 import { renderCitaEmail, renderConsultaEmail } from "./server/emailTemplates";
@@ -887,6 +887,61 @@ async function startServer() {
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  async function cargarCertificadoEmpresa(idCompania: number): Promise<{ p12Base64: string; pin: string } | null> {
+    let certificadoP12Cifrado: string | undefined;
+    let certificadoPinCifrado: string | undefined;
+
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT certificado_p12_enc, certificado_password_enc FROM compania_hacienda_config WHERE id_compania = ?", [idCompania]);
+      const row = (rows as any[])[0];
+      certificadoP12Cifrado = row?.certificado_p12_enc ? row.certificado_p12_enc.toString() : undefined;
+      certificadoPinCifrado = row?.certificado_password_enc ? row.certificado_password_enc.toString() : undefined;
+    } else {
+      const row = localHaciendaConfigs.find(c => c.idCompania === idCompania);
+      certificadoP12Cifrado = row?.certificadoP12Cifrado || undefined;
+      certificadoPinCifrado = row?.certificadoPinCifrado || undefined;
+    }
+
+    if (!certificadoP12Cifrado || !certificadoPinCifrado) return null;
+
+    return {
+      p12Base64: decryptSecret(certificadoP12Cifrado),
+      pin: decryptSecret(certificadoPinCifrado)
+    };
+  }
+
+  app.post("/api/hacienda/verificar-certificado", async (req, res) => {
+    try {
+      const idCompania = parseInt(req.body.idCompania);
+      const cert = await cargarCertificadoEmpresa(idCompania);
+      if (!cert) {
+        return res.status(400).json({ error: "No se ha configurado un certificado criptográfico (.p12) para esta empresa." });
+      }
+      const info = verificarLlaveP12(cert.p12Base64, cert.pin);
+      res.json(info);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/hacienda/firmar", async (req, res) => {
+    try {
+      const idCompania = parseInt(req.body.idCompania);
+      const xml = req.body.xml;
+      if (!xml || typeof xml !== 'string') {
+        return res.status(400).json({ error: "Falta el XML a firmar." });
+      }
+      const cert = await cargarCertificadoEmpresa(idCompania);
+      if (!cert) {
+        return res.status(400).json({ error: "No se ha configurado un certificado criptográfico (.p12) para esta empresa." });
+      }
+      const xmlFirmado = await firmarXadesEpes(xml, cert.p12Base64, cert.pin);
+      res.json({ xmlFirmado });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 
