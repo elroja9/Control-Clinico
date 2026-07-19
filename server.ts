@@ -2,7 +2,8 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
-import { encryptSecret } from "./server/crypto";
+import { encryptSecret, decryptSecret } from "./server/crypto";
+import { verificarLlaveP12 } from "./server/haciendaSigner";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
 import { renderCitaEmail, renderConsultaEmail } from "./server/emailTemplates";
@@ -35,6 +36,18 @@ let localCitas = [...defaultCitas];
 let localSmtpConfigs = [...defaultSmtpConfigs];
 let localLogs = [...defaultNotificationLogs];
 let localCalendarBlocks = [...defaultCalendarBlocks];
+
+interface LocalHaciendaConfig {
+  idCompania: number;
+  ambiente: 'SANDBOX' | 'PRODUCCION';
+  usuarioAtv: string;
+  passwordAtvCifrado: string;
+  certificadoP12Cifrado: string;
+  certificadoPinCifrado: string;
+  certificadoNombreArchivo: string | null;
+  certificadoVenceEn: string | null;
+}
+let localHaciendaConfigs: LocalHaciendaConfig[] = [];
 
 async function setupDatabase() {
   const host = process.env.DB_HOST || "172.28.185.50";
@@ -729,6 +742,149 @@ async function startServer() {
         localCalendarBlocks = localCalendarBlocks.filter(item => item.id !== id);
         res.json({ success: true });
       }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 10. Hacienda Digital Signature Config
+  app.get("/api/hacienda-config/:idCompania", async (req, res) => {
+    try {
+      const idCompania = parseInt(req.params.idCompania);
+
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM compania_hacienda_config WHERE id_compania = ?", [idCompania]);
+        const row = (rows as any[])[0];
+        if (!row) {
+          return res.json({
+            idCompania, ambiente: 'SANDBOX', usuarioAtv: '', tienePasswordAtv: false,
+            tieneCertificado: false, certificadoNombreArchivo: null, certificadoVenceEn: null
+          });
+        }
+        res.json({
+          idCompania: row.id_compania,
+          ambiente: row.ambiente,
+          usuarioAtv: row.usuario_atv || '',
+          tienePasswordAtv: !!row.password_atv_enc,
+          tieneCertificado: !!row.certificado_p12_enc,
+          certificadoNombreArchivo: row.certificado_nombre_archivo,
+          certificadoVenceEn: row.certificado_vence_en ? new Date(row.certificado_vence_en).toISOString().split('T')[0] : null
+        });
+      } else {
+        const row = localHaciendaConfigs.find(c => c.idCompania === idCompania);
+        if (!row) {
+          return res.json({
+            idCompania, ambiente: 'SANDBOX', usuarioAtv: '', tienePasswordAtv: false,
+            tieneCertificado: false, certificadoNombreArchivo: null, certificadoVenceEn: null
+          });
+        }
+        res.json({
+          idCompania: row.idCompania,
+          ambiente: row.ambiente,
+          usuarioAtv: row.usuarioAtv || '',
+          tienePasswordAtv: !!row.passwordAtvCifrado,
+          tieneCertificado: !!row.certificadoP12Cifrado,
+          certificadoNombreArchivo: row.certificadoNombreArchivo,
+          certificadoVenceEn: row.certificadoVenceEn
+        });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/hacienda-config", async (req, res) => {
+    try {
+      const b = req.body;
+      const idCompania = parseInt(b.idCompania);
+
+      let existing: { passwordAtvCifrado: string; certificadoP12Cifrado: string; certificadoPinCifrado: string; certificadoNombreArchivo: string | null } | undefined;
+
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT password_atv_enc, certificado_p12_enc, certificado_password_enc, certificado_nombre_archivo FROM compania_hacienda_config WHERE id_compania = ?", [idCompania]);
+        const row = (rows as any[])[0];
+        if (row) {
+          existing = {
+            passwordAtvCifrado: row.password_atv_enc ? row.password_atv_enc.toString() : '',
+            certificadoP12Cifrado: row.certificado_p12_enc ? row.certificado_p12_enc.toString() : '',
+            certificadoPinCifrado: row.certificado_password_enc ? row.certificado_password_enc.toString() : '',
+            certificadoNombreArchivo: row.certificado_nombre_archivo
+          };
+        }
+      } else {
+        const row = localHaciendaConfigs.find(c => c.idCompania === idCompania);
+        if (row) {
+          existing = {
+            passwordAtvCifrado: row.passwordAtvCifrado,
+            certificadoP12Cifrado: row.certificadoP12Cifrado,
+            certificadoPinCifrado: row.certificadoPinCifrado,
+            certificadoNombreArchivo: row.certificadoNombreArchivo
+          };
+        }
+      }
+
+      const passwordAtvCifrado = b.passwordAtv && String(b.passwordAtv).trim()
+        ? encryptSecret(String(b.passwordAtv).trim())
+        : (existing?.passwordAtvCifrado || '');
+
+      const certificadoP12Cifrado = b.certificadoP12Base64 && String(b.certificadoP12Base64).trim()
+        ? encryptSecret(String(b.certificadoP12Base64).trim())
+        : (existing?.certificadoP12Cifrado || '');
+
+      const certificadoPinCifrado = b.certificadoPin && String(b.certificadoPin).trim()
+        ? encryptSecret(String(b.certificadoPin).trim())
+        : (existing?.certificadoPinCifrado || '');
+
+      const certificadoNombreArchivo = b.certificadoNombreArchivo || existing?.certificadoNombreArchivo || null;
+
+      let certificadoVenceEn: string | null = null;
+      if (certificadoP12Cifrado && certificadoPinCifrado) {
+        try {
+          const p12Base64 = decryptSecret(certificadoP12Cifrado);
+          const pin = decryptSecret(certificadoPinCifrado);
+          const info = verificarLlaveP12(p12Base64, pin);
+          certificadoVenceEn = info.validoHasta.split('T')[0];
+        } catch (err: any) {
+          return res.status(400).json({ error: err.message });
+        }
+      }
+
+      if (dbConnected && pool) {
+        const [exists] = await pool.query("SELECT id_compania FROM compania_hacienda_config WHERE id_compania = ?", [idCompania]);
+        if ((exists as any).length > 0) {
+          await pool.query(
+            "UPDATE compania_hacienda_config SET ambiente = ?, usuario_atv = ?, password_atv_enc = ?, certificado_p12_enc = ?, certificado_password_enc = ?, certificado_nombre_archivo = ?, certificado_vence_en = ? WHERE id_compania = ?",
+            [b.ambiente, b.usuarioAtv || '', passwordAtvCifrado, certificadoP12Cifrado, certificadoPinCifrado, certificadoNombreArchivo, certificadoVenceEn, idCompania]
+          );
+        } else {
+          await pool.query(
+            "INSERT INTO compania_hacienda_config (id_compania, ambiente, usuario_atv, password_atv_enc, certificado_p12_enc, certificado_password_enc, certificado_nombre_archivo, certificado_vence_en) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [idCompania, b.ambiente, b.usuarioAtv || '', passwordAtvCifrado, certificadoP12Cifrado, certificadoPinCifrado, certificadoNombreArchivo, certificadoVenceEn]
+          );
+        }
+      } else {
+        const index = localHaciendaConfigs.findIndex(c => c.idCompania === idCompania);
+        const stored: LocalHaciendaConfig = {
+          idCompania, ambiente: b.ambiente, usuarioAtv: b.usuarioAtv || '',
+          passwordAtvCifrado, certificadoP12Cifrado, certificadoPinCifrado,
+          certificadoNombreArchivo, certificadoVenceEn
+        };
+        if (index !== -1) {
+          localHaciendaConfigs[index] = stored;
+        } else {
+          localHaciendaConfigs.push(stored);
+        }
+      }
+
+      res.json({
+        idCompania,
+        ambiente: b.ambiente,
+        usuarioAtv: b.usuarioAtv || '',
+        tienePasswordAtv: !!passwordAtvCifrado,
+        tieneCertificado: !!certificadoP12Cifrado,
+        certificadoNombreArchivo,
+        certificadoVenceEn
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

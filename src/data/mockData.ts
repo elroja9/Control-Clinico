@@ -551,3 +551,23 @@ export interface CalendarBlock {
 }
 
 export const defaultCalendarBlocks: CalendarBlock[] = [];
+
+export interface HaciendaConfig {
+  idCompania: number;
+  ambiente: 'SANDBOX' | 'PRODUCCION';
+  usuarioAtv: string;
+  tienePasswordAtv: boolean;
+  tieneCertificado: boolean;
+  certificadoNombreArchivo: string | null;
+  certificadoVenceEn: string | null; // YYYY-MM-DD
+}
+
+export type HaciendaConfigInput = {
+  idCompania: number;
+  ambiente: 'SANDBOX' | 'PRODUCCION';
+  usuarioAtv: string;
+  passwordAtv?: string; // solo cuando el usuario escribe una nueva
+  certificadoP12Base64?: string; // solo cuando el usuario sube un nuevo archivo .p12
+  certificadoNombreArchivo?: string; // nombre del archivo nuevo, acompaña a certificadoP12Base64
+  certificadoPin?: string; // solo cuando el usuario escribe un nuevo PIN
+};
