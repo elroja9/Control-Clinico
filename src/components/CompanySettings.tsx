@@ -103,12 +103,12 @@ export default function CompanySettings({
     setHaciendaCertificadoBase64('');
     setHaciendaCertificadoNombreNuevo('');
     setHaciendaCertificadoPin('');
+    setHaciendaPasswordAtv('');
     fetch(`/api/hacienda-config/${selectedCompanyId}`)
       .then(res => res.json())
       .then((data: HaciendaConfig) => {
         setHaciendaAmbiente(data.ambiente);
         setHaciendaUsuarioAtv(data.usuarioAtv);
-        setHaciendaPasswordAtv('');
         setHaciendaTienePasswordAtv(data.tienePasswordAtv);
         setHaciendaTieneCertificado(data.tieneCertificado);
         setHaciendaCertificadoNombreArchivo(data.certificadoNombreArchivo);
