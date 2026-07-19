@@ -90,6 +90,7 @@ export default function AgendaCalendar({
   const [blockHoraInicio, setBlockHoraInicio] = useState<string>('08:00');
   const [blockHoraFin, setBlockHoraFin] = useState<string>('18:00');
   const [blockMotivo, setBlockMotivo] = useState<string>('');
+  const [blockFormError, setBlockFormError] = useState<string>('');
 
   // Auto-switch view on resize (Responsive view constraints)
   useEffect(() => {
@@ -211,6 +212,7 @@ export default function AgendaCalendar({
     setBlockHoraInicio('08:00');
     setBlockHoraFin('18:00');
     setBlockMotivo('');
+    setBlockFormError('');
     setIsBlockFormOpen(true);
   };
 
@@ -223,12 +225,24 @@ export default function AgendaCalendar({
     setBlockHoraInicio(block.horaInicio || '08:00');
     setBlockHoraFin(block.horaFin || '18:00');
     setBlockMotivo(block.motivo);
+    setBlockFormError('');
     setIsBlockFormOpen(true);
   };
 
   const handleBlockFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setBlockFormError('');
     const fechaFin = blockEsVariosDias ? blockFechaFin : blockFechaInicio;
+
+    if (blockEsVariosDias && fechaFin < blockFechaInicio) {
+      setBlockFormError('La fecha de fin no puede ser anterior a la fecha de inicio.');
+      return;
+    }
+    if (!blockEsVariosDias && !blockEsTodoElDia && blockHoraFin <= blockHoraInicio) {
+      setBlockFormError('La hora de fin debe ser posterior a la hora de inicio.');
+      return;
+    }
+
     const nextId = selectedBlock ? selectedBlock.id : Math.max(...calendarBlocks.map(b => b.id), 0) + 1;
 
     const savedBlock: CalendarBlock = {
@@ -1005,6 +1019,13 @@ export default function AgendaCalendar({
             </div>
 
             <form onSubmit={handleBlockFormSubmit} className="p-5 space-y-4">
+              {blockFormError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-100 text-rose-600 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{blockFormError}</span>
+                </div>
+              )}
+
               <div>
                 <label className="block text-slate-600 text-xs font-bold mb-1.5">Fecha de Inicio *</label>
                 <input
