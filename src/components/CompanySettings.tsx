@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Company, CompaniaSmtpConfig, SmtpConfigInput } from '../data/mockData';
-import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Database, Copy, Mail, Server } from 'lucide-react';
+import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput } from '../data/mockData';
+import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Database, Copy, Mail, Server, ShieldCheck, Upload, AlertCircle } from 'lucide-react';
 
 interface CompanySettingsProps {
   companies: Company[];
@@ -49,6 +49,22 @@ export default function CompanySettings({
   const [smtpRemitenteCorreo, setSmtpRemitenteCorreo] = useState('');
   const [smtpRecordatorioHoras, setSmtpRecordatorioHoras] = useState(24);
   const [smtpActivo, setSmtpActivo] = useState(false);
+
+  // --- Hacienda Digital Signature State ---
+  const [haciendaAmbiente, setHaciendaAmbiente] = useState<'SANDBOX' | 'PRODUCCION'>('SANDBOX');
+  const [haciendaUsuarioAtv, setHaciendaUsuarioAtv] = useState('');
+  const [haciendaPasswordAtv, setHaciendaPasswordAtv] = useState('');
+  const [haciendaTienePasswordAtv, setHaciendaTienePasswordAtv] = useState(false);
+  const [haciendaCertificadoBase64, setHaciendaCertificadoBase64] = useState('');
+  const [haciendaCertificadoNombreNuevo, setHaciendaCertificadoNombreNuevo] = useState('');
+  const [haciendaCertificadoPin, setHaciendaCertificadoPin] = useState('');
+  const [haciendaTieneCertificado, setHaciendaTieneCertificado] = useState(false);
+  const [haciendaCertificadoNombreArchivo, setHaciendaCertificadoNombreArchivo] = useState<string | null>(null);
+  const [haciendaCertificadoVenceEn, setHaciendaCertificadoVenceEn] = useState<string | null>(null);
+  const [haciendaGuardando, setHaciendaGuardando] = useState(false);
+  const [haciendaMensaje, setHaciendaMensaje] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
+  const [haciendaProbando, setHaciendaProbando] = useState(false);
+  const [haciendaInfoCertificado, setHaciendaInfoCertificado] = useState<{ sujeto: string; emisor: string; validoHasta: string; expirado: boolean } | null>(null);
   const [smtpTieneContrasena, setSmtpTieneContrasena] = useState(false);
 
   // Sync SMTP fields when company changes
@@ -80,6 +96,27 @@ export default function CompanySettings({
     setSmtpActivo(matched.activo);
   }, [selectedCompanyId, smtpConfigs]);
 
+  // Sync Hacienda config when company changes
+  useEffect(() => {
+    setHaciendaMensaje(null);
+    setHaciendaInfoCertificado(null);
+    setHaciendaCertificadoBase64('');
+    setHaciendaCertificadoNombreNuevo('');
+    setHaciendaCertificadoPin('');
+    fetch(`/api/hacienda-config/${selectedCompanyId}`)
+      .then(res => res.json())
+      .then((data: HaciendaConfig) => {
+        setHaciendaAmbiente(data.ambiente);
+        setHaciendaUsuarioAtv(data.usuarioAtv);
+        setHaciendaPasswordAtv('');
+        setHaciendaTienePasswordAtv(data.tienePasswordAtv);
+        setHaciendaTieneCertificado(data.tieneCertificado);
+        setHaciendaCertificadoNombreArchivo(data.certificadoNombreArchivo);
+        setHaciendaCertificadoVenceEn(data.certificadoVenceEn);
+      })
+      .catch(err => console.error('Error cargando configuración de Hacienda:', err));
+  }, [selectedCompanyId]);
+
   const handleSaveSmtp = (e: React.FormEvent) => {
     e.preventDefault();
     const matched = smtpConfigs.find(s => s.idCompania === selectedCompanyId);
@@ -99,6 +136,75 @@ export default function CompanySettings({
     };
     onUpdateSmtpConfig(updatedSmtp);
     alert('¡Configuración SMTP y notificaciones guardadas con éxito!');
+  };
+
+  const handleCertificadoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as ArrayBuffer;
+      const base64 = btoa(new Uint8Array(result).reduce((data, byte) => data + String.fromCharCode(byte), ''));
+      setHaciendaCertificadoBase64(base64);
+      setHaciendaCertificadoNombreNuevo(file.name);
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleSaveHacienda = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setHaciendaGuardando(true);
+    setHaciendaMensaje(null);
+    try {
+      const payload: HaciendaConfigInput = {
+        idCompania: selectedCompanyId,
+        ambiente: haciendaAmbiente,
+        usuarioAtv: haciendaUsuarioAtv,
+        ...(haciendaPasswordAtv.trim() ? { passwordAtv: haciendaPasswordAtv.trim() } : {}),
+        ...(haciendaCertificadoBase64 ? { certificadoP12Base64: haciendaCertificadoBase64, certificadoNombreArchivo: haciendaCertificadoNombreNuevo } : {}),
+        ...(haciendaCertificadoPin.trim() ? { certificadoPin: haciendaCertificadoPin.trim() } : {})
+      };
+      const res = await fetch('/api/hacienda-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo guardar la configuración.');
+      setHaciendaTienePasswordAtv(data.tienePasswordAtv);
+      setHaciendaTieneCertificado(data.tieneCertificado);
+      setHaciendaCertificadoNombreArchivo(data.certificadoNombreArchivo);
+      setHaciendaCertificadoVenceEn(data.certificadoVenceEn);
+      setHaciendaPasswordAtv('');
+      setHaciendaCertificadoBase64('');
+      setHaciendaCertificadoNombreNuevo('');
+      setHaciendaCertificadoPin('');
+      setHaciendaMensaje({ tipo: 'ok', texto: 'Configuración de Hacienda guardada con éxito.' });
+    } catch (err: any) {
+      setHaciendaMensaje({ tipo: 'error', texto: err.message });
+    } finally {
+      setHaciendaGuardando(false);
+    }
+  };
+
+  const handleProbarCertificado = async () => {
+    setHaciendaProbando(true);
+    setHaciendaMensaje(null);
+    setHaciendaInfoCertificado(null);
+    try {
+      const res = await fetch('/api/hacienda/verificar-certificado', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idCompania: selectedCompanyId })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo verificar el certificado.');
+      setHaciendaInfoCertificado(data);
+    } catch (err: any) {
+      setHaciendaMensaje({ tipo: 'error', texto: err.message });
+    } finally {
+      setHaciendaProbando(false);
+    }
   };
 
   // Trigger state updates when company changes
@@ -446,6 +552,123 @@ export default function CompanySettings({
             >
               <Check className="w-4 h-4" />
               Guardar Configuración SMTP
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Hacienda Digital Signature configuration per company */}
+      {!isEditing && !isAdding && (
+        <form onSubmit={handleSaveHacienda} className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4 text-xs">
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
+            <ShieldCheck className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
+            <div>
+              <h4 className="font-bold text-slate-800">Firma Digital Hacienda (Facturación Electrónica)</h4>
+              <p className="text-[10px] text-slate-500">Certificado criptográfico (.p12) y credenciales ATV para firmar comprobantes electrónicos</p>
+            </div>
+          </div>
+
+          {haciendaMensaje && (
+            <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${haciendaMensaje.tipo === 'ok' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-rose-50 border-rose-100 text-rose-600'}`}>
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{haciendaMensaje.texto}</span>
+            </div>
+          )}
+
+          {haciendaInfoCertificado && (
+            <div className="p-3 rounded-xl border border-slate-200 bg-white text-[10.5px] space-y-1">
+              <div><span className="font-bold text-slate-600">Sujeto: </span>{haciendaInfoCertificado.sujeto}</div>
+              <div><span className="font-bold text-slate-600">Emisor: </span>{haciendaInfoCertificado.emisor}</div>
+              <div><span className="font-bold text-slate-600">Vence: </span>{new Date(haciendaInfoCertificado.validoHasta).toLocaleDateString('es-CR')}</div>
+              {haciendaInfoCertificado.expirado && <div className="text-rose-600 font-bold">Este certificado está VENCIDO.</div>}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-slate-600 mb-1 font-semibold">Ambiente</label>
+              <select
+                value={haciendaAmbiente}
+                onChange={(e) => setHaciendaAmbiente(e.target.value as 'SANDBOX' | 'PRODUCCION')}
+                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+              >
+                <option value="SANDBOX">Sandbox (Pruebas)</option>
+                <option value="PRODUCCION">Producción</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-slate-600 mb-1 font-semibold">Usuario ATV</label>
+              <input
+                type="text"
+                value={haciendaUsuarioAtv}
+                onChange={(e) => setHaciendaUsuarioAtv(e.target.value)}
+                placeholder="ej: cpf-01-1234-5678"
+                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-slate-600 mb-1 font-semibold">Contraseña ATV</label>
+            <input
+              type="password"
+              value={haciendaPasswordAtv}
+              onChange={(e) => setHaciendaPasswordAtv(e.target.value)}
+              placeholder={haciendaTienePasswordAtv ? '•••••••• (dejar en blanco para mantener la actual)' : 'Ingresa la contraseña ATV'}
+              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-slate-600 mb-1 font-semibold flex items-center gap-1">
+                <Upload className="w-3 h-3" /> Certificado Criptográfico (.p12)
+              </label>
+              <input
+                type="file"
+                accept=".p12,.pfx"
+                onChange={handleCertificadoFileChange}
+                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+              />
+              <span className="text-[10px] text-slate-400 block mt-1">
+                {haciendaCertificadoNombreNuevo
+                  ? `Nuevo archivo seleccionado: ${haciendaCertificadoNombreNuevo}`
+                  : haciendaTieneCertificado
+                  ? `Archivo actual: ${haciendaCertificadoNombreArchivo || 'certificado.p12'}${haciendaCertificadoVenceEn ? ` · vence ${haciendaCertificadoVenceEn}` : ''}`
+                  : 'Ningún certificado configurado todavía.'}
+              </span>
+            </div>
+            <div>
+              <label className="block text-slate-600 mb-1 font-semibold">PIN del Certificado</label>
+              <input
+                type="password"
+                value={haciendaCertificadoPin}
+                onChange={(e) => setHaciendaCertificadoPin(e.target.value)}
+                placeholder={haciendaTieneCertificado ? '•••••••• (dejar en blanco para mantener el actual)' : 'PIN del certificado .p12'}
+                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-1">
+            <button
+              type="button"
+              onClick={handleProbarCertificado}
+              disabled={haciendaProbando || !haciendaTieneCertificado}
+              className="bg-slate-200 hover:bg-slate-300 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 px-4 py-2 rounded-xl font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              {haciendaProbando ? 'Probando...' : 'Probar Configuración'}
+            </button>
+
+            <button
+              type="submit"
+              disabled={haciendaGuardando}
+              className="text-white px-5 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-60"
+              style={{ backgroundColor: currentCompany.colorPrimario }}
+            >
+              <Check className="w-4 h-4" />
+              {haciendaGuardando ? 'Guardando...' : 'Guardar Configuración Hacienda'}
             </button>
           </div>
         </form>
