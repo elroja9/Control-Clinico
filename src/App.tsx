@@ -4,7 +4,6 @@ import {
   Activity,
   Calendar,
   Building2,
-  Sparkles,
   Search,
   Plus,
   TrendingDown,
@@ -858,17 +857,6 @@ export default function App() {
                   <span>Personalizar Clínica</span>
                 </div>
               </button>
-            </div>
-
-            {/* AI Assistant Banner */}
-            <div className="bg-gradient-to-br from-indigo-900 to-slate-900 text-white rounded-2xl p-4 shadow-sm space-y-2.5">
-              <div className="flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-amber-400 animate-pulse" />
-                <span className="text-xs font-extrabold text-indigo-200 uppercase tracking-wider">Copilot Médico Activo</span>
-              </div>
-              <p className="text-[11px] text-slate-300 leading-relaxed">
-                Usa el motor de IA para pre-diseñar pautas alimentarias saludables costarricenses o protocolos de terapia física (SOAP, Daniels, ROM) según la patología.
-              </p>
             </div>
           </aside>
 
