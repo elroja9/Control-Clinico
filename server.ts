@@ -1,8 +1,10 @@
 import express from "express";
+import https from "https";
 import path from "path";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import { encryptSecret, decryptSecret } from "./server/crypto";
+import { obtenerCertificadoHttps } from "./server/httpsCert";
 import { verificarLlaveP12, firmarXadesEpes } from "./server/haciendaSigner";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
@@ -1232,8 +1234,9 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
+  const { cert, key } = obtenerCertificadoHttps();
+  https.createServer({ cert, key }, app).listen(PORT, "0.0.0.0", () => {
+    console.log(`Servidor HTTPS corriendo en el puerto ${PORT}`);
   });
 }
 
