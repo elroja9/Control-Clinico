@@ -265,3 +265,31 @@ export function renderAccountStatusEmail(params: {
 
   return { subject, html: emailShell(platformCompany, title, bodyHtml), text };
 }
+
+export function renderNuevaEmpresaEmail(params: {
+  platformCompany: Company;
+  nuevaEmpresa: Company;
+}): RenderedEmail {
+  const { platformCompany, nuevaEmpresa } = params;
+  const title = "Nueva Empresa Registrada — Pendiente de Aprobación";
+  const subject = `${title}: ${nuevaEmpresa.nombreComercial}`;
+
+  const detailsHtml =
+    infoCard("Nombre Comercial", escapeHtml(nuevaEmpresa.nombreComercial)) +
+    infoCard("Razón Social", escapeHtml(nuevaEmpresa.razonSocial)) +
+    infoCard("Identificación", escapeHtml(nuevaEmpresa.identificacion)) +
+    infoCard("Correo de Contacto", escapeHtml(nuevaEmpresa.correoEmisor)) +
+    infoCard("Perfil", escapeHtml(nuevaEmpresa.perfilCompania)) +
+    infoCard("Estado", escapeHtml(nuevaEmpresa.estadoSaas));
+
+  const bodyHtml = `
+    <p>Se ha registrado una nueva empresa en la plataforma y está pendiente de aprobación:</p>
+    ${detailsHtml}
+    <p style="margin-top:16px;">Ingresa al panel de administración SaaS para revisarla y activarla.</p>
+    <p style="margin-top:16px;font-weight:bold;">${escapeHtml(platformCompany.nombreComercial)}</p>
+  `;
+
+  const text = `${title}\n\nNombre Comercial: ${nuevaEmpresa.nombreComercial}\nRazón Social: ${nuevaEmpresa.razonSocial}\nIdentificación: ${nuevaEmpresa.identificacion}\nCorreo de Contacto: ${nuevaEmpresa.correoEmisor}\nPerfil: ${nuevaEmpresa.perfilCompania}\nEstado: ${nuevaEmpresa.estadoSaas}\n\n${platformCompany.nombreComercial}`;
+
+  return { subject, html: emailShell(platformCompany, title, bodyHtml), text };
+}

@@ -8,7 +8,7 @@ import { obtenerCertificadoHttps } from "./server/httpsCert";
 import { verificarLlaveP12, firmarXadesEpes } from "./server/haciendaSigner";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
-import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderAccountStatusEmail } from "./server/emailTemplates";
+import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
 import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion } from "./src/data/mockData";
 import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
@@ -545,6 +545,35 @@ async function startServer() {
           ]
         );
         c.id = (result as any).insertId;
+
+        // Avisar a los administradores de la empresa 7 (la plataforma) de que
+        // hay una empresa nueva pendiente de revisión/aprobación. Best-effort:
+        // un fallo de correo no debe impedir que la empresa quede creada.
+        if (c.id !== 7) {
+          try {
+            const [platRows] = await pool.query("SELECT * FROM companias WHERE id = 7 OR id_compania = 7");
+            const platformCompany: Company | undefined = (platRows as any[]).map(normalizeRow)[0];
+            const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = 7");
+            const smtpRow = (smtpRows as any[])[0];
+            const platformSmtp: CompaniaSmtpConfig | undefined = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
+            const [adminRows] = await pool.query("SELECT * FROM usuarios WHERE (idCompania = 7 OR id_compania = 7) AND rol = 'Administrador'");
+            const adminUsers = (adminRows as any[]).map(normalizeRow);
+
+            if (platformCompany && platformSmtp && platformSmtp.activo && adminUsers.length > 0) {
+              const rendered = renderNuevaEmpresaEmail({ platformCompany, nuevaEmpresa: c });
+              for (const admin of adminUsers) {
+                if (admin.correo) {
+                  await sendMail(platformSmtp, { to: admin.correo, subject: rendered.subject, html: rendered.html, text: rendered.text });
+                }
+              }
+            } else {
+              console.log("[SaaS] Notificación de nueva empresa omitida (sin SMTP de plataforma activo o sin administradores destinatarios).");
+            }
+          } catch (mailErr: any) {
+            console.error("[SaaS] Error enviando correo de nueva empresa a administradores de plataforma:", mailErr.message || mailErr);
+          }
+        }
+
         res.json(c);
       } else {
         if (c.id) {
