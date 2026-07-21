@@ -42,6 +42,7 @@ export default function CompanySettings({
   const [newUserRol, setNewUserRol] = useState<'Administrador' | 'Profesional'>('Profesional');
 
   const [horario, setHorario] = useState<HorarioAtencion>(currentCompany.horarioAtencion || DEFAULT_HORARIO_ATENCION);
+  const [horarioGuardado, setHorarioGuardado] = useState(false);
 
   useEffect(() => {
     setIsAddingUser(false);
@@ -363,6 +364,8 @@ export default function CompanySettings({
 
   const handleGuardarHorario = () => {
     onUpdateCompany({ ...currentCompany, horarioAtencion: horario });
+    setHorarioGuardado(true);
+    setTimeout(() => setHorarioGuardado(false), 2500);
   };
 
   const handleCambiarDia = (dia: keyof HorarioAtencion, campo: 'abre' | 'cierra', valor: string) => {
@@ -933,13 +936,20 @@ export default function CompanySettings({
             })}
           </div>
 
-          <button
-            onClick={handleGuardarHorario}
-            className="text-white px-3 py-1.5 rounded-lg font-semibold"
-            style={{ backgroundColor: currentCompany.colorPrimario }}
-          >
-            Guardar Horario
-          </button>
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={handleGuardarHorario}
+              className="text-white px-3 py-1.5 rounded-lg font-semibold"
+              style={{ backgroundColor: currentCompany.colorPrimario }}
+            >
+              Guardar Horario
+            </button>
+            {horarioGuardado && (
+              <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                <Check className="w-3.5 h-3.5" /> Horario guardado
+              </span>
+            )}
+          </div>
         </div>
       )}
 
