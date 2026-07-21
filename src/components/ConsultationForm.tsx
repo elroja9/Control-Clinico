@@ -373,7 +373,7 @@ export default function ConsultationForm({ patient, onSave, onCancel, themeColor
         )}
       </div>
 
-      <div className="p-5 space-y-6 max-h-[550px] overflow-y-auto">
+      <div className="p-5 space-y-6 max-h-[75vh] overflow-y-auto">
         
         {/* Core fields */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

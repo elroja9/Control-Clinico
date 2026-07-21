@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Patient } from '../data/mockData';
+import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 import { PlusCircle, Heart, Dumbbell, MapPin, User, Save, X } from 'lucide-react';
 
 interface PatientFormProps {
@@ -127,16 +128,37 @@ export default function PatientForm({
     onSavePatient(patientData);
   };
 
-  // Province drop list for Costa Rica
-  const CostaRicaProvinces = [
-    { id: 1, name: 'San José' },
-    { id: 2, name: 'Alajuela' },
-    { id: 3, name: 'Cartago' },
-    { id: 4, name: 'Heredia' },
-    { id: 5, name: 'Guanacaste' },
-    { id: 6, name: 'Puntarenas' },
-    { id: 7, name: 'Limón' }
-  ];
+  // Cascading Provincia -> Cantón -> Distrito lists for Costa Rica
+  // (cantonId = provinciaId*100 + N, distritoId = cantonId*100 + N, per DB convention)
+  const provinciaActual = COSTA_RICA_PROVINCIAS.find(p => parseInt(p.codigo, 10) === provinciaId);
+  const cantonesDisponibles = provinciaActual ? provinciaActual.cantones : [];
+  const cantonActual = cantonesDisponibles.find(c => provinciaId * 100 + parseInt(c.codigo, 10) === cantonId);
+  const distritosDisponibles = cantonActual ? cantonActual.distritos : [];
+
+  const handleProvinciaChange = (value: string) => {
+    const newProvinciaId = parseInt(value, 10);
+    setProvinciaId(newProvinciaId);
+    const nuevaProvincia = COSTA_RICA_PROVINCIAS.find(p => parseInt(p.codigo, 10) === newProvinciaId);
+    const primerCanton = nuevaProvincia?.cantones[0];
+    if (primerCanton) {
+      const nuevoCantonId = newProvinciaId * 100 + parseInt(primerCanton.codigo, 10);
+      setCantonId(nuevoCantonId);
+      const primerDistrito = primerCanton.distritos[0];
+      setDistritoId(primerDistrito ? nuevoCantonId * 100 + parseInt(primerDistrito.codigo, 10) : nuevoCantonId * 100);
+    }
+  };
+
+  const handleCantonChange = (value: string) => {
+    const newCantonId = parseInt(value, 10);
+    setCantonId(newCantonId);
+    const canton = cantonesDisponibles.find(c => provinciaId * 100 + parseInt(c.codigo, 10) === newCantonId);
+    const primerDistrito = canton?.distritos[0];
+    setDistritoId(primerDistrito ? newCantonId * 100 + parseInt(primerDistrito.codigo, 10) : newCantonId * 100);
+  };
+
+  const handleDistritoChange = (value: string) => {
+    setDistritoId(parseInt(value, 10));
+  };
 
   return (
     <form onSubmit={handleSave} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden text-xs sm:text-sm">
@@ -151,7 +173,7 @@ export default function PatientForm({
         </button>
       </div>
 
-      <div className="p-5 space-y-6 max-h-[550px] overflow-y-auto">
+      <div className="p-5 space-y-6 max-h-[75vh] overflow-y-auto">
         {/* Section 1: Personal info */}
         <div>
           <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
@@ -275,31 +297,37 @@ export default function PatientForm({
               <label className="block text-slate-600 font-medium mb-1">Provincia</label>
               <select
                 value={provinciaId}
-                onChange={(e) => setProvinciaId(parseInt(e.target.value))}
+                onChange={(e) => handleProvinciaChange(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
               >
-                {CostaRicaProvinces.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                {COSTA_RICA_PROVINCIAS.map(p => (
+                  <option key={p.codigo} value={parseInt(p.codigo, 10)}>{p.nombre}</option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Código de Cantón</label>
-              <input
-                type="number"
+              <label className="block text-slate-600 font-medium mb-1">Cantón</label>
+              <select
                 value={cantonId}
-                onChange={(e) => setCantonId(parseInt(e.target.value))}
+                onChange={(e) => handleCantonChange(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-              />
+              >
+                {cantonesDisponibles.map(c => (
+                  <option key={c.codigo} value={provinciaId * 100 + parseInt(c.codigo, 10)}>{c.nombre}</option>
+                ))}
+              </select>
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Código de Distrito</label>
-              <input
-                type="number"
+              <label className="block text-slate-600 font-medium mb-1">Distrito</label>
+              <select
                 value={distritoId}
-                onChange={(e) => setDistritoId(parseInt(e.target.value))}
+                onChange={(e) => handleDistritoChange(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-              />
+              >
+                {distritosDisponibles.map(d => (
+                  <option key={d.codigo} value={cantonId * 100 + parseInt(d.codigo, 10)}>{d.nombre}</option>
+                ))}
+              </select>
             </div>
           </div>
           <div className="mt-3">
