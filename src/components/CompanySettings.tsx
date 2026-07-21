@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION } from '../data/mockData';
-import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Database, Copy, Mail, Server, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock } from 'lucide-react';
+import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock } from 'lucide-react';
 
 interface CompanySettingsProps {
   companies: Company[];
@@ -496,9 +496,9 @@ export default function CompanySettings({
               <span className="text-[10px] text-slate-400 block">Si se apaga, las citas no enviarán correos automáticos de confirmación, modificación o cancelación</span>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
-              <input 
-                type="checkbox" 
-                checked={smtpActivo} 
+              <input
+                type="checkbox"
+                checked={smtpActivo}
                 onChange={(e) => setSmtpActivo(e.target.checked)}
                 className="sr-only peer"
               />
@@ -1080,134 +1080,6 @@ export default function CompanySettings({
           </div>
         </div>
       )}
-
-      {/* MySQL Integration Documentation Schema Panel */}
-      <div className="mt-6 border-t border-slate-200 pt-5 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Database className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
-            <h4 className="text-xs font-bold text-slate-700 uppercase">Esquema MySQL / MariaDB (Usuarios y Empresas)</h4>
-          </div>
-          <span className="text-[9px] bg-slate-100 text-slate-600 border border-slate-200 font-mono font-bold px-2 py-0.5 rounded-full uppercase">
-            phpMyAdmin CR
-          </span>
-        </div>
-        
-        <p className="text-[11px] text-slate-500 leading-relaxed">
-          Para implementar la seguridad con la tabla de usuarios y configurar empresas en tu servidor MySQL, ejecuta la siguiente estructura de datos en tu base de datos:
-        </p>
-
-        <div className="bg-slate-950 text-slate-300 p-3.5 rounded-xl border border-slate-900 text-[10px] font-mono relative max-h-72 overflow-y-auto">
-          <button
-            onClick={() => {
-              navigator.clipboard.writeText(mysqlScript);
-              alert("¡Script SQL copiado con éxito! Puedes pegarlo en phpMyAdmin u otra consola MySQL.");
-            }}
-            className="absolute right-3 top-3 bg-slate-800 hover:bg-slate-700 text-white p-1.5 rounded-md border border-slate-700/50 flex items-center gap-1.5 transition-all text-[9px] font-sans"
-            title="Copiar Código SQL"
-          >
-            <Copy className="w-3 h-3 text-teal-400" />
-            Copiar SQL
-          </button>
-          <pre className="whitespace-pre-wrap leading-relaxed select-all font-mono text-slate-400">
-            {mysqlScript}
-          </pre>
-        </div>
-      </div>
     </div>
   );
 }
-
-const mysqlScript = `-- ========================================================
--- FisioNutri CR - Esquema de Base de Datos para MySQL / MariaDB
--- Soporta Calendario, Citas, Seguridad y SMTP Configurable
--- ========================================================
-
--- 1. Estructura de tabla para 'companias'
-CREATE TABLE IF NOT EXISTS \`companias\` (
-  \`id_compania\` int(11) NOT NULL AUTO_INCREMENT,
-  \`nombre_comercial\` varchar(150) NOT NULL,
-  \`razon_social\` varchar(150) NOT NULL,
-  \`tipo_identificacion\` enum('01','02','03','04') NOT NULL COMMENT '01: Física, 02: Jurídica, etc.',
-  \`identificacion\` varchar(50) NOT NULL,
-  \`correo_emisor\` varchar(100) NOT NULL,
-  \`iva_por_defecto\` decimal(5,2) NOT NULL DEFAULT 4.00 COMMENT 'Tasa IVA Salud (4%)',
-  \`color_primario\` varchar(20) DEFAULT '#0f766e',
-  \`color_sidebar\` varchar(20) DEFAULT '#115e59',
-  \`logo_url\` text DEFAULT NULL,
-  \`perfil_compania\` enum('Fisioterapia', 'Nutrición', 'Ambas') NOT NULL DEFAULT 'Ambas' COMMENT 'Perfil clínico',
-  \`actividad_economica\` varchar(150) DEFAULT '869001',
-  \`estado\` tinyint(1) NOT NULL DEFAULT 1,
-  PRIMARY KEY (\`id_compania\`),
-  UNIQUE KEY \`idx_companias_identificacion\` (\`identificacion\`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- 2. Estructura de tabla para 'usuarios'
-CREATE TABLE IF NOT EXISTS \`usuarios\` (
-  \`id_usuario\` int(11) NOT NULL AUTO_INCREMENT,
-  \`id_compania\` int(11) NOT NULL,
-  \`nombre\` varchar(150) NOT NULL,
-  \`usuario\` varchar(50) NOT NULL,
-  \`correo\` varchar(100) NOT NULL,
-  \`contrasena\` varchar(255) NOT NULL COMMENT 'Hash de contraseña',
-  \`rol\` enum('Administrador','Profesional') NOT NULL DEFAULT 'Profesional',
-  \`estado\` tinyint(1) NOT NULL DEFAULT 1,
-  PRIMARY KEY (\`id_usuario\`),
-  UNIQUE KEY \`idx_usuarios_username\` (\`usuario\`),
-  CONSTRAINT \`fk_usuarios_compania\` FOREIGN KEY (\`id_compania\`) REFERENCES \`companias\` (\`id_compania\`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- 3. Estructura de tabla para 'citas'
-CREATE TABLE IF NOT EXISTS \`citas\` (
-  \`id_cita\` INT AUTO_INCREMENT PRIMARY KEY,
-  \`id_compania\` INT NOT NULL,
-  \`id_paciente\` INT NOT NULL,
-  \`id_usuario_nutricionista\` INT NOT NULL,
-  \`id_consulta\` INT NULL COMMENT 'Se llena cuando se usa Iniciar consulta',
-  \`fecha_hora\` DATETIME NOT NULL,
-  \`duracion_minutos\` INT NOT NULL DEFAULT 30,
-  \`estado_cita\` ENUM('PROGRAMADA', 'CONFIRMADA', 'CANCELADA', 'COMPLETADA', 'NO_ASISTIO') NOT NULL DEFAULT 'PROGRAMADA',
-  \`notas\` TEXT COMMENT 'Nota interna, no se incluye en los correos al paciente',
-  \`confirmacion_enviada_en\` TIMESTAMP NULL,
-  \`recordatorio_enviado_en\` TIMESTAMP NULL,
-  \`cancelacion_enviada_en\` TIMESTAMP NULL,
-  \`estado\` TINYINT(1) NOT NULL DEFAULT 1,
-  \`creado_por\` INT,
-  \`creado_en\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  \`actualizado_por\` INT,
-  \`actualizado_en\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT \`chk_citas_duracion\` CHECK (\`duracion_minutos\` > 0 AND \`duracion_minutos\` <= 480),
-  CONSTRAINT \`fk_citas_compania\` FOREIGN KEY (\`id_compania\`) REFERENCES \`companias\` (\`id_compania\`),
-  CONSTRAINT \`fk_citas_paciente\` FOREIGN KEY (\`id_paciente\`) REFERENCES \`pacientes\` (\`id_paciente\`) ON DELETE CASCADE,
-  CONSTRAINT \`fk_citas_nutricionista\` FOREIGN KEY (\`id_usuario_nutricionista\`) REFERENCES \`usuarios\` (\`id_usuario\`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- 4. Estructura de tabla para 'compania_smtp_config'
-CREATE TABLE IF NOT EXISTS \`compania_smtp_config\` (
-  \`id_config\` INT AUTO_INCREMENT PRIMARY KEY,
-  \`id_compania\` INT NOT NULL,
-  \`proveedor\` ENUM('GMAIL', 'OUTLOOK', 'OTRO') NOT NULL DEFAULT 'OTRO',
-  \`smtp_host\` VARCHAR(255) NOT NULL,
-  \`smtp_port\` INT NOT NULL DEFAULT 587,
-  \`smtp_seguridad\` ENUM('TLS', 'SSL', 'NINGUNA') NOT NULL DEFAULT 'TLS',
-  \`smtp_usuario\` VARCHAR(255) NOT NULL,
-  \`smtp_password_cifrado\` VARBINARY(512) NOT NULL COMMENT 'AES-256-GCM',
-  \`remitente_nombre\` VARCHAR(150),
-  \`remitente_correo\` VARCHAR(150),
-  \`recordatorio_horas_antes\` INT NOT NULL DEFAULT 24,
-  \`activo\` TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Apaga el envío automático sin borrar la config',
-  \`creado_en\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  \`actualizado_en\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY \`uq_compania_smtp_config\` (\`id_compania\`),
-  CONSTRAINT \`fk_smtp_compania\` FOREIGN KEY (\`id_compania\`) REFERENCES \`companias\` (\`id_compania\`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- 5. Inyección de Registros de Prueba Iniciales
-INSERT INTO \`companias\` (\`id_compania\`, \`nombre_comercial\`, \`razon_social\`, \`tipo_identificacion\`, \`identificacion\`, \`correo_emisor\`, \`iva_por_defecto\`, \`color_primario\`, \`color_sidebar\`, \`logo_url\`, \`perfil_compania\`) VALUES
-(1, 'FisioNutri Escazú', 'Clínicas de Salud Integral S.A.', '02', '3-101-445566', 'contacto@fisionutriescazu.com', 4.00, '#0f766e', '#115e59', 'https://images.unsplash.com/photo-1505751172876-fa1923c5c528?w=120', 'Ambas'),
-(2, 'Clínica Elronutri Alajuela', 'Eliecer Rojas Nutrición y Terapia', '01', '5-0392-0984', 'eliecer.rojas9@gmail.com', 4.00, '#d97706', '#92400e', 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=120', 'Nutrición');
-
-INSERT INTO \`usuarios\` (\`id_usuario\`, \`id_compania\`, \`nombre\`, \`usuario\`, \`correo\`, \`contrasena\`, \`rol\`) VALUES
-(1, 1, 'Dr. Keneth Rojas', 'admin_escazu', 'contacto@fisionutriescazu.com', '123456', 'Administrador'),
-(2, 2, 'Dr. Eliecer Rojas', 'eliecer_alajuela', 'eliecer.rojas9@gmail.com', '123456', 'Administrador');
-`;
