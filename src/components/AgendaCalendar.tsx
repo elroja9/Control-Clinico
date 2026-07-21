@@ -21,7 +21,8 @@ import {
   Lock,
   Eye,
   ArrowRight,
-  UserCheck
+  UserCheck,
+  Search
 } from 'lucide-react';
 
 interface AgendaCalendarProps {
@@ -72,6 +73,8 @@ export default function AgendaCalendar({
   
   // Form state
   const [formPatientId, setFormPatientId] = useState<string>('');
+  const [formPatientSearch, setFormPatientSearch] = useState<string>('');
+  const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState(false);
   const [formDate, setFormDate] = useState<string>('');
   const [formTime, setFormTime] = useState<string>('');
   const [formDuration, setFormDuration] = useState<number>(30);
@@ -171,10 +174,27 @@ export default function AgendaCalendar({
     setCurrentDate(new Date(2026, 6, 17)); // Default mock day: July 17, 2026
   };
 
+  const patientLabel = (p: Patient) => `${p.nombreCompleto} (${p.identificacion})`;
+
+  const filteredPatients = formPatientSearch.trim()
+    ? patients.filter(p =>
+        p.nombreCompleto.toLowerCase().includes(formPatientSearch.toLowerCase()) ||
+        p.identificacion.includes(formPatientSearch)
+      )
+    : patients;
+
+  const handleSelectPatient = (p: Patient) => {
+    setFormPatientId(p.id.toString());
+    setFormPatientSearch(patientLabel(p));
+    setIsPatientDropdownOpen(false);
+  };
+
   // Open creation form
   const handleOpenNewCita = (date?: string, timeSlot?: string) => {
     setSelectedCita(null);
-    setFormPatientId(patients[0]?.id.toString() || '');
+    const firstPatient = patients[0];
+    setFormPatientId(firstPatient?.id.toString() || '');
+    setFormPatientSearch(firstPatient ? patientLabel(firstPatient) : '');
     setFormDate(date || formatDateString(currentDate));
     setFormTime(timeSlot || '09:00');
     setFormDuration(30);
@@ -190,7 +210,9 @@ export default function AgendaCalendar({
     e.stopPropagation();
     setSelectedCita(cita);
     setFormPatientId(cita.idPaciente.toString());
-    
+    const citaPatient = patients.find(p => p.id === cita.idPaciente);
+    setFormPatientSearch(citaPatient ? patientLabel(citaPatient) : '');
+
     const [d, t] = cita.fechaHora.split('T');
     setFormDate(d);
     setFormTime(t || '09:00');
@@ -873,18 +895,43 @@ export default function AgendaCalendar({
               )}
 
               {/* Patient Selection */}
-              <div>
+              <div className="relative">
                 <label className="block text-slate-600 text-xs font-bold mb-1.5">Paciente Emisor *</label>
-                <select
-                  value={formPatientId}
-                  onChange={(e) => setFormPatientId(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-                >
-                  <option value="">-- Seleccione un paciente --</option>
-                  {patients.map(p => (
-                    <option key={p.id} value={p.id}>{p.nombreCompleto} ({p.identificacion})</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={formPatientSearch}
+                    onChange={(e) => {
+                      setFormPatientSearch(e.target.value);
+                      setFormPatientId('');
+                      setIsPatientDropdownOpen(true);
+                    }}
+                    onFocus={() => setIsPatientDropdownOpen(true)}
+                    onBlur={() => setTimeout(() => setIsPatientDropdownOpen(false), 150)}
+                    placeholder="Buscar por nombre o cédula..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                  />
+                </div>
+                {isPatientDropdownOpen && (
+                  <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg">
+                    {filteredPatients.length > 0 ? (
+                      filteredPatients.map(p => (
+                        <button
+                          type="button"
+                          key={p.id}
+                          onMouseDown={() => handleSelectPatient(p)}
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
+                        >
+                          <span className="font-semibold text-slate-800 block">{p.nombreCompleto}</span>
+                          <span className="text-slate-500">{p.identificacion}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="px-3 py-2 text-xs text-slate-500">Sin resultados para "{formPatientSearch}"</div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Date, Time, Duration */}
