@@ -1,4 +1,4 @@
-import type { Company, Patient, Cita, Consultation } from "../src/data/mockData";
+import type { Company, Patient, Cita, Consultation, User } from "../src/data/mockData";
 
 export interface RenderedEmail {
   subject: string;
@@ -112,6 +112,40 @@ export function renderCitaEmail(params: {
   `;
 
   const text = `${title}\n\nEstimado(a) ${patient.nombreCompleto},\n${intro}\nFecha: ${fecha}\nHora: ${hora || ""}\nDuración: ${cita.duracionMinutos} minutos\nEstado: ${cita.estadoCita}\n${cita.notas ? `Notas: ${cita.notas}\n` : ""}\n${company.nombreComercial}`;
+
+  return { subject, html: emailShell(company, title, bodyHtml), text };
+}
+
+export function renderCitaEmailProfesional(params: {
+  company: Company;
+  professional: User;
+  patient: Patient;
+  cita: Cita;
+}): RenderedEmail {
+  const { company, professional, patient, cita } = params;
+  const [fecha, hora] = cita.fechaHora.split("T");
+  const title = "Nueva Cita Agendada";
+  const subject = `${title} - ${company.nombreComercial}`;
+
+  const detailsHtml =
+    infoCard("Paciente", escapeHtml(patient.nombreCompleto)) +
+    infoCard("Teléfono", escapeHtml(patient.telefono)) +
+    infoCard("Correo", escapeHtml(patient.correoElectronico)) +
+    infoCard("Fecha", escapeHtml(fecha)) +
+    infoCard("Hora", escapeHtml(hora || "")) +
+    infoCard("Duración", `${cita.duracionMinutos} minutos`) +
+    infoCard("Tipo de Visita", cita.tipoVisita === "DOMICILIO" ? "A Domicilio" : "En Consultorio") +
+    (cita.tipoVisita === "DOMICILIO" && cita.direccionDomicilio ? infoCard("Dirección", escapeHtml(cita.direccionDomicilio)) : "") +
+    (cita.tipoVisita === "DOMICILIO" && cita.tiempoTrasladoMinutos != null ? infoCard("Tiempo de Traslado Estimado", `${cita.tiempoTrasladoMinutos} minutos`) : "");
+
+  const bodyHtml = `
+    <p>Estimado(a) ${escapeHtml(professional.nombre)},</p>
+    <p>Un cliente ha agendado una nueva cita a través de la página de reservas en línea:</p>
+    ${detailsHtml}
+    <p style="margin-top:16px;font-weight:bold;">${escapeHtml(company.nombreComercial)}</p>
+  `;
+
+  const text = `${title}\n\nPaciente: ${patient.nombreCompleto}\nTeléfono: ${patient.telefono}\nCorreo: ${patient.correoElectronico}\nFecha: ${fecha}\nHora: ${hora || ""}\nDuración: ${cita.duracionMinutos} minutos\nTipo de Visita: ${cita.tipoVisita}\n${cita.tipoVisita === "DOMICILIO" && cita.direccionDomicilio ? `Dirección: ${cita.direccionDomicilio}\n` : ""}${cita.tipoVisita === "DOMICILIO" && cita.tiempoTrasladoMinutos != null ? `Tiempo de Traslado: ${cita.tiempoTrasladoMinutos} min\n` : ""}\n${company.nombreComercial}`;
 
   return { subject, html: emailShell(company, title, bodyHtml), text };
 }

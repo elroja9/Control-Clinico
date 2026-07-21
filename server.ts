@@ -8,7 +8,7 @@ import { obtenerCertificadoHttps } from "./server/httpsCert";
 import { verificarLlaveP12, firmarXadesEpes } from "./server/haciendaSigner";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
-import { renderCitaEmail, renderConsultaEmail, renderAccountStatusEmail } from "./server/emailTemplates";
+import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderAccountStatusEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
 import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion } from "./src/data/mockData";
 import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
@@ -1767,7 +1767,7 @@ async function startServer() {
         idConsulta: null,
         fechaHora,
         duracionMinutos,
-        estadoCita: "PROGRAMADA",
+        estadoCita: "CONFIRMADA",
         notas: "",
         tipoVisita,
         direccionDomicilio: tipoVisita === "DOMICILIO" ? body.direccionDomicilio : null,
@@ -1785,6 +1785,59 @@ async function startServer() {
       } else {
         nuevaCita.id = Math.max(0, ...localCitas.map(c => c.id)) + 1;
         localCitas.push(nuevaCita);
+      }
+
+      // Confirmación por correo al cliente y notificación al especialista.
+      // Best-effort: un fallo de correo no debe impedir que la cita quede
+      // creada, así que los errores solo se registran en consola.
+      try {
+        let company: Company | undefined;
+        let smtpConfig: CompaniaSmtpConfig | undefined;
+        if (dbConnected && pool) {
+          const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+          company = (companyRows as any[]).map(normalizeRow)[0];
+          const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [idCompania]);
+          const smtpRow = (smtpRows as any[])[0];
+          smtpConfig = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
+        } else {
+          company = localCompanies.find(c => c.id === idCompania);
+          smtpConfig = localSmtpConfigs.find(s => s.idCompania === idCompania);
+        }
+
+        if (company && smtpConfig && smtpConfig.activo) {
+          const correoCliente = renderCitaEmail({ company, patient: paciente!, cita: nuevaCita, tipoNotif: "CONFIRMACION" });
+          const correoEspecialista = renderCitaEmailProfesional({ company, professional: user, patient: paciente!, cita: nuevaCita });
+
+          await sendMail(smtpConfig, { to: paciente!.correoElectronico, subject: correoCliente.subject, html: correoCliente.html, text: correoCliente.text });
+          await sendMail(smtpConfig, { to: user.correo, subject: correoEspecialista.subject, html: correoEspecialista.html, text: correoEspecialista.text });
+
+          const enviadoEn = new Date().toISOString();
+          const logsAEnviar = [
+            { destinatario: paciente!.correoElectronico, asunto: correoCliente.subject, cuerpo: correoCliente.text },
+            { destinatario: user.correo, asunto: correoEspecialista.subject, cuerpo: correoEspecialista.text }
+          ];
+          for (const l of logsAEnviar) {
+            if (dbConnected && pool) {
+              await pool.query(
+                "INSERT INTO notification_logs (idCompania, idCita, tipo, destinatario, asunto, cuerpo, enviadoEn) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [idCompania, nuevaCita.id, "CONFIRMACION", l.destinatario, l.asunto, l.cuerpo, enviadoEn]
+              );
+            } else {
+              localLogs.push({
+                id: Math.max(0, ...localLogs.map((item: any) => item.id), 0) + 1,
+                idCompania,
+                idCita: nuevaCita.id,
+                tipo: "CONFIRMACION",
+                destinatario: l.destinatario,
+                asunto: l.asunto,
+                cuerpo: l.cuerpo,
+                enviadoEn
+              } as any);
+            }
+          }
+        }
+      } catch (mailErr: any) {
+        console.error("Error enviando correos de confirmación de cita pública:", mailErr);
       }
 
       res.json(nuevaCita);
