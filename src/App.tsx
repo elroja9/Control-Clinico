@@ -52,7 +52,8 @@ import {
   CompaniaSmtpConfig,
   NotificationLog,
   SmtpConfigInput,
-  CalendarBlock
+  CalendarBlock,
+  CompanyPayment
 } from './data/mockData';
 
 import CompanySettings from './components/CompanySettings';
@@ -61,6 +62,7 @@ import ConsultationForm from './components/ConsultationForm';
 import ReportView from './components/ReportView';
 import LoginView from './components/LoginView';
 import AgendaCalendar from './components/AgendaCalendar';
+import SaasAdminPanel from './components/SaasAdminPanel';
 
 export default function App() {
   // --- Persistent Storage Core (Synced with MySQL Backend) ---
@@ -115,6 +117,8 @@ export default function App() {
     const local = localStorage.getItem('fisio_calendar_blocks');
     return local ? JSON.parse(local) : defaultCalendarBlocks;
   });
+
+  const [companyPayments, setCompanyPayments] = useState<CompanyPayment[]>([]);
 
   // --- Initial MySQL Synchronization & Load ---
   useEffect(() => {
@@ -269,7 +273,7 @@ export default function App() {
   const activeCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
   // App Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // --- Login and Company Registration Handlers ---
@@ -538,6 +542,63 @@ export default function App() {
     });
   };
 
+  const handleUpdateEstadoSaas = (companyId: number, estadoSaas: Company['estadoSaas']) => {
+    fetch(`/api/companies/${companyId}/estado-saas`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estadoSaas })
+    })
+    .then(res => res.json())
+    .then(data => {
+      setCompanies(prev => prev.map(c => c.id === companyId ? { ...c, estadoSaas: data.estadoSaas } : c));
+    })
+    .catch(err => console.error("Error updating company estadoSaas:", err));
+  };
+
+  const handleUpdateMaxUsuarios = (companyId: number, maxUsuarios: number) => {
+    const target = companies.find(c => c.id === companyId);
+    if (!target) return;
+    const updated = { ...target, maxUsuarios };
+    fetch('/api/companies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updated)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setCompanies(prev => prev.map(c => c.id === companyId ? data : c));
+    })
+    .catch(err => {
+      console.error("Error updating maxUsuarios:", err);
+      setCompanies(prev => prev.map(c => c.id === companyId ? updated : c));
+    });
+  };
+
+  const handleLoadPayments = (companyId: number) => {
+    fetch(`/api/companies/${companyId}/pagos`)
+      .then(res => res.json())
+      .then(data => setCompanyPayments(data))
+      .catch(err => console.error("Error loading company payments:", err));
+  };
+
+  const handleAddPayment = (payment: Omit<CompanyPayment, 'id'> & { montoMensual?: number | null; proximoVencimiento?: string | null }) => {
+    fetch(`/api/companies/${payment.idCompania}/pagos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payment)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setCompanyPayments(prev => [data, ...prev]);
+      if (payment.montoMensual != null || payment.proximoVencimiento != null) {
+        setCompanies(prev => prev.map(c => c.id === payment.idCompania
+          ? { ...c, ...(payment.montoMensual != null ? { montoMensual: payment.montoMensual } : {}), ...(payment.proximoVencimiento != null ? { proximoVencimiento: payment.proximoVencimiento } : {}) }
+          : c));
+      }
+    })
+    .catch(err => console.error("Error adding company payment:", err));
+  };
+
   const handleAddNotificationLog = (log: NotificationLog) => {
     setLogs(prev => [log, ...prev]);
   };
@@ -754,6 +815,22 @@ export default function App() {
                 <span>Personalizar Clínica</span>
               </div>
             </button>
+
+            {currentUser?.idCompania === 7 && (
+              <button
+                onClick={() => { setActiveTab('saas-admin'); setIsMobileMenuOpen(false); }}
+                className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
+                  activeTab === 'saas-admin'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-amber-500" />
+                  <span>Administración SaaS</span>
+                </div>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -880,6 +957,22 @@ export default function App() {
                   <span>Personalizar Clínica</span>
                 </div>
               </button>
+
+              {currentUser?.idCompania === 7 && (
+                <button
+                  onClick={() => setActiveTab('saas-admin')}
+                  className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
+                    activeTab === 'saas-admin'
+                      ? 'bg-slate-900 text-white shadow-xs'
+                      : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-amber-500" />
+                    <span>Administración SaaS</span>
+                  </div>
+                </button>
+              )}
             </div>
           </aside>
 
@@ -1309,6 +1402,18 @@ export default function App() {
                 users={users}
                 currentUser={currentUser!}
                 onSaveUser={handleSaveUser}
+              />
+            )}
+
+            {activeTab === 'saas-admin' && currentUser?.idCompania === 7 && (
+              <SaasAdminPanel
+                companies={companies.filter(c => c.id !== 7)}
+                users={users}
+                payments={companyPayments}
+                onUpdateEstadoSaas={handleUpdateEstadoSaas}
+                onUpdateMaxUsuarios={handleUpdateMaxUsuarios}
+                onLoadPayments={handleLoadPayments}
+                onAddPayment={handleAddPayment}
               />
             )}
 
