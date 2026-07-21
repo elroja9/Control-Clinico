@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User } from '../data/mockData';
+import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION } from '../data/mockData';
 import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Database, Copy, Mail, Server, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power } from 'lucide-react';
 
 interface CompanySettingsProps {
@@ -283,7 +283,8 @@ export default function CompanySettings({
       estadoSaas: "PENDIENTE",
       maxUsuarios: 5,
       montoMensual: null,
-      proximoVencimiento: null
+      proximoVencimiento: null,
+      horarioAtencion: DEFAULT_HORARIO_ATENCION
     };
     onAddCompany(newComp);
     setIsAdding(false);
@@ -333,7 +334,11 @@ export default function CompanySettings({
       correo: newUserCorreo,
       contrasena: newUserContrasena,
       rol: newUserRol,
-      activo: true
+      activo: true,
+      ubicacionDireccion: null,
+      ubicacionLat: null,
+      ubicacionLng: null,
+      maxTiempoTrasladoMinutos: 45
     };
     onSaveUser(newUser);
     setIsAddingUser(false);

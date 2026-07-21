@@ -309,7 +309,8 @@ export default function AgendaCalendar({
       fechaHora: fullFechaHora,
       duracionMinutos: formDuration,
       estadoCita: formStatus,
-      notas: formNotes
+      notas: formNotes,
+      tipoVisita: selectedCita ? selectedCita.tipoVisita : 'CONSULTORIO'
     };
 
     onSaveCita(savedCita);

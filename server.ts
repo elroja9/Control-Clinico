@@ -129,6 +129,12 @@ async function createTables() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
+    await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS tipoVisita VARCHAR(20) NOT NULL DEFAULT 'CONSULTORIO'`);
+    await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS direccionDomicilio VARCHAR(255) NULL`);
+    await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS pacienteLat DECIMAL(10,7) NULL`);
+    await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS pacienteLng DECIMAL(10,7) NULL`);
+    await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS tiempoTrasladoMinutos INT NULL`);
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS calendar_blocks (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -205,6 +211,7 @@ async function createTables() {
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS maxUsuarios INT NOT NULL DEFAULT 5`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS montoMensual DECIMAL(10,2) NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS proximoVencimiento DATE NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS horarioAtencion JSON NULL`);
 
     // usuarios
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS id INT NULL`);
@@ -213,6 +220,10 @@ async function createTables() {
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS correo VARCHAR(255) NULL`);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS contrasena VARCHAR(255) NULL`);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ubicacionDireccion VARCHAR(255) NULL`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ubicacionLat DECIMAL(10,7) NULL`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ubicacionLng DECIMAL(10,7) NULL`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS maxTiempoTrasladoMinutos INT NOT NULL DEFAULT 45`);
 
     // pacientes
     await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS id INT NULL`);

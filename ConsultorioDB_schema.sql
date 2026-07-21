@@ -113,7 +113,8 @@ CREATE TABLE `companias` (
   `estadoSaas` enum('PENDIENTE','ACTIVA','SUSPENDIDA') NOT NULL DEFAULT 'ACTIVA',
   `maxUsuarios` int(11) NOT NULL DEFAULT 5,
   `montoMensual` decimal(10,2) DEFAULT NULL,
-  `proximoVencimiento` date DEFAULT NULL
+  `proximoVencimiento` date DEFAULT NULL,
+  `horarioAtencion` json DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -144,6 +145,10 @@ CREATE TABLE `usuarios` (
   `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
   `actualizado_en` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   `estado` tinyint(1) NOT NULL DEFAULT 1,
+  `ubicacionDireccion` varchar(255) DEFAULT NULL,
+  `ubicacionLat` decimal(10,7) DEFAULT NULL,
+  `ubicacionLng` decimal(10,7) DEFAULT NULL,
+  `maxTiempoTrasladoMinutos` int(11) NOT NULL DEFAULT 45,
   CONSTRAINT `fk_usuarios_compania` FOREIGN KEY (`id_compania`) REFERENCES `companias` (`id_compania`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 

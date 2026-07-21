@@ -1,5 +1,30 @@
 import { TableInfo } from './schema';
 
+export interface HorarioDia {
+  abre: string | null;   // 'HH:MM', null = cerrado ese día
+  cierra: string | null; // 'HH:MM'
+}
+
+export interface HorarioAtencion {
+  lunes: HorarioDia;
+  martes: HorarioDia;
+  miercoles: HorarioDia;
+  jueves: HorarioDia;
+  viernes: HorarioDia;
+  sabado: HorarioDia;
+  domingo: HorarioDia;
+}
+
+export const DEFAULT_HORARIO_ATENCION: HorarioAtencion = {
+  lunes: { abre: '08:00', cierra: '18:00' },
+  martes: { abre: '08:00', cierra: '18:00' },
+  miercoles: { abre: '08:00', cierra: '18:00' },
+  jueves: { abre: '08:00', cierra: '18:00' },
+  viernes: { abre: '08:00', cierra: '18:00' },
+  sabado: { abre: '08:00', cierra: '12:00' },
+  domingo: { abre: null, cierra: null }
+};
+
 export interface Company {
   id: number;
   nombreComercial: string;
@@ -17,6 +42,7 @@ export interface Company {
   maxUsuarios: number;
   montoMensual: number | null;
   proximoVencimiento: string | null; // 'YYYY-MM-DD'
+  horarioAtencion: HorarioAtencion;
 }
 
 export interface User {
@@ -28,6 +54,10 @@ export interface User {
   contrasena: string;
   rol: 'Administrador' | 'Profesional';
   activo: boolean;
+  ubicacionDireccion: string | null;
+  ubicacionLat: number | null;
+  ubicacionLng: number | null;
+  maxTiempoTrasladoMinutos: number;
 }
 
 export interface Patient {
@@ -72,6 +102,11 @@ export interface Cita {
   confirmacionEnviadaEn?: string | null;
   recordatorioEnviadoEn?: string | null;
   cancelacionEnviadaEn?: string | null;
+  tipoVisita: 'CONSULTORIO' | 'DOMICILIO';
+  direccionDomicilio?: string | null;
+  pacienteLat?: number | null;
+  pacienteLng?: number | null;
+  tiempoTrasladoMinutos?: number | null;
 }
 
 export interface CompaniaSmtpConfig {
@@ -281,7 +316,8 @@ export const defaultCompanies: Company[] = [
     estadoSaas: "ACTIVA",
     maxUsuarios: 5,
     montoMensual: null,
-    proximoVencimiento: null
+    proximoVencimiento: null,
+    horarioAtencion: DEFAULT_HORARIO_ATENCION
   },
   {
     id: 2,
@@ -299,7 +335,8 @@ export const defaultCompanies: Company[] = [
     estadoSaas: "ACTIVA",
     maxUsuarios: 5,
     montoMensual: null,
-    proximoVencimiento: null
+    proximoVencimiento: null,
+    horarioAtencion: DEFAULT_HORARIO_ATENCION
   }
 ];
 
@@ -312,7 +349,11 @@ export const defaultUsers: User[] = [
     correo: "contacto@fisionutriescazu.com",
     contrasena: "123456",
     rol: "Administrador",
-    activo: true
+    activo: true,
+    ubicacionDireccion: null,
+    ubicacionLat: null,
+    ubicacionLng: null,
+    maxTiempoTrasladoMinutos: 45
   },
   {
     id: 2,
@@ -322,7 +363,11 @@ export const defaultUsers: User[] = [
     correo: "eliecer.rojas9@gmail.com",
     contrasena: "123456",
     rol: "Administrador",
-    activo: true
+    activo: true,
+    ubicacionDireccion: null,
+    ubicacionLat: null,
+    ubicacionLng: null,
+    maxTiempoTrasladoMinutos: 45
   }
 ];
 
@@ -460,7 +505,8 @@ export const defaultCitas: Cita[] = [
     estadoCita: "COMPLETADA",
     notas: "Paciente asiste puntual. Presenta lumbociatalgia aguda.",
     confirmacionEnviadaEn: "2026-07-16T10:00:00Z",
-    recordatorioEnviadoEn: "2026-07-16T18:00:00Z"
+    recordatorioEnviadoEn: "2026-07-16T18:00:00Z",
+    tipoVisita: "CONSULTORIO"
   },
   {
     id: 2,
@@ -472,7 +518,8 @@ export const defaultCitas: Cita[] = [
     duracionMinutos: 30,
     estadoCita: "PROGRAMADA",
     notas: "Seguimiento de terapia de McKenzie y agentes físicos.",
-    confirmacionEnviadaEn: "2026-07-17T11:00:00Z"
+    confirmacionEnviadaEn: "2026-07-17T11:00:00Z",
+    tipoVisita: "CONSULTORIO"
   },
   {
     id: 3,
@@ -485,7 +532,8 @@ export const defaultCitas: Cita[] = [
     estadoCita: "CONFIRMADA",
     notas: "Evaluación inicial de plan nutricional por sospecha de celiaquía.",
     confirmacionEnviadaEn: "2026-07-16T15:00:00Z",
-    recordatorioEnviadoEn: "2026-07-16T19:00:00Z"
+    recordatorioEnviadoEn: "2026-07-16T19:00:00Z",
+    tipoVisita: "CONSULTORIO"
   },
   {
     id: 4,
@@ -496,7 +544,8 @@ export const defaultCitas: Cita[] = [
     fechaHora: "2026-07-20T16:00",
     duracionMinutos: 45,
     estadoCita: "PROGRAMADA",
-    notas: "Tercera sesión. Monitoreo de respuesta de dolor."
+    notas: "Tercera sesión. Monitoreo de respuesta de dolor.",
+    tipoVisita: "CONSULTORIO"
   }
 ];
 

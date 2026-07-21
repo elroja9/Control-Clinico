@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import bcrypt from 'bcryptjs';
-import { Company, User, defaultUsers } from '../data/mockData';
+import { Company, User, defaultUsers, DEFAULT_HORARIO_ATENCION } from '../data/mockData';
 import { Building, Key, User as UserIcon, Mail, Briefcase, Palette, Shield, Sparkles, AlertCircle, ArrowRight, Clipboard } from 'lucide-react';
 
 const BCRYPT_HASH_PATTERN = /^\$2[aby]\$\d{2}\$/;
@@ -115,7 +115,8 @@ export default function LoginView({
       estadoSaas: 'PENDIENTE',
       maxUsuarios: 5,
       montoMensual: null,
-      proximoVencimiento: null
+      proximoVencimiento: null,
+      horarioAtencion: DEFAULT_HORARIO_ATENCION
     };
 
     // Create User
@@ -128,7 +129,11 @@ export default function LoginView({
       correo: adminCorreo,
       contrasena: adminPass,
       rol: 'Administrador',
-      activo: true
+      activo: true,
+      ubicacionDireccion: null,
+      ubicacionLat: null,
+      ubicacionLng: null,
+      maxTiempoTrasladoMinutos: 45
     };
 
     onRegisterCompany(newCompany, newAdminUser);
