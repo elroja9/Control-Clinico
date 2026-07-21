@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION } from '../data/mockData';
-import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Database, Copy, Mail, Server, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power } from 'lucide-react';
+import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Database, Copy, Mail, Server, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock } from 'lucide-react';
 
 interface CompanySettingsProps {
   companies: Company[];
@@ -41,6 +41,8 @@ export default function CompanySettings({
   const [newUserContrasena, setNewUserContrasena] = useState('');
   const [newUserRol, setNewUserRol] = useState<'Administrador' | 'Profesional'>('Profesional');
 
+  const [horario, setHorario] = useState<HorarioAtencion>(currentCompany.horarioAtencion || DEFAULT_HORARIO_ATENCION);
+
   useEffect(() => {
     setIsAddingUser(false);
     setNewUserNombre('');
@@ -48,6 +50,7 @@ export default function CompanySettings({
     setNewUserCorreo('');
     setNewUserContrasena('');
     setNewUserRol('Profesional');
+    setHorario(currentCompany.horarioAtencion || DEFAULT_HORARIO_ATENCION);
   }, [selectedCompanyId]);
 
   // Edit fields
@@ -351,6 +354,23 @@ export default function CompanySettings({
 
   const handleToggleUserActivo = (user: User) => {
     onSaveUser({ ...user, activo: !user.activo });
+  };
+
+  const diasLabel: Record<keyof HorarioAtencion, string> = {
+    lunes: 'Lunes', martes: 'Martes', miercoles: 'Miércoles', jueves: 'Jueves',
+    viernes: 'Viernes', sabado: 'Sábado', domingo: 'Domingo'
+  };
+
+  const handleGuardarHorario = () => {
+    onUpdateCompany({ ...currentCompany, horarioAtencion: horario });
+  };
+
+  const handleCambiarDia = (dia: keyof HorarioAtencion, campo: 'abre' | 'cierra', valor: string) => {
+    setHorario(prev => ({ ...prev, [dia]: { ...prev[dia], [campo]: valor || null } }));
+  };
+
+  const handleToggleCerrado = (dia: keyof HorarioAtencion, cerrado: boolean) => {
+    setHorario(prev => ({ ...prev, [dia]: cerrado ? { abre: null, cierra: null } : { abre: '08:00', cierra: '18:00' } }));
   };
 
   return (
@@ -868,6 +888,58 @@ export default function CompanySettings({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
+        <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-xs">
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
+            <Clock className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
+            <div>
+              <h4 className="font-bold text-slate-800">Horario de Atención</h4>
+              <p className="text-[10px] text-slate-500">Usado para calcular los horarios disponibles en la página pública de citas</p>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            {(Object.keys(diasLabel) as Array<keyof HorarioAtencion>).map(dia => {
+              const cerrado = horario[dia].abre == null;
+              return (
+                <div key={dia} className="flex items-center gap-2.5 p-2 bg-white border border-slate-200 rounded-lg">
+                  <span className="w-20 font-semibold text-slate-700">{diasLabel[dia]}</span>
+                  <label className="flex items-center gap-1.5 text-slate-500">
+                    <input type="checkbox" checked={cerrado} onChange={(e) => handleToggleCerrado(dia, e.target.checked)} />
+                    Cerrado
+                  </label>
+                  {!cerrado && (
+                    <>
+                      <input
+                        type="time"
+                        value={horario[dia].abre || ''}
+                        onChange={(e) => handleCambiarDia(dia, 'abre', e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1"
+                      />
+                      <span className="text-slate-400">a</span>
+                      <input
+                        type="time"
+                        value={horario[dia].cierra || ''}
+                        onChange={(e) => handleCambiarDia(dia, 'cierra', e.target.value)}
+                        className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1"
+                      />
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <button
+            onClick={handleGuardarHorario}
+            className="text-white px-3 py-1.5 rounded-lg font-semibold"
+            style={{ backgroundColor: currentCompany.colorPrimario }}
+          >
+            Guardar Horario
+          </button>
         </div>
       )}
 

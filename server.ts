@@ -461,6 +461,9 @@ function normalizeRow(row: any): any {
   if (copy.color_sidebar != null && copy.colorSidebar == null) copy.colorSidebar = copy.color_sidebar;
   if (copy.logo_url != null && copy.logoUrl == null) copy.logoUrl = copy.logo_url;
   if (copy.cod_actividad_economica != null && copy.actividadEconomica == null) copy.actividadEconomica = copy.cod_actividad_economica;
+  if (typeof copy.horarioAtencion === "string") {
+    try { copy.horarioAtencion = JSON.parse(copy.horarioAtencion); } catch { /* deja el valor crudo si no es JSON válido */ }
+  }
 
   // usuarios
   if (copy.id_compania != null && copy.idCompania == null) copy.idCompania = copy.id_compania;
