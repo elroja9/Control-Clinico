@@ -9,7 +9,7 @@ import { verificarLlaveP12, firmarXadesEpes } from "./server/haciendaSigner";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
 import { renderCitaEmail, renderConsultaEmail } from "./server/emailTemplates";
-import type { Company, Patient, Cita, Consultation, CalendarBlock } from "./src/data/mockData";
+import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
   defaultCompanies,
@@ -19,7 +19,8 @@ import {
   defaultCitas,
   defaultSmtpConfigs,
   defaultNotificationLogs,
-  defaultCalendarBlocks
+  defaultCalendarBlocks,
+  defaultCompanyPayments
 } from "./src/data/mockData";
 
 dotenv.config();
@@ -38,6 +39,7 @@ let localCitas = [...defaultCitas];
 let localSmtpConfigs = [...defaultSmtpConfigs];
 let localLogs = [...defaultNotificationLogs];
 let localCalendarBlocks = [...defaultCalendarBlocks];
+let localCompanyPayments: CompanyPayment[] = [...defaultCompanyPayments];
 
 interface LocalHaciendaConfig {
   idCompania: number;
@@ -141,6 +143,17 @@ async function createTables() {
     `);
 
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS pagos_empresa (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        fecha DATE NOT NULL,
+        monto DECIMAL(10,2) NOT NULL,
+        notas VARCHAR(255),
+        registradoPor VARCHAR(150)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS compania_smtp_config (
         id INT AUTO_INCREMENT PRIMARY KEY,
         idCompania INT NOT NULL,
@@ -188,6 +201,10 @@ async function createTables() {
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS logoUrl TEXT NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS actividadEconomica TEXT NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS perfilCompania VARCHAR(50) NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS estadoSaas ENUM('PENDIENTE','ACTIVA','SUSPENDIDA') NOT NULL DEFAULT 'ACTIVA'`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS maxUsuarios INT NOT NULL DEFAULT 5`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS montoMensual DECIMAL(10,2) NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS proximoVencimiento DATE NULL`);
 
     // usuarios
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS id INT NULL`);
@@ -195,6 +212,7 @@ async function createTables() {
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS usuario VARCHAR(255) NULL`);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS correo VARCHAR(255) NULL`);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS contrasena VARCHAR(255) NULL`);
+    await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE`);
 
     // pacientes
     await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS id INT NULL`);

@@ -101,7 +101,11 @@ export default function LoginView({
         ? 'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=120'
         : 'https://images.unsplash.com/photo-1505751172876-fa1923c5c528?w=120',
       actividadEconomica: compPerfil === 'Fisioterapia' ? '869001 (Fisioterapia)' : '851201 (Nutrición)',
-      perfilCompania: compPerfil
+      perfilCompania: compPerfil,
+      estadoSaas: 'PENDIENTE',
+      maxUsuarios: 5,
+      montoMensual: null,
+      proximoVencimiento: null
     };
 
     // Create User
@@ -113,7 +117,8 @@ export default function LoginView({
       usuario: adminUser,
       correo: adminCorreo,
       contrasena: adminPass,
-      rol: 'Administrador'
+      rol: 'Administrador',
+      activo: true
     };
 
     onRegisterCompany(newCompany, newAdminUser);

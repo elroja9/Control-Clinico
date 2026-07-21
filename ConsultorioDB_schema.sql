@@ -109,7 +109,25 @@ CREATE TABLE `companias` (
   `color_primario` varchar(7) NOT NULL DEFAULT '#0d9488',
   `color_sidebar` varchar(7) NOT NULL DEFAULT '#115e59',
   `logo_url` varchar(255) DEFAULT NULL COMMENT 'Ruta al logo subido',
-  `estado` tinyint(1) NOT NULL DEFAULT 1
+  `estado` tinyint(1) NOT NULL DEFAULT 1,
+  `estadoSaas` enum('PENDIENTE','ACTIVA','SUSPENDIDA') NOT NULL DEFAULT 'ACTIVA',
+  `maxUsuarios` int(11) NOT NULL DEFAULT 5,
+  `montoMensual` decimal(10,2) DEFAULT NULL,
+  `proximoVencimiento` date DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- Estructura de tabla para la tabla `pagos_empresa`
+-- --------------------------------------------------------
+CREATE TABLE `pagos_empresa` (
+  `id_pago` int(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `id_compania` int(11) NOT NULL,
+  `fecha` date NOT NULL,
+  `monto` decimal(10,2) NOT NULL,
+  `notas` varchar(255) DEFAULT NULL,
+  `registrado_por` varchar(150) DEFAULT NULL,
+  `creado_en` timestamp NOT NULL DEFAULT current_timestamp(),
+  CONSTRAINT `fk_pagos_empresa_compania` FOREIGN KEY (`id_compania`) REFERENCES `companias` (`id_compania`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

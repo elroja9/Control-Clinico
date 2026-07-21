@@ -256,7 +256,11 @@ export default function CompanySettings({
       colorSidebar: editColorSide || "#0f766e",
       logoUrl: editLogo || "https://images.unsplash.com/photo-1516549655169-df83a0774514?w=120&auto=format&fit=crop&q=60",
       actividadEconomica: "869001",
-      perfilCompania: editPerfil
+      perfilCompania: editPerfil,
+      estadoSaas: "PENDIENTE",
+      maxUsuarios: 5,
+      montoMensual: null,
+      proximoVencimiento: null
     };
     onAddCompany(newComp);
     setIsAdding(false);

@@ -13,6 +13,10 @@ export interface Company {
   logoUrl: string;
   actividadEconomica: string;
   perfilCompania: 'Fisioterapia' | 'Nutrición' | 'Ambas';
+  estadoSaas: 'PENDIENTE' | 'ACTIVA' | 'SUSPENDIDA';
+  maxUsuarios: number;
+  montoMensual: number | null;
+  proximoVencimiento: string | null; // 'YYYY-MM-DD'
 }
 
 export interface User {
@@ -23,6 +27,7 @@ export interface User {
   correo: string;
   contrasena: string;
   rol: 'Administrador' | 'Profesional';
+  activo: boolean;
 }
 
 export interface Patient {
@@ -272,7 +277,11 @@ export const defaultCompanies: Company[] = [
     colorSidebar: "#115e59", // Teal 800
     logoUrl: "https://images.unsplash.com/photo-1505751172876-fa1923c5c528?w=120&auto=format&fit=crop&q=60&ixlib=rb-4.0.3",
     actividadEconomica: "869001 (Servicios de Terapia Física y Nutrición)",
-    perfilCompania: "Ambas"
+    perfilCompania: "Ambas",
+    estadoSaas: "ACTIVA",
+    maxUsuarios: 5,
+    montoMensual: null,
+    proximoVencimiento: null
   },
   {
     id: 2,
@@ -286,7 +295,11 @@ export const defaultCompanies: Company[] = [
     colorSidebar: "#92400e", // Amber 800
     logoUrl: "https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=120&auto=format&fit=crop&q=60&ixlib=rb-4.0.3",
     actividadEconomica: "851201 (Servicios de Nutrición)",
-    perfilCompania: "Nutrición"
+    perfilCompania: "Nutrición",
+    estadoSaas: "ACTIVA",
+    maxUsuarios: 5,
+    montoMensual: null,
+    proximoVencimiento: null
   }
 ];
 
@@ -298,7 +311,8 @@ export const defaultUsers: User[] = [
     usuario: "admin_escazu",
     correo: "contacto@fisionutriescazu.com",
     contrasena: "123456",
-    rol: "Administrador"
+    rol: "Administrador",
+    activo: true
   },
   {
     id: 2,
@@ -307,7 +321,8 @@ export const defaultUsers: User[] = [
     usuario: "eliecer_alajuela",
     correo: "eliecer.rojas9@gmail.com",
     contrasena: "123456",
-    rol: "Administrador"
+    rol: "Administrador",
+    activo: true
   }
 ];
 
@@ -571,3 +586,14 @@ export type HaciendaConfigInput = {
   certificadoNombreArchivo?: string; // nombre del archivo nuevo, acompaña a certificadoP12Base64
   certificadoPin?: string; // solo cuando el usuario escribe un nuevo PIN
 };
+
+export interface CompanyPayment {
+  id: number;
+  idCompania: number;
+  fecha: string; // 'YYYY-MM-DD'
+  monto: number;
+  notas: string;
+  registradoPor: string;
+}
+
+export const defaultCompanyPayments: CompanyPayment[] = [];
