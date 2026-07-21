@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput } from '../data/mockData';
-import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Database, Copy, Mail, Server, ShieldCheck, Upload, AlertCircle } from 'lucide-react';
+import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User } from '../data/mockData';
+import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Database, Copy, Mail, Server, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power } from 'lucide-react';
 
 interface CompanySettingsProps {
   companies: Company[];
@@ -10,6 +10,9 @@ interface CompanySettingsProps {
   onAddCompany: (company: Company) => void;
   smtpConfigs: CompaniaSmtpConfig[];
   onUpdateSmtpConfig: (config: SmtpConfigInput) => void;
+  users: User[];
+  currentUser: User;
+  onSaveUser: (user: User) => void;
 }
 
 export default function CompanySettings({
@@ -19,13 +22,33 @@ export default function CompanySettings({
   onUpdateCompany,
   onAddCompany,
   smtpConfigs,
-  onUpdateSmtpConfig
+  onUpdateSmtpConfig,
+  users,
+  currentUser,
+  onSaveUser
 }: CompanySettingsProps) {
   const currentCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
   // Forms for editing/creating
   const [isEditing, setIsEditing] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
+
+  // New collaborator ("Usuarios" section) form
+  const [isAddingUser, setIsAddingUser] = useState(false);
+  const [newUserNombre, setNewUserNombre] = useState('');
+  const [newUserUsuario, setNewUserUsuario] = useState('');
+  const [newUserCorreo, setNewUserCorreo] = useState('');
+  const [newUserContrasena, setNewUserContrasena] = useState('');
+  const [newUserRol, setNewUserRol] = useState<'Administrador' | 'Profesional'>('Profesional');
+
+  useEffect(() => {
+    setIsAddingUser(false);
+    setNewUserNombre('');
+    setNewUserUsuario('');
+    setNewUserCorreo('');
+    setNewUserContrasena('');
+    setNewUserRol('Profesional');
+  }, [selectedCompanyId]);
 
   // Edit fields
   const [editName, setEditName] = useState(currentCompany.nombreComercial);
@@ -287,6 +310,43 @@ export default function CompanySettings({
     { name: 'Cardiología', url: 'https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=120&auto=format&fit=crop&q=60' },
     { name: 'Nutrición Organismo', url: 'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=120&auto=format&fit=crop&q=60' }
   ];
+
+  const companyUsers = users.filter(u => u.idCompania === currentCompany.id);
+  const activeUserCount = companyUsers.filter(u => u.activo).length;
+  const userLimitReached = activeUserCount >= currentCompany.maxUsuarios;
+
+  const handleCreateUser = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUserNombre.trim() || !newUserUsuario.trim() || !newUserCorreo.trim() || !newUserContrasena.trim()) {
+      alert('Por favor complete todos los campos del nuevo colaborador.');
+      return;
+    }
+    if (userLimitReached) {
+      alert(`Alcanzaste el límite de ${currentCompany.maxUsuarios} usuarios de tu plan. Contacta al administrador de la plataforma para ampliarlo.`);
+      return;
+    }
+    const newUser: User = {
+      id: Math.max(0, ...users.map(u => u.id)) + 1,
+      idCompania: currentCompany.id,
+      nombre: newUserNombre,
+      usuario: newUserUsuario,
+      correo: newUserCorreo,
+      contrasena: newUserContrasena,
+      rol: newUserRol,
+      activo: true
+    };
+    onSaveUser(newUser);
+    setIsAddingUser(false);
+    setNewUserNombre('');
+    setNewUserUsuario('');
+    setNewUserCorreo('');
+    setNewUserContrasena('');
+    setNewUserRol('Profesional');
+  };
+
+  const handleToggleUserActivo = (user: User) => {
+    onSaveUser({ ...user, activo: !user.activo });
+  };
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5">
@@ -676,6 +736,134 @@ export default function CompanySettings({
             </button>
           </div>
         </form>
+      )}
+
+      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
+        <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4 text-xs">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+            <div className="flex items-center gap-2">
+              <UsersIcon className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
+              <div>
+                <h4 className="font-bold text-slate-800">Usuarios y Colaboradores</h4>
+                <p className="text-[10px] text-slate-500">
+                  {activeUserCount} de {currentCompany.maxUsuarios} usuarios activos permitidos por tu plan
+                </p>
+              </div>
+            </div>
+            {!isAddingUser && (
+              <button
+                onClick={() => setIsAddingUser(true)}
+                disabled={userLimitReached}
+                className="flex items-center gap-1 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                Nuevo Colaborador
+              </button>
+            )}
+          </div>
+
+          {userLimitReached && !isAddingUser && (
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>Alcanzaste el límite de {currentCompany.maxUsuarios} usuarios de tu plan. Contacta al administrador de la plataforma para ampliarlo.</span>
+            </div>
+          )}
+
+          {isAddingUser && (
+            <form onSubmit={handleCreateUser} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-600 font-medium mb-1">Nombre Completo *</label>
+                  <input
+                    type="text"
+                    value={newUserNombre}
+                    onChange={(e) => setNewUserNombre(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 font-medium mb-1">Correo *</label>
+                  <input
+                    type="email"
+                    value={newUserCorreo}
+                    onChange={(e) => setNewUserCorreo(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-600 font-medium mb-1">Nombre de Usuario *</label>
+                  <input
+                    type="text"
+                    value={newUserUsuario}
+                    onChange={(e) => setNewUserUsuario(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 font-medium mb-1">Contraseña *</label>
+                  <input
+                    type="password"
+                    value={newUserContrasena}
+                    onChange={(e) => setNewUserContrasena(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-slate-600 font-medium mb-1">Rol</label>
+                <select
+                  value={newUserRol}
+                  onChange={(e) => setNewUserRol(e.target.value as 'Administrador' | 'Profesional')}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                >
+                  <option value="Profesional">Profesional</option>
+                  <option value="Administrador">Administrador</option>
+                </select>
+              </div>
+              <div className="flex gap-2 justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsAddingUser(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={userLimitReached}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed"
+                >
+                  Guardar Colaborador
+                </button>
+              </div>
+            </form>
+          )}
+
+          <div className="space-y-1.5">
+            {companyUsers.map(u => (
+              <div key={u.id} className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg">
+                <div>
+                  <span className="font-semibold text-slate-800 block">{u.nombre}</span>
+                  <span className="text-[10px] text-slate-500">{u.usuario} &middot; {u.rol}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${u.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
+                    {u.activo ? 'Activo' : 'Inactivo'}
+                  </span>
+                  <button
+                    onClick={() => handleToggleUserActivo(u)}
+                    title={u.activo ? 'Desactivar' : 'Activar'}
+                    className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                  >
+                    <Power className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Editing / Creating Form */}

@@ -515,6 +515,29 @@ export default function App() {
     });
   };
 
+  const handleSaveUser = (user: User) => {
+    fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(user)
+    })
+    .then(async res => {
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'No se pudo guardar el colaborador.');
+        return;
+      }
+      setUsers(prev => {
+        const exists = prev.some(u => u.id === data.id);
+        return exists ? prev.map(u => u.id === data.id ? data : u) : [...prev, data];
+      });
+    })
+    .catch(err => {
+      console.error("Error saving user to MySQL:", err);
+      alert('Error de conexión al guardar el colaborador.');
+    });
+  };
+
   const handleAddNotificationLog = (log: NotificationLog) => {
     setLogs(prev => [log, ...prev]);
   };
@@ -1283,6 +1306,9 @@ export default function App() {
                 }}
                 smtpConfigs={smtpConfigs}
                 onUpdateSmtpConfig={handleUpdateSmtpConfig}
+                users={users}
+                currentUser={currentUser!}
+                onSaveUser={handleSaveUser}
               />
             )}
 
