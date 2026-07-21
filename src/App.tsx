@@ -20,7 +20,8 @@ import {
   LogOut,
   Lock,
   Menu,
-  X
+  X,
+  MapPin
 } from 'lucide-react';
 import {
   LineChart,
@@ -63,6 +64,7 @@ import ReportView from './components/ReportView';
 import LoginView from './components/LoginView';
 import AgendaCalendar from './components/AgendaCalendar';
 import SaasAdminPanel from './components/SaasAdminPanel';
+import MyProfile from './components/MyProfile';
 
 export default function App() {
   // --- Persistent Storage Core (Synced with MySQL Backend) ---
@@ -273,7 +275,7 @@ export default function App() {
   const activeCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
   // App Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // --- Login and Company Registration Handlers ---
@@ -816,6 +818,20 @@ export default function App() {
               </div>
             </button>
 
+            <button
+              onClick={() => { setActiveTab('mi-perfil'); setIsMobileMenuOpen(false); }}
+              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
+                activeTab === 'mi-perfil'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <MapPin className="w-4 h-4" />
+                <span>Mi Perfil</span>
+              </div>
+            </button>
+
             {currentUser?.idCompania === 7 && (
               <button
                 onClick={() => { setActiveTab('saas-admin'); setIsMobileMenuOpen(false); }}
@@ -955,6 +971,20 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <Building2 className="w-4 h-4" />
                   <span>Personalizar Clínica</span>
+                </div>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('mi-perfil')}
+                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
+                  activeTab === 'mi-perfil'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-4 h-4" />
+                  <span>Mi Perfil</span>
                 </div>
               </button>
 
@@ -1415,6 +1445,10 @@ export default function App() {
                 onLoadPayments={handleLoadPayments}
                 onAddPayment={handleAddPayment}
               />
+            )}
+
+            {activeTab === 'mi-perfil' && currentUser && (
+              <MyProfile currentUser={currentUser} onSaveUser={handleSaveUser} />
             )}
 
             {/* ================= 5. AGENDA Y CALENDARIO DE CITAS ================= */}
