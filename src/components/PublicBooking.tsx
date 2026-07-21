@@ -58,7 +58,17 @@ export default function PublicBooking() {
   useEffect(() => {
     fetch('/api/public/clinicas')
       .then(res => res.json())
-      .then(setClinicas)
+      .then((data: ClinicaPublica[]) => {
+        setClinicas(data);
+        const clinicaParam = new URLSearchParams(window.location.search).get('clinica');
+        if (clinicaParam) {
+          const preseleccionada = data.find(c => c.id === parseInt(clinicaParam));
+          if (preseleccionada) {
+            setClinicaId(preseleccionada.id);
+            setPaso(2);
+          }
+        }
+      })
       .catch(() => setError('No se pudieron cargar las clínicas.'));
   }, []);
 

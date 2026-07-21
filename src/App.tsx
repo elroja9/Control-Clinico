@@ -21,7 +21,8 @@ import {
   Lock,
   Menu,
   X,
-  MapPin
+  MapPin,
+  Share2
 } from 'lucide-react';
 import {
   LineChart,
@@ -65,6 +66,7 @@ import LoginView from './components/LoginView';
 import AgendaCalendar from './components/AgendaCalendar';
 import SaasAdminPanel from './components/SaasAdminPanel';
 import MyProfile from './components/MyProfile';
+import OnlineBookingShare from './components/OnlineBookingShare';
 
 export default function App() {
   // --- Persistent Storage Core (Synced with MySQL Backend) ---
@@ -275,7 +277,7 @@ export default function App() {
   const activeCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
   // App Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // --- Login and Company Registration Handlers ---
@@ -864,6 +866,20 @@ export default function App() {
               </div>
             </button>
 
+            <button
+              onClick={() => { setActiveTab('reservas-online'); setIsMobileMenuOpen(false); }}
+              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
+                activeTab === 'reservas-online'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Share2 className="w-4 h-4" />
+                <span>Reservas en Línea</span>
+              </div>
+            </button>
+
             {currentUser?.idCompania === 7 && (
               <button
                 onClick={() => { setActiveTab('saas-admin'); setIsMobileMenuOpen(false); }}
@@ -1017,6 +1033,20 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <MapPin className="w-4 h-4" />
                   <span>Mi Perfil</span>
+                </div>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('reservas-online')}
+                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
+                  activeTab === 'reservas-online'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Share2 className="w-4 h-4" />
+                  <span>Reservas en Línea</span>
                 </div>
               </button>
 
@@ -1477,6 +1507,10 @@ export default function App() {
 
             {activeTab === 'mi-perfil' && currentUser && (
               <MyProfile currentUser={currentUser} onSaveUser={handleSaveUser} />
+            )}
+
+            {activeTab === 'reservas-online' && (
+              <OnlineBookingShare company={activeCompany} />
             )}
 
             {/* ================= 5. AGENDA Y CALENDARIO DE CITAS ================= */}
