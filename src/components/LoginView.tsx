@@ -25,7 +25,7 @@ export default function LoginView({
   onLogin,
   onRegisterCompany
 }: LoginViewProps) {
-  const [view, setView] = useState<'login' | 'register'>('login');
+  const [view, setView] = useState<'login' | 'register' | 'pendiente'>('login');
   
   // Login states
   const [username, setUsername] = useState('');
@@ -60,6 +60,16 @@ export default function LoginView({
 
     if (!passwordMatches(foundUser.contrasena, password)) {
       setLoginError('Contraseña incorrecta. Intente de nuevo.');
+      return;
+    }
+
+    const company = companies.find(c => c.id === foundUser.idCompania);
+    if (company?.estadoSaas === 'PENDIENTE') {
+      setLoginError('Esta cuenta está pendiente de aprobación. Un administrador se pondrá en contacto pronto.');
+      return;
+    }
+    if (company?.estadoSaas === 'SUSPENDIDA') {
+      setLoginError('Esta cuenta se encuentra suspendida. Contacte al administrador de la plataforma.');
       return;
     }
 
@@ -122,9 +132,7 @@ export default function LoginView({
     };
 
     onRegisterCompany(newCompany, newAdminUser);
-    
-    // Auto login
-    onLogin(newAdminUser, nextCompanyId);
+    setView('pendiente');
   };
 
   const handleDemoLogin = (demoUser: string, demoPass: string) => {
@@ -159,6 +167,27 @@ export default function LoginView({
           </p>
         </div>
 
+        {view === 'pendiente' ? (
+          <div className="text-center py-6 space-y-4">
+            <div className="inline-flex p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
+              <Clipboard className="w-8 h-8" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-white">Registro recibido</h3>
+              <p className="text-xs text-slate-400 mt-2 max-w-sm mx-auto">
+                Tu empresa fue registrada correctamente y está pendiente de aprobación.
+                Te contactaremos pronto para activar tu cuenta.
+              </p>
+            </div>
+            <button
+              onClick={() => { setView('login'); setUsername(''); setPassword(''); }}
+              className="w-full bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white font-bold text-xs py-3 rounded-xl transition-all shadow-md"
+            >
+              Volver al inicio de sesión
+            </button>
+          </div>
+        ) : (
+          <>
         {/* View switcher tab buttons */}
         <div className="grid grid-cols-2 p-1 bg-slate-950/80 border border-slate-800/80 rounded-xl mb-6">
           <button
@@ -443,6 +472,8 @@ export default function LoginView({
               <Sparkles className="w-4 h-4 text-amber-300" />
             </button>
           </form>
+        )}
+          </>
         )}
       </div>
     </div>
