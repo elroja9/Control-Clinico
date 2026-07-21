@@ -9,7 +9,9 @@ import { verificarLlaveP12, firmarXadesEpes } from "./server/haciendaSigner";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
 import { renderCitaEmail, renderConsultaEmail, renderAccountStatusEmail } from "./server/emailTemplates";
-import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment } from "./src/data/mockData";
+import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
+import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion } from "./src/data/mockData";
+import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
   defaultCompanies,
@@ -225,6 +227,23 @@ async function createTables() {
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ubicacionLng DECIMAL(10,7) NULL`);
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS maxTiempoTrasladoMinutos INT NOT NULL DEFAULT 45`);
 
+    // El enum original ('ADMIN','NUTRICIONISTA','RECEPCION') no acepta los
+    // valores que la app realmente usa ('Administrador'/'Profesional') —
+    // MySQL trunca silenciosamente cualquier valor fuera del enum a ''.
+    // Se amplía la columna y se normalizan los valores legados una sola vez
+    // (idempotente: tras la primera ejecución ningún registro vuelve a
+    // coincidir con estas condiciones, así que las siguientes ejecuciones
+    // no modifican nada).
+    await pool.query(`ALTER TABLE usuarios MODIFY COLUMN rol VARCHAR(50) NOT NULL DEFAULT 'Profesional'`);
+    await pool.query(`
+      UPDATE usuarios SET rol = CASE
+        WHEN rol = 'ADMIN' THEN 'Administrador'
+        WHEN rol IN ('NUTRICIONISTA', 'RECEPCION', '') THEN 'Profesional'
+        ELSE rol
+      END
+      WHERE rol IN ('ADMIN', 'NUTRICIONISTA', 'RECEPCION', '')
+    `);
+
     // pacientes
     await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS id INT NULL`);
     await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS idCompania INT NULL`);
@@ -356,10 +375,74 @@ async function seedDefaultData() {
   }
 }
 
+const DIAS_SEMANA: Array<keyof HorarioAtencion> = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
+
+function horarioDelDia(horario: HorarioAtencion | string | null | undefined, fecha: string): { abre: string | null; cierra: string | null } {
+  // mysql2 puede devolver la columna JSON como string sin parsear según el
+  // driver/versión; se acepta ambas formas aquí en vez de asumir una.
+  const parsed = typeof horario === "string" ? JSON.parse(horario) : horario;
+  const efectivo: HorarioAtencion = parsed || DEFAULT_HORARIO_ATENCION;
+  const diaSemana = DIAS_SEMANA[new Date(`${fecha}T00:00:00`).getDay()];
+  return efectivo[diaSemana];
+}
+
+function generarSlotsCandidatos(abre: string, cierra: string): string[] {
+  const slots: string[] = [];
+  let [h, m] = abre.split(":").map(Number);
+  const [hFin, mFin] = cierra.split(":").map(Number);
+  while (h < hFin || (h === hFin && m < mFin)) {
+    slots.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+    m += 30;
+    if (m >= 60) { m -= 60; h += 1; }
+  }
+  return slots;
+}
+
+function minutosDesdeMedianoche(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+const DURACION_POR_TIPO_VISITA: Record<"CONSULTORIO" | "DOMICILIO", number> = {
+  CONSULTORIO: 45,
+  DOMICILIO: 60
+};
+
+function slotLibre(params: {
+  candidatoInicioMin: number;
+  duracionMin: number;
+  citasDelDia: Array<{ fechaHora: string; duracionMinutos: number; tipoVisita: string; tiempoTrasladoMinutos: number | null }>;
+  bloqueosDelDia: CalendarBlock[];
+  fecha: string;
+  horaCandidato: string;
+}): boolean {
+  const { candidatoInicioMin, duracionMin, citasDelDia, bloqueosDelDia, fecha, horaCandidato } = params;
+  const candidatoFinMin = candidatoInicioMin + duracionMin;
+
+  for (const b of bloqueosDelDia) {
+    if (fecha < b.fechaInicio || fecha > b.fechaFin) continue;
+    if (!b.horaInicio || !b.horaFin) return false;
+    if (horaCandidato >= b.horaInicio && horaCandidato < b.horaFin) return false;
+  }
+
+  for (const c of citasDelDia) {
+    const citaFecha = c.fechaHora.split("T")[0];
+    if (citaFecha !== fecha) continue;
+    const citaHora = c.fechaHora.split("T")[1];
+    const citaInicioMin = minutosDesdeMedianoche(citaHora);
+    const padding = c.tipoVisita === "DOMICILIO" ? (c.tiempoTrasladoMinutos || 0) : 0;
+    const ocupadoInicio = citaInicioMin - padding;
+    const ocupadoFin = citaInicioMin + c.duracionMinutos + padding;
+    if (candidatoInicioMin < ocupadoFin && candidatoFinMin > ocupadoInicio) return false;
+  }
+
+  return true;
+}
+
 function normalizeRow(row: any): any {
   if (!row) return row;
   const copy = { ...row };
-  
+
   // Normalize IDs — table-specific primary keys must win over the id_compania
   // foreign key, which every table also carries.
   if (copy.id_usuario != null && copy.id == null) copy.id = copy.id_usuario;
@@ -439,10 +522,10 @@ async function startServer() {
           const [exists] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [c.id, c.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id = ? OR id_compania = ?",
+              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, horarioAtencion = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id = ? OR id_compania = ?",
               [
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
-                c.estadoSaas, c.maxUsuarios, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null,
+                c.estadoSaas, c.maxUsuarios, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, JSON.stringify(c.horarioAtencion || null),
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl,
                 c.id, c.id
               ]
@@ -451,10 +534,10 @@ async function startServer() {
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, nombre_comercial, razon_social, tipo_identificacion, correo_emisor, iva_por_defecto, color_primario, color_sidebar, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, horarioAtencion, nombre_comercial, razon_social, tipo_identificacion, correo_emisor, iva_por_defecto, color_primario, color_sidebar, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
-            c.estadoSaas || 'PENDIENTE', c.maxUsuarios || 5, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null,
+            c.estadoSaas || 'PENDIENTE', c.maxUsuarios || 5, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, JSON.stringify(c.horarioAtencion || null),
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl
           ]
         );
@@ -638,15 +721,15 @@ async function startServer() {
           const [exists] = await pool.query("SELECT * FROM usuarios WHERE id = ? OR id_usuario = ?", [u.id, u.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE usuarios SET idCompania = ?, id_compania = ?, nombre = ?, usuario = ?, correo = ?, email = ?, contrasena = ?, password_hash = ?, rol = ?, activo = ? WHERE id = ? OR id_usuario = ?",
-              [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, u.contrasena, u.contrasena, u.rol, u.activo ? 1 : 0, u.id, u.id]
+              "UPDATE usuarios SET idCompania = ?, id_compania = ?, nombre = ?, usuario = ?, correo = ?, email = ?, contrasena = ?, password_hash = ?, rol = ?, activo = ?, ubicacionDireccion = ?, ubicacionLat = ?, ubicacionLng = ?, maxTiempoTrasladoMinutos = ? WHERE id = ? OR id_usuario = ?",
+              [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, u.contrasena, u.contrasena, u.rol, u.activo ? 1 : 0, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45, u.id, u.id]
             );
             return res.json(u);
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO usuarios (idCompania, id_compania, nombre, usuario, correo, email, contrasena, password_hash, rol, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, u.contrasena, u.contrasena, u.rol, u.activo === false ? 0 : 1]
+          "INSERT INTO usuarios (idCompania, id_compania, nombre, usuario, correo, email, contrasena, password_hash, rol, activo, ubicacionDireccion, ubicacionLat, ubicacionLng, maxTiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, u.contrasena, u.contrasena, u.rol, u.activo === false ? 0 : 1, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45]
         );
         u.id = (result as any).insertId;
         u.activo = u.activo === false ? false : true;
@@ -1391,6 +1474,297 @@ async function startServer() {
     } catch (err: any) {
       console.error("Error enviando notificación:", err);
       res.status(500).json({ error: err.message || "No se pudo enviar la notificación." });
+    }
+  });
+
+  // --- Public Booking Routes (no auth) ---
+
+  app.get("/api/public/config", (req, res) => {
+    res.json({ googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || "" });
+  });
+
+  app.get("/api/public/clinicas", async (req, res) => {
+    try {
+      let companies: Company[];
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM companias WHERE estadoSaas = 'ACTIVA'");
+        companies = (rows as any[]).map(normalizeRow);
+      } else {
+        companies = localCompanies.filter(c => c.estadoSaas === "ACTIVA");
+      }
+      res.json(companies.map(c => ({
+        id: c.id,
+        nombreComercial: c.nombreComercial,
+        perfilCompania: c.perfilCompania,
+        logoUrl: c.logoUrl,
+        colorPrimario: c.colorPrimario,
+        colorSidebar: c.colorSidebar
+      })));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/public/clinicas/:id/profesionales", async (req, res) => {
+    try {
+      const idCompania = parseInt(req.params.id);
+      let users: any[];
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM usuarios WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]);
+        users = (rows as any[]).map(normalizeRow);
+      } else {
+        users = localUsers.filter(u => u.idCompania === idCompania && u.activo);
+      }
+      res.json(users.map(u => ({
+        id: u.id,
+        nombre: u.nombre,
+        rol: u.rol,
+        aceptaDomicilio: u.ubicacionLat != null && u.ubicacionLng != null
+      })));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/public/clinicas/:id/pacientes/:identificacion", async (req, res) => {
+    try {
+      const idCompania = parseInt(req.params.id);
+      const identificacion = req.params.identificacion;
+      let patient: Patient | undefined;
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM pacientes WHERE (idCompania = ? OR id_compania = ?) AND (identificacion = ? OR fact_identificacion = ?)", [idCompania, idCompania, identificacion, identificacion]);
+        patient = (rows as any[]).map(normalizeRow)[0];
+      } else {
+        patient = localPatients.find(p => p.idCompania === idCompania && p.identificacion === identificacion);
+      }
+      if (!patient) return res.status(404).json({ error: "Paciente no encontrado." });
+      res.json({
+        nombreCompleto: patient.nombreCompleto,
+        telefono: patient.telefono,
+        correoElectronico: patient.correoElectronico,
+        tipoIdentificacion: patient.tipoIdentificacion,
+        fechaNacimiento: patient.fechaNacimiento
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/public/disponibilidad", async (req, res) => {
+    try {
+      const idUsuario = parseInt(req.query.idUsuario as string);
+      const fecha = req.query.fecha as string;
+      const tipoVisita = (req.query.tipoVisita as string) === "DOMICILIO" ? "DOMICILIO" : "CONSULTORIO";
+
+      let user: any;
+      let company: Company | undefined;
+      let citasDelDia: any[];
+      let bloqueosDelDia: CalendarBlock[];
+
+      if (dbConnected && pool) {
+        const [userRows] = await pool.query("SELECT * FROM usuarios WHERE id = ? OR id_usuario = ?", [idUsuario, idUsuario]);
+        user = (userRows as any[]).map(normalizeRow)[0];
+        if (!user) return res.status(404).json({ error: "Profesional no encontrado." });
+
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [user.idCompania, user.idCompania]);
+        company = (companyRows as any[]).map(normalizeRow)[0];
+
+        const [citaRows] = await pool.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ?", [idUsuario, `${fecha}%`]);
+        citasDelDia = citaRows as any[];
+
+        const [blockRows] = await pool.query("SELECT * FROM calendar_blocks WHERE idUsuarioNutricionista = ?", [idUsuario]);
+        bloqueosDelDia = blockRows as any[];
+      } else {
+        user = localUsers.find(u => u.id === idUsuario);
+        if (!user) return res.status(404).json({ error: "Profesional no encontrado." });
+        company = localCompanies.find(c => c.id === user.idCompania);
+        citasDelDia = localCitas.filter(c => c.idUsuarioNutricionista === idUsuario && c.fechaHora.startsWith(fecha));
+        bloqueosDelDia = localCalendarBlocks.filter(b => b.idUsuarioNutricionista === idUsuario);
+      }
+
+      const { abre, cierra } = horarioDelDia(company?.horarioAtencion, fecha);
+      if (!abre || !cierra) return res.json([]);
+
+      const duracionMin = DURACION_POR_TIPO_VISITA[tipoVisita];
+      const candidatos = generarSlotsCandidatos(abre, cierra);
+      const libres = candidatos.filter(hora => slotLibre({
+        candidatoInicioMin: minutosDesdeMedianoche(hora),
+        duracionMin,
+        citasDelDia,
+        bloqueosDelDia,
+        fecha,
+        horaCandidato: hora
+      }));
+
+      res.json(libres);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/public/citas", async (req, res) => {
+    try {
+      const body = req.body;
+      const idCompania = parseInt(body.idCompania);
+      const idUsuarioNutricionista = parseInt(body.idUsuarioNutricionista);
+      const tipoVisita: "CONSULTORIO" | "DOMICILIO" = body.tipoVisita === "DOMICILIO" ? "DOMICILIO" : "CONSULTORIO";
+      const fechaHora = body.fechaHora as string;
+      const fecha = fechaHora.split("T")[0];
+      const hora = fechaHora.split("T")[1];
+      const duracionMinutos = DURACION_POR_TIPO_VISITA[tipoVisita];
+
+      let user: any;
+      if (dbConnected && pool) {
+        const [userRows] = await pool.query("SELECT * FROM usuarios WHERE id = ? OR id_usuario = ?", [idUsuarioNutricionista, idUsuarioNutricionista]);
+        user = (userRows as any[]).map(normalizeRow)[0];
+      } else {
+        user = localUsers.find(u => u.id === idUsuarioNutricionista);
+      }
+      if (!user) return res.status(404).json({ error: "Profesional no encontrado." });
+
+      let tiempoTrasladoMinutos: number | null = null;
+      if (tipoVisita === "DOMICILIO") {
+        if (user.ubicacionLat == null || user.ubicacionLng == null) {
+          return res.status(400).json({ error: "Este profesional no tiene ubicación configurada para visitas a domicilio." });
+        }
+        const pacienteLat = parseFloat(body.pacienteLat);
+        const pacienteLng = parseFloat(body.pacienteLng);
+        try {
+          // mysql2 devuelve columnas DECIMAL como strings, no numbers — forzar
+          // parseFloat aquí (mismo patrón ya usado en este archivo para
+          // ivaPorDefecto) para no interpolar un string sin validar en la URL.
+          tiempoTrasladoMinutos = await calcularTiempoTrasladoMinutos({
+            origenLat: parseFloat(user.ubicacionLat),
+            origenLng: parseFloat(user.ubicacionLng),
+            destinoLat: pacienteLat,
+            destinoLng: pacienteLng
+          });
+        } catch (err: any) {
+          if (err instanceof TrasladoNoCalculableError) {
+            return res.status(400).json({ error: err.message });
+          }
+          throw err;
+        }
+        if (tiempoTrasladoMinutos > user.maxTiempoTrasladoMinutos) {
+          return res.status(400).json({
+            error: `El tiempo de traslado estimado (${tiempoTrasladoMinutos} min) supera el máximo que este profesional acepta (${user.maxTiempoTrasladoMinutos} min).`
+          });
+        }
+      }
+
+      // Re-verificar disponibilidad (condición de carrera)
+      let citasDelDia: any[];
+      let bloqueosDelDia: CalendarBlock[];
+      if (dbConnected && pool) {
+        const [citaRows] = await pool.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ?", [idUsuarioNutricionista, `${fecha}%`]);
+        citasDelDia = citaRows as any[];
+        const [blockRows] = await pool.query("SELECT * FROM calendar_blocks WHERE idUsuarioNutricionista = ?", [idUsuarioNutricionista]);
+        bloqueosDelDia = blockRows as any[];
+      } else {
+        citasDelDia = localCitas.filter(c => c.idUsuarioNutricionista === idUsuarioNutricionista && c.fechaHora.startsWith(fecha));
+        bloqueosDelDia = localCalendarBlocks.filter(b => b.idUsuarioNutricionista === idUsuarioNutricionista);
+      }
+      const libre = slotLibre({
+        candidatoInicioMin: minutosDesdeMedianoche(hora),
+        duracionMin: duracionMinutos,
+        citasDelDia,
+        bloqueosDelDia,
+        fecha,
+        horaCandidato: hora
+      });
+      if (!libre) {
+        return res.status(409).json({ error: "Ese horario ya no está disponible. Por favor escoja otro." });
+      }
+
+      // Buscar o crear paciente por cédula
+      const pac = body.paciente;
+      let paciente: Patient | undefined;
+      if (dbConnected && pool) {
+        const [existing] = await pool.query("SELECT * FROM pacientes WHERE (idCompania = ? OR id_compania = ?) AND (identificacion = ? OR fact_identificacion = ?)", [idCompania, idCompania, pac.identificacion, pac.identificacion]);
+        paciente = (existing as any[]).map(normalizeRow)[0];
+      } else {
+        paciente = localPatients.find(p => p.idCompania === idCompania && p.identificacion === pac.identificacion);
+      }
+
+      if (!paciente) {
+        const nuevoPaciente: any = {
+          idCompania,
+          nombreCompleto: pac.nombreCompleto,
+          fechaNacimiento: pac.fechaNacimiento,
+          edad: (() => {
+            const nacimiento = new Date(pac.fechaNacimiento);
+            const hoy = new Date();
+            let edad = hoy.getFullYear() - nacimiento.getFullYear();
+            const m = hoy.getMonth() - nacimiento.getMonth();
+            if (m < 0 || (m === 0 && hoy.getDate() < nacimiento.getDate())) edad--;
+            return isNaN(edad) ? 0 : edad;
+          })(),
+          ocupacion: "",
+          correoElectronico: pac.correoElectronico,
+          situacionVivienda: "SOLO",
+          tipoIdentificacion: pac.tipoIdentificacion,
+          identificacion: pac.identificacion,
+          telefono: pac.telefono,
+          provinciaId: 1,
+          cantonId: 101,
+          distritoId: 10101,
+          otrasSenas: tipoVisita === "DOMICILIO" ? (body.direccionDomicilio || "") : "",
+          diabetes: false,
+          hipertension: false,
+          gastritis: false,
+          estrenimiento: false,
+          alergiasAlimentarias: "",
+          fracturas: "",
+          esguinces: "",
+          cirugiasOrtopedicas: "",
+          actividadFisica: ""
+        };
+
+        if (dbConnected && pool) {
+          const [result] = await pool.query(
+            "INSERT INTO pacientes (idCompania, id_compania, nombreCompleto, nombre_completo, fechaNacimiento, fecha_nacimiento, edad, ocupacion, correoElectronico, correo_electronico, situacionVivienda, situacion_vivienda, tipoIdentificacion, fact_tipo_identificacion, identificacion, fact_identificacion, telefono, provinciaId, cantonId, distritoId, otrasSenas, diabetes, hipertension, gastritis, estrenimiento, alergiasAlimentarias, fracturas, esguinces, cirugiasOrtopedicas, actividadFisica) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+              nuevoPaciente.idCompania, nuevoPaciente.idCompania, nuevoPaciente.nombreCompleto, nuevoPaciente.nombreCompleto, nuevoPaciente.fechaNacimiento, nuevoPaciente.fechaNacimiento, nuevoPaciente.edad, nuevoPaciente.ocupacion, nuevoPaciente.correoElectronico, nuevoPaciente.correoElectronico, nuevoPaciente.situacionVivienda, nuevoPaciente.situacionVivienda, nuevoPaciente.tipoIdentificacion, nuevoPaciente.tipoIdentificacion, nuevoPaciente.identificacion, nuevoPaciente.identificacion, nuevoPaciente.telefono, nuevoPaciente.provinciaId, nuevoPaciente.cantonId, nuevoPaciente.distritoId, nuevoPaciente.otrasSenas, 0, 0, 0, 0, nuevoPaciente.alergiasAlimentarias, nuevoPaciente.fracturas, nuevoPaciente.esguinces, nuevoPaciente.cirugiasOrtopedicas, nuevoPaciente.actividadFisica
+            ]
+          );
+          nuevoPaciente.id = (result as any).insertId;
+        } else {
+          nuevoPaciente.id = Math.max(0, ...localPatients.map(p => p.id)) + 1;
+          localPatients.push(nuevoPaciente);
+        }
+        paciente = nuevoPaciente;
+      }
+
+      const nuevaCita: any = {
+        idCompania,
+        idPaciente: paciente!.id,
+        idUsuarioNutricionista,
+        idConsulta: null,
+        fechaHora,
+        duracionMinutos,
+        estadoCita: "PROGRAMADA",
+        notas: "",
+        tipoVisita,
+        direccionDomicilio: tipoVisita === "DOMICILIO" ? body.direccionDomicilio : null,
+        pacienteLat: tipoVisita === "DOMICILIO" ? parseFloat(body.pacienteLat) : null,
+        pacienteLng: tipoVisita === "DOMICILIO" ? parseFloat(body.pacienteLng) : null,
+        tiempoTrasladoMinutos
+      };
+
+      if (dbConnected && pool) {
+        const [result] = await pool.query(
+          "INSERT INTO citas (idCompania, idPaciente, idUsuarioNutricionista, idConsulta, fechaHora, duracionMinutos, estadoCita, notas, tipoVisita, direccionDomicilio, pacienteLat, pacienteLng, tiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [nuevaCita.idCompania, nuevaCita.idPaciente, nuevaCita.idUsuarioNutricionista, nuevaCita.idConsulta, nuevaCita.fechaHora, nuevaCita.duracionMinutos, nuevaCita.estadoCita, nuevaCita.notas, nuevaCita.tipoVisita, nuevaCita.direccionDomicilio, nuevaCita.pacienteLat, nuevaCita.pacienteLng, nuevaCita.tiempoTrasladoMinutos]
+        );
+        nuevaCita.id = (result as any).insertId;
+      } else {
+        nuevaCita.id = Math.max(0, ...localCitas.map(c => c.id)) + 1;
+        localCitas.push(nuevaCita);
+      }
+
+      res.json(nuevaCita);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
