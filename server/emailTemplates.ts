@@ -198,3 +198,36 @@ export function renderConsultaEmail(params: {
 
   return { subject, html: emailShell(company, title, bodyHtml), text };
 }
+
+export function renderAccountStatusEmail(params: {
+  platformCompany: Company;
+  tenantCompany: Company;
+  nuevoEstado: "ACTIVA" | "SUSPENDIDA";
+  estadoAnterior: "PENDIENTE" | "ACTIVA" | "SUSPENDIDA";
+}): RenderedEmail {
+  const { platformCompany, tenantCompany, nuevoEstado, estadoAnterior } = params;
+
+  let title: string;
+  let mensaje: string;
+
+  if (nuevoEstado === "ACTIVA" && estadoAnterior === "PENDIENTE") {
+    title = "¡Tu empresa fue aprobada!";
+    mensaje = "Tu empresa ya fue revisada y aprobada. Ya puedes iniciar sesión en Control-Clínico con las credenciales que registraste.";
+  } else if (nuevoEstado === "ACTIVA") {
+    title = "Tu cuenta fue reactivada";
+    mensaje = "Tu cuenta fue reactivada. Ya puedes iniciar sesión normalmente.";
+  } else {
+    title = "Tu cuenta ha sido suspendida";
+    mensaje = "Tu cuenta ha sido suspendida temporalmente. Contacta al administrador de la plataforma para más información.";
+  }
+
+  const subject = `${title} - ${tenantCompany.nombreComercial}`;
+  const bodyHtml = `
+    <p>Estimado(a) equipo de ${escapeHtml(tenantCompany.nombreComercial)},</p>
+    <p>${escapeHtml(mensaje)}</p>
+    <p style="margin-top:16px;font-weight:bold;">Control-Clínico</p>
+  `;
+  const text = `${title}\n\n${mensaje}\n\nControl-Clínico`;
+
+  return { subject, html: emailShell(platformCompany, title, bodyHtml), text };
+}

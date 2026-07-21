@@ -8,7 +8,7 @@ import { obtenerCertificadoHttps } from "./server/httpsCert";
 import { verificarLlaveP12, firmarXadesEpes } from "./server/haciendaSigner";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
-import { renderCitaEmail, renderConsultaEmail } from "./server/emailTemplates";
+import { renderCitaEmail, renderConsultaEmail, renderAccountStatusEmail } from "./server/emailTemplates";
 import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
@@ -428,9 +428,10 @@ async function startServer() {
           const [exists] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [c.id, c.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id = ? OR id_compania = ?",
+              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id = ? OR id_compania = ?",
               [
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
+                c.estadoSaas, c.maxUsuarios, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null,
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl,
                 c.id, c.id
               ]
@@ -439,9 +440,10 @@ async function startServer() {
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, nombre_comercial, razon_social, tipo_identificacion, correo_emisor, iva_por_defecto, color_primario, color_sidebar, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, nombre_comercial, razon_social, tipo_identificacion, correo_emisor, iva_por_defecto, color_primario, color_sidebar, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
+            c.estadoSaas || 'PENDIENTE', c.maxUsuarios || 5, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null,
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl
           ]
         );
@@ -456,6 +458,125 @@ async function startServer() {
         }
         res.json(c);
       }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/companies/:id/estado-saas", async (req, res) => {
+    try {
+      const companyId = parseInt(req.params.id);
+      const nuevoEstado = req.body.estadoSaas as Company["estadoSaas"];
+      if (nuevoEstado !== "ACTIVA" && nuevoEstado !== "SUSPENDIDA" && nuevoEstado !== "PENDIENTE") {
+        return res.status(400).json({ error: "estadoSaas inválido." });
+      }
+
+      let company: Company | undefined;
+      let estadoAnterior: Company["estadoSaas"] | undefined;
+
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [companyId, companyId]);
+        company = (rows as any[]).map(normalizeRow)[0];
+        if (!company) return res.status(404).json({ error: "Empresa no encontrada." });
+        estadoAnterior = company.estadoSaas;
+        await pool.query("UPDATE companias SET estadoSaas = ? WHERE id = ? OR id_compania = ?", [nuevoEstado, companyId, companyId]);
+        company.estadoSaas = nuevoEstado;
+      } else {
+        company = localCompanies.find(c => c.id === companyId);
+        if (!company) return res.status(404).json({ error: "Empresa no encontrada." });
+        estadoAnterior = company.estadoSaas;
+        company.estadoSaas = nuevoEstado;
+        localCompanies = localCompanies.map(c => c.id === companyId ? company! : c);
+      }
+
+      if (nuevoEstado === "ACTIVA" || nuevoEstado === "SUSPENDIDA") {
+        try {
+          let platformCompany: Company | undefined;
+          let platformSmtp: CompaniaSmtpConfig | undefined;
+          let adminUser: any;
+
+          if (dbConnected && pool) {
+            const [platRows] = await pool.query("SELECT * FROM companias WHERE id = 7 OR id_compania = 7");
+            platformCompany = (platRows as any[]).map(normalizeRow)[0];
+            const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = 7");
+            const smtpRow = (smtpRows as any[])[0];
+            platformSmtp = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
+            const [userRows] = await pool.query("SELECT * FROM usuarios WHERE (idCompania = ? OR id_compania = ?) AND rol = 'Administrador' LIMIT 1", [companyId, companyId]);
+            adminUser = (userRows as any[]).map(normalizeRow)[0];
+          } else {
+            platformCompany = localCompanies.find(c => c.id === 7);
+            platformSmtp = localSmtpConfigs.find(s => s.idCompania === 7);
+            adminUser = localUsers.find(u => u.idCompania === companyId && u.rol === "Administrador");
+          }
+
+          if (platformCompany && platformSmtp && platformSmtp.activo && adminUser && adminUser.correo) {
+            const rendered = renderAccountStatusEmail({
+              platformCompany,
+              tenantCompany: company,
+              nuevoEstado,
+              estadoAnterior: estadoAnterior || "PENDIENTE"
+            });
+            await sendMail(platformSmtp, { to: adminUser.correo, subject: rendered.subject, html: rendered.html, text: rendered.text });
+          } else {
+            console.log("[SaaS] Notificación de estado omitida (sin SMTP de plataforma activo o sin usuario administrador destinatario).");
+          }
+        } catch (mailErr: any) {
+          console.error("[SaaS] Error enviando correo de notificación de estado:", mailErr.message || mailErr);
+        }
+      }
+
+      res.json(company);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/companies/:id/pagos", async (req, res) => {
+    try {
+      const companyId = parseInt(req.params.id);
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM pagos_empresa WHERE idCompania = ? ORDER BY fecha DESC", [companyId]);
+        res.json(rows);
+      } else {
+        res.json(localCompanyPayments.filter(p => p.idCompania === companyId).sort((a, b) => b.fecha.localeCompare(a.fecha)));
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/companies/:id/pagos", async (req, res) => {
+    try {
+      const companyId = parseInt(req.params.id);
+      const p = req.body;
+
+      if (dbConnected && pool) {
+        const [result] = await pool.query(
+          "INSERT INTO pagos_empresa (idCompania, fecha, monto, notas, registradoPor) VALUES (?, ?, ?, ?, ?)",
+          [companyId, p.fecha, parseFloat(p.monto), p.notas || null, p.registradoPor || null]
+        );
+        p.id = (result as any).insertId;
+        p.idCompania = companyId;
+
+        if (p.montoMensual != null || p.proximoVencimiento != null) {
+          await pool.query(
+            "UPDATE companias SET montoMensual = COALESCE(?, montoMensual), proximoVencimiento = COALESCE(?, proximoVencimiento) WHERE id = ? OR id_compania = ?",
+            [p.montoMensual != null ? parseFloat(p.montoMensual) : null, p.proximoVencimiento || null, companyId, companyId]
+          );
+        }
+      } else {
+        p.id = Math.max(0, ...localCompanyPayments.map(item => item.id)) + 1;
+        p.idCompania = companyId;
+        localCompanyPayments.push(p);
+
+        if (p.montoMensual != null || p.proximoVencimiento != null) {
+          localCompanies = localCompanies.map(c => c.id === companyId
+            ? { ...c, montoMensual: p.montoMensual != null ? p.montoMensual : c.montoMensual, proximoVencimiento: p.proximoVencimiento || c.proximoVencimiento }
+            : c);
+        }
+      }
+
+      res.json(p);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -478,28 +599,53 @@ async function startServer() {
   app.post("/api/users", async (req, res) => {
     try {
       const u = req.body;
+
+      if (!u.id) {
+        // Solo se valida el límite al CREAR un usuario nuevo, no al editar uno existente.
+        let maxUsuarios = 5;
+        let activosActuales = 0;
+
+        if (dbConnected && pool) {
+          const [companyRows] = await pool.query("SELECT maxUsuarios FROM companias WHERE id = ? OR id_compania = ?", [u.idCompania, u.idCompania]);
+          const companyRow = (companyRows as any[])[0];
+          if (companyRow) maxUsuarios = companyRow.maxUsuarios;
+          const [countRows] = await pool.query("SELECT COUNT(*) as count FROM usuarios WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [u.idCompania, u.idCompania]);
+          activosActuales = (countRows as any)[0].count;
+        } else {
+          const company = localCompanies.find(c => c.id === parseInt(u.idCompania));
+          if (company) maxUsuarios = company.maxUsuarios;
+          activosActuales = localUsers.filter(item => item.idCompania === parseInt(u.idCompania) && item.activo).length;
+        }
+
+        if (activosActuales >= maxUsuarios) {
+          return res.status(400).json({ error: `Límite de usuarios alcanzado (máximo ${maxUsuarios}).` });
+        }
+      }
+
       if (dbConnected && pool) {
         if (u.id) {
           const [exists] = await pool.query("SELECT * FROM usuarios WHERE id = ? OR id_usuario = ?", [u.id, u.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE usuarios SET idCompania = ?, id_compania = ?, nombre = ?, usuario = ?, correo = ?, email = ?, contrasena = ?, password_hash = ?, rol = ? WHERE id = ? OR id_usuario = ?",
-              [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, u.contrasena, u.contrasena, u.rol, u.id, u.id]
+              "UPDATE usuarios SET idCompania = ?, id_compania = ?, nombre = ?, usuario = ?, correo = ?, email = ?, contrasena = ?, password_hash = ?, rol = ?, activo = ? WHERE id = ? OR id_usuario = ?",
+              [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, u.contrasena, u.contrasena, u.rol, u.activo ? 1 : 0, u.id, u.id]
             );
             return res.json(u);
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO usuarios (idCompania, id_compania, nombre, usuario, correo, email, contrasena, password_hash, rol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, u.contrasena, u.contrasena, u.rol]
+          "INSERT INTO usuarios (idCompania, id_compania, nombre, usuario, correo, email, contrasena, password_hash, rol, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, u.contrasena, u.contrasena, u.rol, u.activo === false ? 0 : 1]
         );
         u.id = (result as any).insertId;
+        u.activo = u.activo === false ? false : true;
         res.json(u);
       } else {
         if (u.id) {
           localUsers = localUsers.map(item => item.id === u.id ? u : item);
         } else {
           u.id = Math.max(0, ...localUsers.map(item => item.id)) + 1;
+          u.activo = u.activo === false ? false : true;
           localUsers.push(u);
         }
         res.json(u);
