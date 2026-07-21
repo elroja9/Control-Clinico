@@ -22,7 +22,8 @@ import {
   Eye,
   ArrowRight,
   UserCheck,
-  Search
+  Search,
+  MapPin
 } from 'lucide-react';
 
 interface AgendaCalendarProps {
@@ -332,7 +333,11 @@ export default function AgendaCalendar({
       duracionMinutos: formDuration,
       estadoCita: formStatus,
       notas: formNotes,
-      tipoVisita: selectedCita ? selectedCita.tipoVisita : 'CONSULTORIO'
+      tipoVisita: selectedCita ? selectedCita.tipoVisita : 'CONSULTORIO',
+      direccionDomicilio: selectedCita?.direccionDomicilio,
+      pacienteLat: selectedCita?.pacienteLat,
+      pacienteLng: selectedCita?.pacienteLng,
+      tiempoTrasladoMinutos: selectedCita?.tiempoTrasladoMinutos
     };
 
     onSaveCita(savedCita);
@@ -442,14 +447,16 @@ export default function AgendaCalendar({
             {dayCitas.map(cita => {
               const patient = patients.find(p => p.id === cita.idPaciente);
               const time = cita.fechaHora.split('T')[1] || '00:00';
+              const esDomicilio = cita.tipoVisita === 'DOMICILIO';
               return (
-                <div 
+                <div
                   key={cita.id}
                   onClick={(e) => handleOpenEditCita(cita, e)}
-                  className={`p-1 rounded-md text-[9px] font-extrabold truncate border ${getStatusColor(cita.estadoCita)}`}
-                  title={`${time} - ${patient?.nombreCompleto}`}
+                  className={`p-1 rounded-md text-[9px] font-extrabold truncate border flex items-center gap-0.5 ${getStatusColor(cita.estadoCita)}`}
+                  title={`${time} - ${patient?.nombreCompleto}${esDomicilio ? ` · Domicilio: ${cita.direccionDomicilio || 'sin dirección'}` : ''}`}
                 >
-                  {time} - {patient?.nombreCompleto || 'Paciente'}
+                  {esDomicilio && <MapPin className="w-2.5 h-2.5 shrink-0" />}
+                  <span className="truncate">{time} - {patient?.nombreCompleto || 'Paciente'}</span>
                 </div>
               );
             })}
@@ -549,6 +556,7 @@ export default function AgendaCalendar({
                       )}
                       {hourCitas.map(cita => {
                         const patient = patients.find(p => p.id === cita.idPaciente);
+                        const esDomicilio = cita.tipoVisita === 'DOMICILIO';
                         return (
                           <div
                             key={cita.id}
@@ -557,6 +565,12 @@ export default function AgendaCalendar({
                           >
                             <span className="block font-bold">{cita.fechaHora.split('T')[1]} ({cita.duracionMinutos}m)</span>
                             <span className="block text-slate-800 truncate">{patient?.nombreCompleto}</span>
+                            {esDomicilio && (
+                              <span className="flex items-center gap-0.5 text-slate-500 font-semibold truncate" title={cita.direccionDomicilio || 'Visita a domicilio'}>
+                                <MapPin className="w-2.5 h-2.5 shrink-0" />
+                                <span className="truncate">{cita.direccionDomicilio || 'Domicilio'}</span>
+                              </span>
+                            )}
                           </div>
                         );
                       })}
@@ -631,6 +645,7 @@ export default function AgendaCalendar({
                   ) : (
                     hourCitas.map(cita => {
                       const patient = patients.find(p => p.id === cita.idPaciente);
+                      const esDomicilio = cita.tipoVisita === 'DOMICILIO';
                       return (
                         <div
                           key={cita.id}
@@ -641,11 +656,23 @@ export default function AgendaCalendar({
                             <div className="flex items-center gap-1.5">
                               <span className="text-xs font-black">{cita.fechaHora.split('T')[1]}</span>
                               <span className="text-[9px] font-black uppercase bg-white/60 px-1.5 py-0.5 rounded-md border border-slate-300/20">{cita.estadoCita}</span>
+                              {esDomicilio && (
+                                <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md border border-amber-200 flex items-center gap-0.5">
+                                  <MapPin className="w-2.5 h-2.5" /> Domicilio
+                                </span>
+                              )}
                             </div>
                             <h4 className="text-xs font-bold text-slate-800">{patient?.nombreCompleto || 'Paciente'}</h4>
+                            {esDomicilio && (
+                              <p className="text-[10px] text-amber-700 font-semibold truncate max-w-sm flex items-center gap-1">
+                                <MapPin className="w-3 h-3 shrink-0" />
+                                {cita.direccionDomicilio || 'Dirección no especificada'}
+                                {cita.tiempoTrasladoMinutos != null && ` · ${cita.tiempoTrasladoMinutos} min de traslado`}
+                              </p>
+                            )}
                             <p className="text-[10px] text-slate-600 truncate max-w-sm">{cita.notas || 'Sin notas internas'}</p>
                           </div>
-                          
+
                           <div className="flex items-center gap-2 mt-1 sm:mt-0">
                             {cita.idConsulta ? (
                               <span className="text-[9px] font-bold bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-md px-2 py-0.5">
