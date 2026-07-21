@@ -46,6 +46,7 @@ import {
   defaultSmtpConfigs,
   defaultNotificationLogs,
   defaultCalendarBlocks,
+  defaultServicios,
   Company,
   Patient,
   Consultation,
@@ -55,7 +56,8 @@ import {
   NotificationLog,
   SmtpConfigInput,
   CalendarBlock,
-  CompanyPayment
+  CompanyPayment,
+  Servicio
 } from './data/mockData';
 
 import CompanySettings from './components/CompanySettings';
@@ -120,6 +122,11 @@ export default function App() {
   const [calendarBlocks, setCalendarBlocks] = useState<CalendarBlock[]>(() => {
     const local = localStorage.getItem('fisio_calendar_blocks');
     return local ? JSON.parse(local) : defaultCalendarBlocks;
+  });
+
+  const [servicios, setServicios] = useState<Servicio[]>(() => {
+    const local = localStorage.getItem('fisio_servicios');
+    return local ? JSON.parse(local) : defaultServicios;
   });
 
   const [companyPayments, setCompanyPayments] = useState<CompanyPayment[]>([]);
@@ -219,6 +226,17 @@ export default function App() {
         if (data && data.length > 0) setCalendarBlocks(data);
       })
       .catch(err => console.log("MySQL offline, using local fallback for calendar blocks"));
+
+    // 10. Fetch servicios
+    fetch('/api/servicios')
+      .then(res => {
+        if (!res.ok) throw new Error("API error");
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.length > 0) setServicios(data);
+      })
+      .catch(err => console.log("MySQL offline, using local fallback for servicios"));
   }, []);
 
   // Save state updates to LocalStorage as secondary local cache / fallback
@@ -241,6 +259,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('fisio_calendar_blocks', JSON.stringify(calendarBlocks));
   }, [calendarBlocks]);
+
+  useEffect(() => {
+    localStorage.setItem('fisio_servicios', JSON.stringify(servicios));
+  }, [servicios]);
 
   useEffect(() => {
     localStorage.setItem('fisio_smtp_configs', JSON.stringify(smtpConfigs));
@@ -502,6 +524,28 @@ export default function App() {
       setCalendarBlocks(prev => {
         const exists = prev.some(b => b.id === block.id);
         return exists ? prev.map(b => b.id === block.id ? block : b) : [...prev, block];
+      });
+    });
+  };
+
+  const handleSaveServicio = (servicio: Servicio) => {
+    fetch('/api/servicios', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(servicio)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setServicios(prev => {
+        const exists = prev.some(s => s.id === data.id);
+        return exists ? prev.map(s => s.id === data.id ? data : s) : [...prev, data];
+      });
+    })
+    .catch(err => {
+      console.error("Error saving servicio to MySQL:", err);
+      setServicios(prev => {
+        const exists = prev.some(s => s.id === servicio.id);
+        return exists ? prev.map(s => s.id === servicio.id ? servicio : s) : [...prev, servicio];
       });
     });
   };
@@ -1490,6 +1534,8 @@ export default function App() {
                 users={users}
                 currentUser={currentUser!}
                 onSaveUser={handleSaveUser}
+                servicios={servicios}
+                onSaveServicio={handleSaveServicio}
               />
             )}
 

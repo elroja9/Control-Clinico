@@ -646,3 +646,14 @@ export interface CompanyPayment {
 }
 
 export const defaultCompanyPayments: CompanyPayment[] = [];
+
+export interface Servicio {
+  id: number;
+  idCompania: number;
+  nombre: string;
+  precio: number;
+  porcentajeIva: number | null; // null => usa el ivaPorDefecto de la empresa
+  activo: boolean;
+}
+
+export const defaultServicios: Servicio[] = [];

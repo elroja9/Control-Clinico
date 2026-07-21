@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION } from '../data/mockData';
-import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock } from 'lucide-react';
+import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION, Servicio } from '../data/mockData';
+import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit } from 'lucide-react';
 
 interface CompanySettingsProps {
   companies: Company[];
@@ -13,6 +13,8 @@ interface CompanySettingsProps {
   users: User[];
   currentUser: User;
   onSaveUser: (user: User) => void;
+  servicios: Servicio[];
+  onSaveServicio: (servicio: Servicio) => void;
 }
 
 export default function CompanySettings({
@@ -25,7 +27,9 @@ export default function CompanySettings({
   onUpdateSmtpConfig,
   users,
   currentUser,
-  onSaveUser
+  onSaveUser,
+  servicios,
+  onSaveServicio
 }: CompanySettingsProps) {
   const currentCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
@@ -44,6 +48,13 @@ export default function CompanySettings({
   const [horario, setHorario] = useState<HorarioAtencion>(currentCompany.horarioAtencion || DEFAULT_HORARIO_ATENCION);
   const [horarioGuardado, setHorarioGuardado] = useState(false);
 
+  // Servicios section
+  const [isServicioFormOpen, setIsServicioFormOpen] = useState(false);
+  const [servicioEditId, setServicioEditId] = useState<number | null>(null);
+  const [servicioNombre, setServicioNombre] = useState('');
+  const [servicioPrecio, setServicioPrecio] = useState('');
+  const [servicioIva, setServicioIva] = useState('');
+
   useEffect(() => {
     setIsAddingUser(false);
     setNewUserNombre('');
@@ -52,6 +63,7 @@ export default function CompanySettings({
     setNewUserContrasena('');
     setNewUserRol('Profesional');
     setHorario(currentCompany.horarioAtencion || DEFAULT_HORARIO_ATENCION);
+    setIsServicioFormOpen(false);
   }, [selectedCompanyId]);
 
   // Edit fields
@@ -60,6 +72,7 @@ export default function CompanySettings({
   const [editIdent, setEditIdent] = useState(currentCompany.identificacion);
   const [editCorreo, setEditCorreo] = useState(currentCompany.correoEmisor);
   const [editIva, setEditIva] = useState(currentCompany.ivaPorDefecto);
+  const [editActividad, setEditActividad] = useState(currentCompany.actividadEconomica || '');
   const [editColorPri, setEditColorPri] = useState(currentCompany.colorPrimario);
   const [editColorSide, setEditColorSide] = useState(currentCompany.colorSidebar);
   const [editLogo, setEditLogo] = useState(currentCompany.logoUrl);
@@ -244,6 +257,7 @@ export default function CompanySettings({
       setEditIdent(comp.identificacion);
       setEditCorreo(comp.correoEmisor);
       setEditIva(comp.ivaPorDefecto);
+      setEditActividad(comp.actividadEconomica || '');
       setEditColorPri(comp.colorPrimario);
       setEditColorSide(comp.colorSidebar);
       setEditLogo(comp.logoUrl);
@@ -261,6 +275,7 @@ export default function CompanySettings({
       identificacion: editIdent,
       correoEmisor: editCorreo,
       ivaPorDefecto: parseFloat(editIva.toString()),
+      actividadEconomica: editActividad,
       colorPrimario: editColorPri,
       colorSidebar: editColorSide,
       logoUrl: editLogo,
@@ -278,11 +293,11 @@ export default function CompanySettings({
       tipoIdentificacion: "02",
       identificacion: editIdent || "3-101-000000",
       correoEmisor: editCorreo || "info@nuevaclinica.com",
-      ivaPorDefecto: 4.0,
+      ivaPorDefecto: parseFloat(editIva.toString()),
       colorPrimario: editColorPri || "#0d9488",
       colorSidebar: editColorSide || "#0f766e",
       logoUrl: editLogo || "https://images.unsplash.com/photo-1516549655169-df83a0774514?w=120&auto=format&fit=crop&q=60",
-      actividadEconomica: "869001",
+      actividadEconomica: editActividad || "869001",
       perfilCompania: editPerfil,
       estadoSaas: "PENDIENTE",
       maxUsuarios: 5,
@@ -301,6 +316,7 @@ export default function CompanySettings({
     setEditIdent('');
     setEditCorreo('');
     setEditIva(4.0);
+    setEditActividad('869001');
     setEditColorPri('#2563eb');
     setEditColorSide('#1e3a8a');
     setEditLogo('https://images.unsplash.com/photo-1516549655169-df83a0774514?w=120&auto=format&fit=crop&q=60');
@@ -355,6 +371,47 @@ export default function CompanySettings({
 
   const handleToggleUserActivo = (user: User) => {
     onSaveUser({ ...user, activo: !user.activo });
+  };
+
+  const companyServicios = servicios.filter(s => s.idCompania === currentCompany.id);
+
+  const openNewServicioForm = () => {
+    setServicioEditId(null);
+    setServicioNombre('');
+    setServicioPrecio('');
+    setServicioIva('');
+    setIsServicioFormOpen(true);
+  };
+
+  const openEditServicioForm = (s: Servicio) => {
+    setServicioEditId(s.id);
+    setServicioNombre(s.nombre);
+    setServicioPrecio(s.precio.toString());
+    setServicioIva(s.porcentajeIva != null ? s.porcentajeIva.toString() : '');
+    setIsServicioFormOpen(true);
+  };
+
+  const handleSubmitServicio = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!servicioNombre.trim() || !servicioPrecio.trim()) {
+      alert('Por favor complete el nombre y el precio del servicio.');
+      return;
+    }
+    const servicioExistente = servicioEditId != null ? servicios.find(s => s.id === servicioEditId) : undefined;
+    const servicio: Servicio = {
+      id: servicioEditId ?? Math.max(0, ...servicios.map(s => s.id)) + 1,
+      idCompania: currentCompany.id,
+      nombre: servicioNombre.trim(),
+      precio: parseFloat(servicioPrecio),
+      porcentajeIva: servicioIva.trim() === '' ? null : parseFloat(servicioIva),
+      activo: servicioExistente ? servicioExistente.activo : true
+    };
+    onSaveServicio(servicio);
+    setIsServicioFormOpen(false);
+  };
+
+  const handleToggleServicioActivo = (s: Servicio) => {
+    onSaveServicio({ ...s, activo: !s.activo });
   };
 
   const diasLabel: Record<keyof HorarioAtencion, string> = {
@@ -459,9 +516,15 @@ export default function CompanySettings({
               <span className="font-medium text-slate-800 block truncate">{currentCompany.correoEmisor}</span>
             </div>
             <div>
-              <span className="text-slate-500 block">Impuesto IVA:</span>
+              <span className="text-slate-500 block">IVA por Defecto:</span>
               <span className="font-semibold text-slate-800 block">
-                {currentCompany.ivaPorDefecto}% (Tasa Salud CR)
+                {currentCompany.ivaPorDefecto}%
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Actividad Económica:</span>
+              <span className="font-medium text-slate-800 block truncate">
+                {currentCompany.actividadEconomica || 'No configurada'}
               </span>
             </div>
             <div>
@@ -895,6 +958,122 @@ export default function CompanySettings({
       )}
 
       {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
+        <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4 text-xs">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+            <div className="flex items-center gap-2">
+              <Receipt className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
+              <div>
+                <h4 className="font-bold text-slate-800">Servicios y Tarifas</h4>
+                <p className="text-[10px] text-slate-500">
+                  Precio e IVA por servicio prestado. Si dejas el IVA en blanco, se usa el {currentCompany.ivaPorDefecto}% por defecto de la empresa.
+                </p>
+              </div>
+            </div>
+            {!isServicioFormOpen && (
+              <button
+                onClick={openNewServicioForm}
+                className="flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Nuevo Servicio
+              </button>
+            )}
+          </div>
+
+          {isServicioFormOpen && (
+            <form onSubmit={handleSubmitServicio} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-slate-600 font-medium mb-1">Nombre del Servicio *</label>
+                  <input
+                    type="text"
+                    value={servicioNombre}
+                    onChange={(e) => setServicioNombre(e.target.value)}
+                    placeholder="ej: Consulta Nutricional"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 font-medium mb-1">Precio (₡) *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={servicioPrecio}
+                    onChange={(e) => setServicioPrecio(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-600 font-medium mb-1">% IVA (vacío = por defecto)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={servicioIva}
+                    onChange={(e) => setServicioIva(e.target.value)}
+                    placeholder={`${currentCompany.ivaPorDefecto}%`}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2 justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsServicioFormOpen(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700"
+                >
+                  {servicioEditId != null ? 'Guardar Cambios' : 'Guardar Servicio'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          <div className="space-y-1.5">
+            {companyServicios.length === 0 && !isServicioFormOpen && (
+              <p className="text-slate-400 text-center py-3">Todavía no has registrado ningún servicio.</p>
+            )}
+            {companyServicios.map(s => (
+              <div key={s.id} className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg">
+                <div>
+                  <span className="font-semibold text-slate-800 block">{s.nombre}</span>
+                  <span className="text-[10px] text-slate-500">
+                    ₡{s.precio.toLocaleString('es-CR')} &middot; IVA {s.porcentajeIva != null ? `${s.porcentajeIva}%` : `${currentCompany.ivaPorDefecto}% (por defecto)`}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${s.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
+                    {s.activo ? 'Activo' : 'Inactivo'}
+                  </span>
+                  <button
+                    onClick={() => openEditServicioForm(s)}
+                    title="Editar"
+                    className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                  >
+                    <Edit className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => handleToggleServicioActivo(s)}
+                    title={s.activo ? 'Desactivar' : 'Activar'}
+                    className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                  >
+                    <Power className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
         <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-xs">
           <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
             <Clock className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
@@ -1009,6 +1188,28 @@ export default function CompanySettings({
                 <option value="Fisioterapia">Sólo Fisioterapia</option>
                 <option value="Nutrición">Sólo Nutrición</option>
               </select>
+            </div>
+            <div>
+              <label className="block text-slate-600 mb-1">Código de Actividad Económica (Hacienda)</label>
+              <input
+                type="text"
+                value={editActividad}
+                onChange={(e) => setEditActividad(e.target.value)}
+                placeholder="ej: 869001"
+                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
+              />
+            </div>
+            <div>
+              <label className="block text-slate-600 mb-1">% IVA por Defecto</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={editIva}
+                onChange={(e) => setEditIva(parseFloat(e.target.value))}
+                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
+              />
             </div>
           </div>
 

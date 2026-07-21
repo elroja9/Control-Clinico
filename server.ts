@@ -10,7 +10,7 @@ import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
 import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
-import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion } from "./src/data/mockData";
+import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio } from "./src/data/mockData";
 import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
@@ -22,7 +22,8 @@ import {
   defaultSmtpConfigs,
   defaultNotificationLogs,
   defaultCalendarBlocks,
-  defaultCompanyPayments
+  defaultCompanyPayments,
+  defaultServicios
 } from "./src/data/mockData";
 
 dotenv.config();
@@ -42,6 +43,7 @@ let localSmtpConfigs = [...defaultSmtpConfigs];
 let localLogs = [...defaultNotificationLogs];
 let localCalendarBlocks = [...defaultCalendarBlocks];
 let localCompanyPayments: CompanyPayment[] = [...defaultCompanyPayments];
+let localServicios: Servicio[] = [...defaultServicios];
 
 interface LocalHaciendaConfig {
   idCompania: number;
@@ -147,6 +149,17 @@ async function createTables() {
         horaInicio VARCHAR(5) NULL,
         horaFin VARCHAR(5) NULL,
         motivo VARCHAR(255)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS servicios (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        nombre VARCHAR(255) NOT NULL,
+        precio DECIMAL(10,2) NOT NULL,
+        porcentajeIva DECIMAL(5,2) NULL,
+        activo BOOLEAN NOT NULL DEFAULT TRUE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
@@ -1033,6 +1046,55 @@ async function startServer() {
       } else {
         localCalendarBlocks = localCalendarBlocks.filter(item => item.id !== id);
         res.json({ success: true });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 10. Servicios (catálogo de servicios/tarifas por empresa, con IVA opcional
+  // por servicio que cae al ivaPorDefecto de la empresa cuando es NULL)
+  app.get("/api/servicios", async (req, res) => {
+    try {
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM servicios");
+        res.json(rows);
+      } else {
+        res.json(localServicios);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/servicios", async (req, res) => {
+    try {
+      const s = req.body;
+      if (dbConnected && pool) {
+        if (s.id) {
+          const [exists] = await pool.query("SELECT id FROM servicios WHERE id = ?", [s.id]);
+          if ((exists as any).length > 0) {
+            await pool.query(
+              "UPDATE servicios SET idCompania = ?, nombre = ?, precio = ?, porcentajeIva = ?, activo = ? WHERE id = ?",
+              [parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, s.activo ? 1 : 0, s.id]
+            );
+            return res.json(s);
+          }
+        }
+        const [result] = await pool.query(
+          "INSERT INTO servicios (idCompania, nombre, precio, porcentajeIva, activo) VALUES (?, ?, ?, ?, ?)",
+          [parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, s.activo === false ? 0 : 1]
+        );
+        s.id = (result as any).insertId;
+        res.json(s);
+      } else {
+        if (s.id && localServicios.some(item => item.id === s.id)) {
+          localServicios = localServicios.map(item => item.id === s.id ? s : item);
+        } else {
+          s.id = Math.max(0, ...localServicios.map(item => item.id)) + 1;
+          localServicios.push(s);
+        }
+        res.json(s);
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });

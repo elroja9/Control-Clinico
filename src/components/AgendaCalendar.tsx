@@ -23,8 +23,20 @@ import {
   ArrowRight,
   UserCheck,
   Search,
-  MapPin
+  MapPin,
+  Navigation
 } from 'lucide-react';
+
+function urlUbicacionCita(cita: Cita): string | null {
+  if (cita.tipoVisita !== 'DOMICILIO') return null;
+  if (cita.pacienteLat != null && cita.pacienteLng != null) {
+    return `https://www.google.com/maps/search/?api=1&query=${cita.pacienteLat},${cita.pacienteLng}`;
+  }
+  if (cita.direccionDomicilio) {
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(cita.direccionDomicilio)}`;
+  }
+  return null;
+}
 
 interface AgendaCalendarProps {
   patients: Patient[];
@@ -63,7 +75,7 @@ export default function AgendaCalendar({
 }: AgendaCalendarProps) {
   // Calendar views: 'day', 'week', 'month'
   const [view, setView] = useState<'day' | 'week' | 'month'>('month');
-  const [currentDate, setCurrentDate] = useState<Date>(new Date(2026, 6, 17)); // Match mock database date: July 17, 2026
+  const [currentDate, setCurrentDate] = useState<Date>(new Date());
   
   // Filter by doctor
   const [selectedDoctorId, setSelectedDoctorId] = useState<number>(currentUser.id);
@@ -172,7 +184,7 @@ export default function AgendaCalendar({
   };
 
   const handleToday = () => {
-    setCurrentDate(new Date(2026, 6, 17)); // Default mock day: July 17, 2026
+    setCurrentDate(new Date());
   };
 
   const patientLabel = (p: Patient) => `${p.nombreCompleto} (${p.identificacion})`;
@@ -569,6 +581,18 @@ export default function AgendaCalendar({
                               <span className="flex items-center gap-0.5 text-slate-500 font-semibold truncate" title={cita.direccionDomicilio || 'Visita a domicilio'}>
                                 <MapPin className="w-2.5 h-2.5 shrink-0" />
                                 <span className="truncate">{cita.direccionDomicilio || 'Domicilio'}</span>
+                                {urlUbicacionCita(cita) && (
+                                  <a
+                                    href={urlUbicacionCita(cita)!}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    title="Abrir ubicación del paciente"
+                                    className="shrink-0 text-teal-700"
+                                  >
+                                    <Navigation className="w-2.5 h-2.5" />
+                                  </a>
+                                )}
                               </span>
                             )}
                           </div>
@@ -666,8 +690,23 @@ export default function AgendaCalendar({
                             {esDomicilio && (
                               <p className="text-[10px] text-amber-700 font-semibold truncate max-w-sm flex items-center gap-1">
                                 <MapPin className="w-3 h-3 shrink-0" />
-                                {cita.direccionDomicilio || 'Dirección no especificada'}
-                                {cita.tiempoTrasladoMinutos != null && ` · ${cita.tiempoTrasladoMinutos} min de traslado`}
+                                <span className="truncate">
+                                  {cita.direccionDomicilio || 'Dirección no especificada'}
+                                  {cita.tiempoTrasladoMinutos != null && ` · ${cita.tiempoTrasladoMinutos} min de traslado`}
+                                </span>
+                                {urlUbicacionCita(cita) && (
+                                  <a
+                                    href={urlUbicacionCita(cita)!}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    title="Abrir ubicación del paciente"
+                                    className="shrink-0 flex items-center gap-0.5 text-teal-700 hover:underline font-bold"
+                                  >
+                                    <Navigation className="w-3 h-3" />
+                                    Abrir ubicación
+                                  </a>
+                                )}
                               </p>
                             )}
                             <p className="text-[10px] text-slate-600 truncate max-w-sm">{cita.notas || 'Sin notas internas'}</p>
@@ -1029,6 +1068,31 @@ export default function AgendaCalendar({
                   </select>
                 </div>
               </div>
+
+              {/* Home-visit location (only for existing DOMICILIO citas — staff can't create these directly) */}
+              {selectedCita?.tipoVisita === 'DOMICILIO' && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-amber-800 font-bold">
+                    <MapPin className="w-3.5 h-3.5" />
+                    Visita a Domicilio
+                  </div>
+                  <p className="text-slate-700">{selectedCita.direccionDomicilio || 'Dirección no especificada'}</p>
+                  {selectedCita.tiempoTrasladoMinutos != null && (
+                    <p className="text-slate-500">Tiempo de traslado estimado: {selectedCita.tiempoTrasladoMinutos} min</p>
+                  )}
+                  {urlUbicacionCita(selectedCita) && (
+                    <a
+                      href={urlUbicacionCita(selectedCita)!}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-teal-700 font-bold hover:underline"
+                    >
+                      <Navigation className="w-3.5 h-3.5" />
+                      Abrir ubicación del paciente
+                    </a>
+                  )}
+                </div>
+              )}
 
               {/* Notes */}
               <div>
