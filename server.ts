@@ -1632,13 +1632,35 @@ async function startServer() {
         }
         const pacienteLat = parseFloat(body.pacienteLat);
         const pacienteLng = parseFloat(body.pacienteLng);
+
+        // El traslado se calcula desde la cita inmediatamente anterior de ese
+        // mismo día: si esa cita fue a domicilio, el especialista viaja desde
+        // la ubicación de ese cliente anterior (no desde su base); solo si no
+        // hay cita previa a domicilio se usa la ubicación del especialista.
+        let origenLat = parseFloat(user.ubicacionLat);
+        let origenLng = parseFloat(user.ubicacionLng);
+        let citasDelDiaPrevias: any[];
+        if (dbConnected && pool) {
+          const [citaRows] = await pool.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ?", [idUsuarioNutricionista, `${fecha}%`]);
+          citasDelDiaPrevias = citaRows as any[];
+        } else {
+          citasDelDiaPrevias = localCitas.filter(c => c.idUsuarioNutricionista === idUsuarioNutricionista && c.fechaHora.startsWith(fecha));
+        }
+        const citaAnterior = citasDelDiaPrevias
+          .filter(c => c.fechaHora < fechaHora)
+          .sort((a, b) => (a.fechaHora < b.fechaHora ? 1 : -1))[0];
+        if (citaAnterior && citaAnterior.tipoVisita === "DOMICILIO" && citaAnterior.pacienteLat != null && citaAnterior.pacienteLng != null) {
+          origenLat = parseFloat(citaAnterior.pacienteLat);
+          origenLng = parseFloat(citaAnterior.pacienteLng);
+        }
+
         try {
           // mysql2 devuelve columnas DECIMAL como strings, no numbers — forzar
           // parseFloat aquí (mismo patrón ya usado en este archivo para
           // ivaPorDefecto) para no interpolar un string sin validar en la URL.
           tiempoTrasladoMinutos = await calcularTiempoTrasladoMinutos({
-            origenLat: parseFloat(user.ubicacionLat),
-            origenLng: parseFloat(user.ubicacionLng),
+            origenLat,
+            origenLng,
             destinoLat: pacienteLat,
             destinoLng: pacienteLng
           });
