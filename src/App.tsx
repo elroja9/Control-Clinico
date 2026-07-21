@@ -320,6 +320,38 @@ export default function App() {
     });
   };
 
+  const handleUpdateCompany = (updated: Company) => {
+    fetch('/api/companies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updated)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setCompanies(prev => prev.map(c => c.id === data.id ? data : c));
+    })
+    .catch(err => {
+      console.error("Error updating company in MySQL:", err);
+      setCompanies(prev => prev.map(c => c.id === updated.id ? updated : c));
+    });
+  };
+
+  const handleAddCompany = (newComp: Company) => {
+    fetch('/api/companies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newComp)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setCompanies(prev => [...prev, data]);
+    })
+    .catch(err => {
+      console.error("Error adding company to MySQL:", err);
+      setCompanies(prev => [...prev, newComp]);
+    });
+  };
+
   const handleLogout = () => {
     setCurrentUser(null);
     localStorage.removeItem('fisio_current_user');
@@ -1421,12 +1453,8 @@ export default function App() {
                 companies={companies.filter(c => c.id === selectedCompanyId)}
                 selectedCompanyId={selectedCompanyId}
                 onSelectCompany={(id) => setSelectedCompanyId(id)}
-                onUpdateCompany={(updated) => {
-                  setCompanies(prev => prev.map(c => c.id === updated.id ? updated : c));
-                }}
-                onAddCompany={(newComp) => {
-                  setCompanies(prev => [...prev, newComp]);
-                }}
+                onUpdateCompany={handleUpdateCompany}
+                onAddCompany={handleAddCompany}
                 smtpConfigs={smtpConfigs}
                 onUpdateSmtpConfig={handleUpdateSmtpConfig}
                 users={users}
