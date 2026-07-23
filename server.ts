@@ -6,11 +6,23 @@ import mysql from "mysql2/promise";
 import { encryptSecret, decryptSecret } from "./server/crypto";
 import { obtenerCertificadoHttps } from "./server/httpsCert";
 import { verificarLlaveP12, firmarXadesEpes } from "./server/haciendaSigner";
+import {
+  calcularLineas,
+  calcularResumen,
+  limpiarCodigoActividad,
+  limpiarIdentificacion,
+  generarConsecutivo,
+  generarClaveNumerica,
+  fechaEmisionCR,
+  construirXmlFactura
+} from "./server/haciendaFactura";
+import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda } from "./server/haciendaApi";
+import { serviciosDefectoParaPerfil } from "./server/serviciosDefecto";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
 import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
-import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio } from "./src/data/mockData";
+import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura } from "./src/data/mockData";
 import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
@@ -23,7 +35,8 @@ import {
   defaultNotificationLogs,
   defaultCalendarBlocks,
   defaultCompanyPayments,
-  defaultServicios
+  defaultServicios,
+  defaultFacturas
 } from "./src/data/mockData";
 
 dotenv.config();
@@ -44,6 +57,7 @@ let localLogs = [...defaultNotificationLogs];
 let localCalendarBlocks = [...defaultCalendarBlocks];
 let localCompanyPayments: CompanyPayment[] = [...defaultCompanyPayments];
 let localServicios: Servicio[] = [...defaultServicios];
+let localFacturas: Factura[] = [...defaultFacturas];
 
 interface LocalHaciendaConfig {
   idCompania: number;
@@ -54,6 +68,7 @@ interface LocalHaciendaConfig {
   certificadoPinCifrado: string;
   certificadoNombreArchivo: string | null;
   certificadoVenceEn: string | null;
+  ultimoConsecutivo: number;
 }
 let localHaciendaConfigs: LocalHaciendaConfig[] = [];
 
@@ -138,6 +153,7 @@ async function createTables() {
     await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS pacienteLat DECIMAL(10,7) NULL`);
     await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS pacienteLng DECIMAL(10,7) NULL`);
     await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS tiempoTrasladoMinutos INT NULL`);
+    await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS idServicio INT NULL`);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS calendar_blocks (
@@ -159,9 +175,46 @@ async function createTables() {
         nombre VARCHAR(255) NOT NULL,
         precio DECIMAL(10,2) NOT NULL,
         porcentajeIva DECIMAL(5,2) NULL,
+        duracionMinutos INT NOT NULL DEFAULT 30,
         activo BOOLEAN NOT NULL DEFAULT TRUE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+    await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS duracionMinutos INT NOT NULL DEFAULT 30`);
+    await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS codigoCabys VARCHAR(13) NULL`);
+    await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS unidadMedida VARCHAR(5) NOT NULL DEFAULT 'Sp'`);
+    // La tabla `servicios` ya existía (creada por ConsultorioDB_schema.sql con columnas en
+    // snake_case: id_servicio, id_compania, porcentaje_iva, estado) — el CREATE TABLE IF NOT
+    // EXISTS de arriba no la tocó. Se agregan las columnas camelCase que usa esta app, igual
+    // que se hace para companias/usuarios/pacientes.
+    await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS id INT NULL`);
+    await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS idCompania INT NULL`);
+    await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS porcentajeIva DECIMAL(5,2) NULL`);
+    await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS facturas (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        idCita INT NULL,
+        idPaciente INT NOT NULL,
+        clave VARCHAR(50) NOT NULL,
+        consecutivo VARCHAR(20) NOT NULL,
+        fechaEmision VARCHAR(30) NOT NULL,
+        ambiente VARCHAR(20) NOT NULL,
+        lineas JSON NOT NULL,
+        subtotal DECIMAL(14,5) NOT NULL,
+        totalIva DECIMAL(14,5) NOT NULL,
+        total DECIMAL(14,5) NOT NULL,
+        estado VARCHAR(20) NOT NULL,
+        mensajeError TEXT NULL,
+        creadaEn VARCHAR(30) NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // compania_hacienda_config ya existe desde ConsultorioDB_schema.sql (sin esta columna) —
+    // se agrega aquí en vez de en el .sql para no perder el contador de facturas ya emitidas
+    // si el esquema se re-importa.
+    await pool.query(`ALTER TABLE compania_hacienda_config ADD COLUMN IF NOT EXISTS ultimo_consecutivo INT NOT NULL DEFAULT 0`);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS pagos_empresa (
@@ -227,6 +280,11 @@ async function createTables() {
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS montoMensual DECIMAL(10,2) NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS proximoVencimiento DATE NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS horarioAtencion JSON NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS requiereConfirmacionCitas BOOLEAN NOT NULL DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS provincia VARCHAR(2) NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS canton VARCHAR(2) NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS distrito VARCHAR(2) NULL`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS otrasSenas VARCHAR(250) NULL`);
 
     // usuarios
     await pool.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS id INT NULL`);
@@ -462,6 +520,7 @@ function normalizeRow(row: any): any {
   if (copy.id_paciente != null && copy.id == null) copy.id = copy.id_paciente;
   if (copy.id_consulta != null && copy.id == null) copy.id = copy.id_consulta;
   if (copy.id_cita != null && copy.id == null) copy.id = copy.id_cita;
+  if (copy.id_servicio != null && copy.id == null) copy.id = copy.id_servicio;
   if (copy.id_compania != null && copy.id == null) copy.id = copy.id_compania;
 
   // companias
@@ -483,6 +542,9 @@ function normalizeRow(row: any): any {
   if (copy.email != null && copy.correo == null) copy.correo = copy.email;
   if (copy.password_hash != null && copy.contrasena == null) copy.contrasena = copy.password_hash;
   if (copy.usuario == null && copy.email != null) copy.usuario = copy.email.split("@")[0];
+
+  // servicios
+  if (copy.porcentaje_iva != null && copy.porcentajeIva == null) copy.porcentajeIva = parseFloat(copy.porcentaje_iva);
 
   // pacientes
   if (copy.nombre_completo != null && copy.nombreCompleto == null) copy.nombreCompleto = copy.nombre_completo;
@@ -538,10 +600,11 @@ async function startServer() {
           const [exists] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [c.id, c.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, horarioAtencion = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id = ? OR id_compania = ?",
+              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, horarioAtencion = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id = ? OR id_compania = ?",
               [
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
-                c.estadoSaas, c.maxUsuarios, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, JSON.stringify(c.horarioAtencion || null),
+                c.estadoSaas, c.maxUsuarios, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, JSON.stringify(c.horarioAtencion || null), c.requiereConfirmacionCitas ? 1 : 0,
+                c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null,
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl,
                 c.id, c.id
               ]
@@ -550,14 +613,24 @@ async function startServer() {
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, horarioAtencion, nombre_comercial, razon_social, tipo_identificacion, correo_emisor, iva_por_defecto, color_primario, color_sidebar, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, horarioAtencion, requiereConfirmacionCitas, provincia, canton, distrito, otrasSenas, nombre_comercial, razon_social, tipo_identificacion, correo_emisor, iva_por_defecto, color_primario, color_sidebar, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
-            c.estadoSaas || 'PENDIENTE', c.maxUsuarios || 5, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, JSON.stringify(c.horarioAtencion || null),
+            c.estadoSaas || 'PENDIENTE', c.maxUsuarios || 5, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, JSON.stringify(c.horarioAtencion || null), c.requiereConfirmacionCitas ? 1 : 0,
+            c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null,
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl
           ]
         );
         c.id = (result as any).insertId;
+
+        // Servicios por defecto según el colegio profesional correspondiente
+        // (Fisioterapia/Nutrición/Ambas únicamente — Spa no aplica).
+        for (const s of serviciosDefectoParaPerfil(c.perfilCompania)) {
+          await pool.query(
+            "INSERT INTO servicios (idCompania, id_compania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [c.id, c.id, s.nombre, s.precio, s.porcentajeIva, s.duracionMinutos, s.codigoCabys, s.unidadMedida, s.activo ? 1 : 0]
+          );
+        }
 
         // Avisar a los administradores de la empresa 7 (la plataforma) de que
         // hay una empresa nueva pendiente de revisión/aprobación. Best-effort:
@@ -594,6 +667,9 @@ async function startServer() {
         } else {
           c.id = Math.max(0, ...localCompanies.map(item => item.id)) + 1;
           localCompanies.push(c);
+          for (const s of serviciosDefectoParaPerfil(c.perfilCompania)) {
+            localServicios.push({ ...s, id: Math.max(0, ...localServicios.map(item => item.id)) + 1, idCompania: c.id });
+          }
         }
         res.json(c);
       }
@@ -948,15 +1024,15 @@ async function startServer() {
           const [exists] = await pool.query("SELECT * FROM citas WHERE id = ?", [ct.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE citas SET idCompania = ?, idPaciente = ?, idUsuarioNutricionista = ?, idConsulta = ?, fechaHora = ?, duracionMinutos = ?, estadoCita = ?, notas = ?, confirmacionEnviadaEn = ?, recordatorioEnviadoEn = ?, cancelacionEnviadaEn = ?, tipoVisita = ?, direccionDomicilio = ?, pacienteLat = ?, pacienteLng = ?, tiempoTrasladoMinutos = ? WHERE id = ?",
-              [parseInt(ct.idCompania), parseInt(ct.idPaciente), parseInt(ct.idUsuarioNutricionista), ct.idConsulta || null, ct.fechaHora, parseInt(ct.duracionMinutos), ct.estadoCita, ct.notas || '', ct.confirmacionEnviadaEn || null, ct.recordatorioEnviadoEn || null, ct.cancelacionEnviadaEn || null, ct.tipoVisita || 'CONSULTORIO', ct.direccionDomicilio || null, ct.pacienteLat != null ? parseFloat(ct.pacienteLat) : null, ct.pacienteLng != null ? parseFloat(ct.pacienteLng) : null, ct.tiempoTrasladoMinutos != null ? parseInt(ct.tiempoTrasladoMinutos) : null, ct.id]
+              "UPDATE citas SET idCompania = ?, idPaciente = ?, idUsuarioNutricionista = ?, idConsulta = ?, idServicio = ?, fechaHora = ?, duracionMinutos = ?, estadoCita = ?, notas = ?, confirmacionEnviadaEn = ?, recordatorioEnviadoEn = ?, cancelacionEnviadaEn = ?, tipoVisita = ?, direccionDomicilio = ?, pacienteLat = ?, pacienteLng = ?, tiempoTrasladoMinutos = ? WHERE id = ?",
+              [parseInt(ct.idCompania), parseInt(ct.idPaciente), parseInt(ct.idUsuarioNutricionista), ct.idConsulta || null, ct.idServicio || null, ct.fechaHora, parseInt(ct.duracionMinutos), ct.estadoCita, ct.notas || '', ct.confirmacionEnviadaEn || null, ct.recordatorioEnviadoEn || null, ct.cancelacionEnviadaEn || null, ct.tipoVisita || 'CONSULTORIO', ct.direccionDomicilio || null, ct.pacienteLat != null ? parseFloat(ct.pacienteLat) : null, ct.pacienteLng != null ? parseFloat(ct.pacienteLng) : null, ct.tiempoTrasladoMinutos != null ? parseInt(ct.tiempoTrasladoMinutos) : null, ct.id]
             );
             return res.json(ct);
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO citas (idCompania, idPaciente, idUsuarioNutricionista, idConsulta, fechaHora, duracionMinutos, estadoCita, notas, confirmacionEnviadaEn, recordatorioEnviadoEn, cancelacionEnviadaEn, tipoVisita, direccionDomicilio, pacienteLat, pacienteLng, tiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(ct.idCompania), parseInt(ct.idPaciente), parseInt(ct.idUsuarioNutricionista), ct.idConsulta || null, ct.fechaHora, parseInt(ct.duracionMinutos), ct.estadoCita, ct.notas || '', ct.confirmacionEnviadaEn || null, ct.recordatorioEnviadoEn || null, ct.cancelacionEnviadaEn || null, ct.tipoVisita || 'CONSULTORIO', ct.direccionDomicilio || null, ct.pacienteLat != null ? parseFloat(ct.pacienteLat) : null, ct.pacienteLng != null ? parseFloat(ct.pacienteLng) : null, ct.tiempoTrasladoMinutos != null ? parseInt(ct.tiempoTrasladoMinutos) : null]
+          "INSERT INTO citas (idCompania, idPaciente, idUsuarioNutricionista, idConsulta, idServicio, fechaHora, duracionMinutos, estadoCita, notas, confirmacionEnviadaEn, recordatorioEnviadoEn, cancelacionEnviadaEn, tipoVisita, direccionDomicilio, pacienteLat, pacienteLng, tiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [parseInt(ct.idCompania), parseInt(ct.idPaciente), parseInt(ct.idUsuarioNutricionista), ct.idConsulta || null, ct.idServicio || null, ct.fechaHora, parseInt(ct.duracionMinutos), ct.estadoCita, ct.notas || '', ct.confirmacionEnviadaEn || null, ct.recordatorioEnviadoEn || null, ct.cancelacionEnviadaEn || null, ct.tipoVisita || 'CONSULTORIO', ct.direccionDomicilio || null, ct.pacienteLat != null ? parseFloat(ct.pacienteLat) : null, ct.pacienteLng != null ? parseFloat(ct.pacienteLng) : null, ct.tiempoTrasladoMinutos != null ? parseInt(ct.tiempoTrasladoMinutos) : null]
         );
         ct.id = (result as any).insertId;
         res.json(ct);
@@ -974,20 +1050,9 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/citas/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      if (dbConnected && pool) {
-        await pool.query("DELETE FROM citas WHERE id = ?", [id]);
-        res.json({ success: true });
-      } else {
-        localCitas = localCitas.filter(item => item.id !== id);
-        res.json({ success: true });
-      }
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+  // Las citas nunca se eliminan (ver POST /api/citas) — solo cambian de
+  // estadoCita a CANCELADA, para conservar el historial. Por eso no existe
+  // un DELETE /api/citas/:id.
 
   // 9. Calendar Blocks (specialist agenda blocking)
   app.get("/api/calendar-blocks", async (req, res) => {
@@ -1058,7 +1123,7 @@ async function startServer() {
     try {
       if (dbConnected && pool) {
         const [rows] = await pool.query("SELECT * FROM servicios");
-        res.json(rows);
+        res.json((rows as any[]).map(normalizeRow));
       } else {
         res.json(localServicios);
       }
@@ -1072,18 +1137,18 @@ async function startServer() {
       const s = req.body;
       if (dbConnected && pool) {
         if (s.id) {
-          const [exists] = await pool.query("SELECT id FROM servicios WHERE id = ?", [s.id]);
+          const [exists] = await pool.query("SELECT id FROM servicios WHERE id = ? OR id_servicio = ?", [s.id, s.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE servicios SET idCompania = ?, nombre = ?, precio = ?, porcentajeIva = ?, activo = ? WHERE id = ?",
-              [parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, s.activo ? 1 : 0, s.id]
+              "UPDATE servicios SET idCompania = ?, id_compania = ?, nombre = ?, precio = ?, porcentajeIva = ?, duracionMinutos = ?, codigoCabys = ?, unidadMedida = ?, activo = ? WHERE id = ? OR id_servicio = ?",
+              [parseInt(s.idCompania), parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 30, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo ? 1 : 0, s.id, s.id]
             );
             return res.json(s);
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO servicios (idCompania, nombre, precio, porcentajeIva, activo) VALUES (?, ?, ?, ?, ?)",
-          [parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, s.activo === false ? 0 : 1]
+          "INSERT INTO servicios (idCompania, id_compania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [parseInt(s.idCompania), parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 30, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo === false ? 0 : 1]
         );
         s.id = (result as any).insertId;
         res.json(s);
@@ -1096,6 +1161,49 @@ async function startServer() {
         }
         res.json(s);
       }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Rellena los servicios por defecto del colegio profesional correspondiente para una
+  // empresa ya existente (Fisioterapia/Nutrición/Ambas). Idempotente: no duplica servicios
+  // cuyo nombre ya exista para esa empresa. No hace nada para Spa (perfilCompania sin colegio).
+  app.post("/api/companies/:id/servicios-defecto", async (req, res) => {
+    try {
+      const idCompania = parseInt(req.params.id);
+      let company: Company | undefined;
+      let existentes: Servicio[];
+      if (dbConnected && pool) {
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        company = (companyRows as any[]).map(normalizeRow)[0];
+        const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
+        existentes = (servicioRows as any[]).map(normalizeRow);
+      } else {
+        company = localCompanies.find(c => c.id === idCompania);
+        existentes = localServicios.filter(s => s.idCompania === idCompania);
+      }
+      if (!company) return res.status(404).json({ error: "Empresa no encontrada." });
+
+      const nombresExistentes = new Set(existentes.map(s => s.nombre));
+      const porAgregar = serviciosDefectoParaPerfil(company.perfilCompania).filter(s => !nombresExistentes.has(s.nombre));
+
+      const agregados: Servicio[] = [];
+      for (const s of porAgregar) {
+        if (dbConnected && pool) {
+          const [result] = await pool.query(
+            "INSERT INTO servicios (idCompania, id_compania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [idCompania, idCompania, s.nombre, s.precio, s.porcentajeIva, s.duracionMinutos, s.codigoCabys, s.unidadMedida, s.activo ? 1 : 0]
+          );
+          agregados.push({ ...s, id: (result as any).insertId, idCompania });
+        } else {
+          const nuevo = { ...s, id: Math.max(0, ...localServicios.map(item => item.id)) + 1, idCompania };
+          localServicios.push(nuevo);
+          agregados.push(nuevo);
+        }
+      }
+
+      res.json({ agregados });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1221,7 +1329,8 @@ async function startServer() {
         const stored: LocalHaciendaConfig = {
           idCompania, ambiente: b.ambiente, usuarioAtv: b.usuarioAtv || '',
           passwordAtvCifrado, certificadoP12Cifrado, certificadoPinCifrado,
-          certificadoNombreArchivo, certificadoVenceEn
+          certificadoNombreArchivo, certificadoVenceEn,
+          ultimoConsecutivo: index !== -1 ? localHaciendaConfigs[index].ultimoConsecutivo : 0
         };
         if (index !== -1) {
           localHaciendaConfigs[index] = stored;
@@ -1296,6 +1405,268 @@ async function startServer() {
       res.json({ xmlFirmado });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  async function cargarCredencialesAtv(idCompania: number): Promise<{ ambiente: 'SANDBOX' | 'PRODUCCION'; usuarioAtv: string; passwordAtv: string } | null> {
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT ambiente, usuario_atv, password_atv_enc FROM compania_hacienda_config WHERE id_compania = ?", [idCompania]);
+      const row = (rows as any[])[0];
+      if (!row || !row.usuario_atv || !row.password_atv_enc) return null;
+      return { ambiente: row.ambiente, usuarioAtv: row.usuario_atv, passwordAtv: decryptSecret(row.password_atv_enc.toString()) };
+    } else {
+      const row = localHaciendaConfigs.find(c => c.idCompania === idCompania);
+      if (!row || !row.usuarioAtv || !row.passwordAtvCifrado) return null;
+      return { ambiente: row.ambiente, usuarioAtv: row.usuarioAtv, passwordAtv: decryptSecret(row.passwordAtvCifrado) };
+    }
+  }
+
+  // Proxy al catálogo oficial CABYS de Hacienda (evita CORS desde el navegador).
+  app.get("/api/cabys", async (req, res) => {
+    try {
+      const q = (req.query.q as string) || "";
+      if (!q.trim()) return res.json([]);
+      const url = /^\d{13}$/.test(q.trim())
+        ? `https://api.hacienda.go.cr/fe/cabys?codigo=${encodeURIComponent(q.trim())}`
+        : `https://api.hacienda.go.cr/fe/cabys?q=${encodeURIComponent(q.trim())}`;
+      const resp = await fetch(url);
+      if (!resp.ok) return res.json([]);
+      const data = await resp.json();
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 10.1 Facturas (Factura Electrónica v4.4)
+  app.get("/api/facturas", async (req, res) => {
+    try {
+      const idCompania = req.query.idCompania ? parseInt(req.query.idCompania as string) : null;
+      if (dbConnected && pool) {
+        const [rows] = idCompania
+          ? await pool.query("SELECT * FROM facturas WHERE idCompania = ?", [idCompania])
+          : await pool.query("SELECT * FROM facturas");
+        res.json((rows as any[]).map(r => ({ ...r, lineas: typeof r.lineas === 'string' ? JSON.parse(r.lineas) : r.lineas })));
+      } else {
+        res.json(idCompania ? localFacturas.filter(f => f.idCompania === idCompania) : localFacturas);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/facturas", async (req, res) => {
+    try {
+      const body = req.body;
+      const idCompania = parseInt(body.idCompania);
+      const idCita = body.idCita != null ? parseInt(body.idCita) : null;
+      const idPaciente = parseInt(body.idPaciente);
+      const condicionVenta = body.condicionVenta || "01";
+      const medioPago = body.medioPago || "01";
+      const lineasBody: Array<{ idServicio: number; cantidad: number }> = body.lineas || [];
+
+      if (lineasBody.length === 0) {
+        return res.status(400).json({ error: "Agregue al menos un servicio a facturar." });
+      }
+
+      let company: Company | undefined;
+      let paciente: Patient | undefined;
+      let serviciosDisponibles: Servicio[];
+      if (dbConnected && pool) {
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        company = (companyRows as any[]).map(normalizeRow)[0];
+        const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [idPaciente, idPaciente]);
+        paciente = (pacienteRows as any[]).map(normalizeRow)[0];
+        const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
+        serviciosDisponibles = (servicioRows as any[]).map(normalizeRow);
+      } else {
+        company = localCompanies.find(c => c.id === idCompania);
+        paciente = localPatients.find(p => p.id === idPaciente);
+        serviciosDisponibles = localServicios.filter(s => s.idCompania === idCompania);
+      }
+
+      if (!company) return res.status(404).json({ error: "Empresa no encontrada." });
+      if (!paciente) return res.status(404).json({ error: "Paciente no encontrado." });
+      if (!company.provincia || !company.canton || !company.distrito || !company.otrasSenas) {
+        return res.status(400).json({ error: "Configure la ubicación fiscal de la empresa (provincia/cantón/distrito/señas) en Configuración de Empresa antes de facturar." });
+      }
+
+      const cert = await cargarCertificadoEmpresa(idCompania);
+      if (!cert) {
+        return res.status(400).json({ error: "Configure primero la Firma Digital de Hacienda (certificado .p12) en Configuración de Empresa." });
+      }
+      const credenciales = await cargarCredencialesAtv(idCompania);
+      if (!credenciales) {
+        return res.status(400).json({ error: "Configure primero el usuario y contraseña ATV de Hacienda en Configuración de Empresa." });
+      }
+
+      const lineasInput = [];
+      for (const l of lineasBody) {
+        const servicio = serviciosDisponibles.find(s => s.id === parseInt(l.idServicio as any));
+        if (!servicio) return res.status(400).json({ error: `Servicio ${l.idServicio} no encontrado.` });
+        if (!servicio.codigoCabys) return res.status(400).json({ error: `El servicio "${servicio.nombre}" no tiene un código CABYS configurado — asígnelo en Configuración de Empresa antes de facturar.` });
+        lineasInput.push({
+          codigoCabys: servicio.codigoCabys,
+          detalle: servicio.nombre,
+          unidadMedida: servicio.unidadMedida || 'Sp',
+          cantidad: parseFloat((l.cantidad as any) || 1),
+          precioUnitario: servicio.precio,
+          porcentajeIva: servicio.porcentajeIva != null ? servicio.porcentajeIva : company.ivaPorDefecto,
+          idServicio: servicio.id
+        });
+      }
+
+      const lineasCalculadas = calcularLineas(lineasInput).map((l, i) => ({ ...l, idServicio: lineasInput[i].idServicio }));
+      const resumen = calcularResumen(lineasCalculadas);
+
+      // Numeración consecutiva — se incrementa dentro de una transacción para no repetir
+      // números si dos facturas se emiten al mismo tiempo para la misma empresa.
+      let siguienteSecuencial: number;
+      if (dbConnected && pool) {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          const [rows] = await connection.query("SELECT ultimo_consecutivo FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE", [idCompania]);
+          const actual = (rows as any[])[0]?.ultimo_consecutivo || 0;
+          siguienteSecuencial = actual + 1;
+          await connection.query("UPDATE compania_hacienda_config SET ultimo_consecutivo = ? WHERE id_compania = ?", [siguienteSecuencial, idCompania]);
+          await connection.commit();
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
+        }
+      } else {
+        const cfg = localHaciendaConfigs.find(c => c.idCompania === idCompania)!;
+        siguienteSecuencial = cfg.ultimoConsecutivo + 1;
+        cfg.ultimoConsecutivo = siguienteSecuencial;
+      }
+
+      const consecutivo = generarConsecutivo(siguienteSecuencial);
+      const fechaEmision = new Date();
+      const clave = generarClaveNumerica(company.identificacion, consecutivo, fechaEmision);
+
+      const tipoIdReceptor = paciente.tipoIdentificacion === 'EXT' ? '03' : paciente.tipoIdentificacion;
+      const xml = construirXmlFactura({
+        clave,
+        consecutivo,
+        fechaEmision,
+        emisor: {
+          nombre: company.razonSocial,
+          nombreComercial: company.nombreComercial,
+          tipoIdentificacion: company.tipoIdentificacion,
+          identificacion: company.identificacion,
+          correoElectronico: company.correoEmisor,
+          provincia: company.provincia,
+          canton: company.canton,
+          distrito: company.distrito,
+          otrasSenas: company.otrasSenas,
+          codigoActividad: limpiarCodigoActividad(company.actividadEconomica)
+        },
+        receptor: {
+          nombre: paciente.nombreCompleto,
+          tipoIdentificacion: tipoIdReceptor,
+          identificacion: paciente.identificacion,
+          correoElectronico: paciente.correoElectronico || undefined
+        },
+        condicionVenta,
+        medioPago,
+        lineas: lineasCalculadas,
+        resumen
+      });
+
+      const xmlFirmado = await firmarXadesEpes(xml, cert.p12Base64, cert.pin);
+
+      const nuevaFactura: any = {
+        idCompania,
+        idCita,
+        idPaciente,
+        clave,
+        consecutivo,
+        fechaEmision: fechaEmisionCR(fechaEmision),
+        ambiente: credenciales.ambiente,
+        lineas: lineasCalculadas,
+        subtotal: resumen.totalVenta,
+        totalIva: resumen.totalImpuesto,
+        total: resumen.totalComprobante,
+        estado: "FIRMADA",
+        mensajeError: null,
+        creadaEn: new Date().toISOString()
+      };
+
+      // Envío a Hacienda — best-effort: si Hacienda no responde o rechaza, la factura queda
+      // guardada como FIRMADA/ERROR y se puede reintentar el envío después.
+      try {
+        const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
+        const envio = await enviarFacturaHacienda({
+          ambiente: credenciales.ambiente,
+          token,
+          clave,
+          fechaEmisionIso: fechaEmisionCR(fechaEmision),
+          tipoIdentificacionEmisor: company.tipoIdentificacion,
+          cedulaEmisor: limpiarIdentificacion(company.identificacion),
+          tipoIdentificacionReceptor: tipoIdReceptor,
+          cedulaReceptor: limpiarIdentificacion(paciente.identificacion),
+          xmlFirmado
+        });
+        nuevaFactura.estado = envio.aceptadoParaProcesar ? "ENVIADA" : "ERROR";
+        nuevaFactura.mensajeError = envio.mensaje;
+      } catch (err: any) {
+        nuevaFactura.estado = "ERROR";
+        nuevaFactura.mensajeError = err.message;
+        console.error("[Hacienda] Error enviando factura:", err.message || err);
+      }
+
+      if (dbConnected && pool) {
+        const [result] = await pool.query(
+          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, lineas, subtotal, totalIva, total, estado, mensajeError, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, JSON.stringify(nuevaFactura.lineas), nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn]
+        );
+        nuevaFactura.id = (result as any).insertId;
+      } else {
+        nuevaFactura.id = Math.max(0, ...localFacturas.map(f => f.id)) + 1;
+        localFacturas.push(nuevaFactura);
+      }
+
+      res.json(nuevaFactura);
+    } catch (err: any) {
+      console.error("[Hacienda] Error generando factura:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/facturas/:id/estado", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      let factura: any;
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM facturas WHERE id = ?", [id]);
+        factura = (rows as any[])[0];
+      } else {
+        factura = localFacturas.find(f => f.id === id);
+      }
+      if (!factura) return res.status(404).json({ error: "Factura no encontrada." });
+
+      const credenciales = await cargarCredencialesAtv(factura.idCompania);
+      if (!credenciales) return res.status(400).json({ error: "No hay credenciales ATV configuradas para esta empresa." });
+
+      const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
+      const estadoHacienda = await consultarEstadoHacienda(credenciales.ambiente, token, factura.clave);
+
+      const mapaEstado: Record<string, string> = { aceptado: "ACEPTADA", rechazado: "RECHAZADA" };
+      const nuevoEstado = mapaEstado[estadoHacienda.estado] || factura.estado;
+
+      if (dbConnected && pool) {
+        await pool.query("UPDATE facturas SET estado = ? WHERE id = ?", [nuevoEstado, id]);
+      } else {
+        const idx = localFacturas.findIndex(f => f.id === id);
+        if (idx !== -1) localFacturas[idx].estado = nuevoEstado as any;
+      }
+
+      res.json({ id, estado: nuevoEstado, estadoHacienda: estadoHacienda.estado });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -1620,6 +1991,27 @@ async function startServer() {
     }
   });
 
+  app.get("/api/public/clinicas/:id/servicios", async (req, res) => {
+    try {
+      const idCompania = parseInt(req.params.id);
+      let servicios: Servicio[];
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM servicios WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]);
+        servicios = (rows as any[]).map(normalizeRow);
+      } else {
+        servicios = localServicios.filter(s => s.idCompania === idCompania && s.activo);
+      }
+      res.json(servicios.map(s => ({
+        id: s.id,
+        nombre: s.nombre,
+        precio: s.precio,
+        duracionMinutos: s.duracionMinutos
+      })));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/public/clinicas/:id/pacientes/:identificacion", async (req, res) => {
     try {
       const idCompania = parseInt(req.params.id);
@@ -1679,7 +2071,18 @@ async function startServer() {
       const { abre, cierra } = horarioDelDia(company?.horarioAtencion, fecha);
       if (!abre || !cierra) return res.json([]);
 
-      const duracionMin = DURACION_POR_TIPO_VISITA[tipoVisita];
+      let duracionMin = DURACION_POR_TIPO_VISITA[tipoVisita];
+      if (req.query.idServicio) {
+        const idServicio = parseInt(req.query.idServicio as string);
+        let servicio: Servicio | undefined;
+        if (dbConnected && pool) {
+          const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE (id = ? OR id_servicio = ?) AND (idCompania = ? OR id_compania = ?) AND activo = 1", [idServicio, idServicio, user.idCompania, user.idCompania]);
+          servicio = (servicioRows as any[]).map(normalizeRow)[0];
+        } else {
+          servicio = localServicios.find(s => s.id === idServicio && s.idCompania === user.idCompania && s.activo);
+        }
+        if (servicio) duracionMin = servicio.duracionMinutos;
+      }
       const candidatos = generarSlotsCandidatos(abre, cierra);
       const libres = candidatos.filter(hora => slotLibre({
         candidatoInicioMin: minutosDesdeMedianoche(hora),
@@ -1705,16 +2108,39 @@ async function startServer() {
       const fechaHora = body.fechaHora as string;
       const fecha = fechaHora.split("T")[0];
       const hora = fechaHora.split("T")[1];
-      const duracionMinutos = DURACION_POR_TIPO_VISITA[tipoVisita];
 
       let user: any;
+      let company: Company | undefined;
       if (dbConnected && pool) {
         const [userRows] = await pool.query("SELECT * FROM usuarios WHERE id = ? OR id_usuario = ?", [idUsuarioNutricionista, idUsuarioNutricionista]);
         user = (userRows as any[]).map(normalizeRow)[0];
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        company = (companyRows as any[]).map(normalizeRow)[0];
       } else {
         user = localUsers.find(u => u.id === idUsuarioNutricionista);
+        company = localCompanies.find(c => c.id === idCompania);
       }
       if (!user) return res.status(404).json({ error: "Profesional no encontrado." });
+
+      // La duración viene del servicio elegido (si el negocio tiene catálogo
+      // configurado); si no se eligió servicio, cae al valor fijo por tipo de
+      // visita de siempre.
+      let duracionMinutos = DURACION_POR_TIPO_VISITA[tipoVisita];
+      let idServicio: number | null = null;
+      if (body.idServicio) {
+        idServicio = parseInt(body.idServicio);
+        let servicio: Servicio | undefined;
+        if (dbConnected && pool) {
+          const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE (id = ? OR id_servicio = ?) AND (idCompania = ? OR id_compania = ?) AND activo = 1", [idServicio, idServicio, idCompania, idCompania]);
+          servicio = (servicioRows as any[]).map(normalizeRow)[0];
+        } else {
+          servicio = localServicios.find(s => s.id === idServicio && s.idCompania === idCompania && s.activo);
+        }
+        if (!servicio) {
+          return res.status(400).json({ error: "Servicio no encontrado o inactivo." });
+        }
+        duracionMinutos = servicio.duracionMinutos;
+      }
 
       let tiempoTrasladoMinutos: number | null = null;
       if (tipoVisita === "DOMICILIO") {
@@ -1856,9 +2282,10 @@ async function startServer() {
         idPaciente: paciente!.id,
         idUsuarioNutricionista,
         idConsulta: null,
+        idServicio,
         fechaHora,
         duracionMinutos,
-        estadoCita: "CONFIRMADA",
+        estadoCita: company?.requiereConfirmacionCitas ? "PROGRAMADA" : "CONFIRMADA",
         notas: "",
         tipoVisita,
         direccionDomicilio: tipoVisita === "DOMICILIO" ? body.direccionDomicilio : null,
@@ -1869,8 +2296,8 @@ async function startServer() {
 
       if (dbConnected && pool) {
         const [result] = await pool.query(
-          "INSERT INTO citas (idCompania, idPaciente, idUsuarioNutricionista, idConsulta, fechaHora, duracionMinutos, estadoCita, notas, tipoVisita, direccionDomicilio, pacienteLat, pacienteLng, tiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [nuevaCita.idCompania, nuevaCita.idPaciente, nuevaCita.idUsuarioNutricionista, nuevaCita.idConsulta, nuevaCita.fechaHora, nuevaCita.duracionMinutos, nuevaCita.estadoCita, nuevaCita.notas, nuevaCita.tipoVisita, nuevaCita.direccionDomicilio, nuevaCita.pacienteLat, nuevaCita.pacienteLng, nuevaCita.tiempoTrasladoMinutos]
+          "INSERT INTO citas (idCompania, idPaciente, idUsuarioNutricionista, idConsulta, idServicio, fechaHora, duracionMinutos, estadoCita, notas, tipoVisita, direccionDomicilio, pacienteLat, pacienteLng, tiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [nuevaCita.idCompania, nuevaCita.idPaciente, nuevaCita.idUsuarioNutricionista, nuevaCita.idConsulta, nuevaCita.idServicio, nuevaCita.fechaHora, nuevaCita.duracionMinutos, nuevaCita.estadoCita, nuevaCita.notas, nuevaCita.tipoVisita, nuevaCita.direccionDomicilio, nuevaCita.pacienteLat, nuevaCita.pacienteLng, nuevaCita.tiempoTrasladoMinutos]
         );
         nuevaCita.id = (result as any).insertId;
       } else {
@@ -1882,16 +2309,12 @@ async function startServer() {
       // Best-effort: un fallo de correo no debe impedir que la cita quede
       // creada, así que los errores solo se registran en consola.
       try {
-        let company: Company | undefined;
         let smtpConfig: CompaniaSmtpConfig | undefined;
         if (dbConnected && pool) {
-          const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
-          company = (companyRows as any[]).map(normalizeRow)[0];
           const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [idCompania]);
           const smtpRow = (smtpRows as any[])[0];
           smtpConfig = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
         } else {
-          company = localCompanies.find(c => c.id === idCompania);
           smtpConfig = localSmtpConfigs.find(s => s.idCompania === idCompania);
         }
 

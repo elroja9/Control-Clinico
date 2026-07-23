@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Building, User as UserIcon, Calendar, MapPin, Check, ArrowLeft, ArrowRight, Loader2, AlertCircle } from 'lucide-react';
+import { Building, User as UserIcon, Calendar, MapPin, Check, ArrowLeft, ArrowRight, Loader2, AlertCircle, ListChecks } from 'lucide-react';
 import { loadGoogleMapsScript } from '../utils/loadGoogleMaps';
 
 interface ClinicaPublica {
@@ -18,7 +18,17 @@ interface ProfesionalPublico {
   aceptaDomicilio: boolean;
 }
 
-type Paso = 1 | 2 | 3 | 4 | 5 | 6;
+interface ServicioPublico {
+  id: number;
+  nombre: string;
+  precio: number;
+  duracionMinutos: number;
+}
+
+// Pasos 1=clínica, 2=profesional, 3=servicio (se salta si la empresa no tiene
+// catálogo de servicios activos), 4=tipo de visita + horario, 5=dirección de
+// domicilio (solo si aplica), 6=datos del paciente, 7=confirmación.
+type Paso = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 export default function PublicBooking() {
   const [paso, setPaso] = useState<Paso>(1);
@@ -30,6 +40,9 @@ export default function PublicBooking() {
 
   const [profesionales, setProfesionales] = useState<ProfesionalPublico[]>([]);
   const [profesionalId, setProfesionalId] = useState<number | null>(null);
+
+  const [servicios, setServicios] = useState<ServicioPublico[]>([]);
+  const [servicioId, setServicioId] = useState<number | null>(null);
 
   const [tipoVisita, setTipoVisita] = useState<'CONSULTORIO' | 'DOMICILIO'>('CONSULTORIO');
   const [fecha, setFecha] = useState(new Date().toISOString().slice(0, 10));
@@ -74,14 +87,19 @@ export default function PublicBooking() {
 
   useEffect(() => {
     if (!clinicaId) return;
+    setServicioId(null);
     fetch(`/api/public/clinicas/${clinicaId}/profesionales`)
       .then(res => res.json())
       .then(setProfesionales)
       .catch(() => setError('No se pudieron cargar los profesionales.'));
+    fetch(`/api/public/clinicas/${clinicaId}/servicios`)
+      .then(res => res.json())
+      .then(setServicios)
+      .catch(() => setServicios([]));
   }, [clinicaId]);
 
   useEffect(() => {
-    if (paso !== 4 || tipoVisita !== 'DOMICILIO') return;
+    if (paso !== 5 || tipoVisita !== 'DOMICILIO') return;
     fetch('/api/public/config')
       .then(res => res.json())
       .then(data => loadGoogleMapsScript(data.googleMapsApiKey))
@@ -123,7 +141,8 @@ export default function PublicBooking() {
     if (!profesionalId) return;
     setCargandoHorarios(true);
     setHoraSeleccionada('');
-    fetch(`/api/public/disponibilidad?idUsuario=${profesionalId}&fecha=${fecha}&tipoVisita=${tipoVisita}`)
+    const servicioParam = servicioId ? `&idServicio=${servicioId}` : '';
+    fetch(`/api/public/disponibilidad?idUsuario=${profesionalId}&fecha=${fecha}&tipoVisita=${tipoVisita}${servicioParam}`)
       .then(res => res.json())
       .then(data => setHorariosDisponibles(data))
       .catch(() => setError('No se pudieron cargar los horarios disponibles.'))
@@ -131,9 +150,9 @@ export default function PublicBooking() {
   };
 
   useEffect(() => {
-    if (paso === 3 && profesionalId) cargarHorarios();
+    if (paso === 4 && profesionalId) cargarHorarios();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paso, profesionalId, fecha, tipoVisita]);
+  }, [paso, profesionalId, fecha, tipoVisita, servicioId]);
 
   const buscarPacientePorCedula = () => {
     if (!cedula.trim() || !clinicaId) return;
@@ -170,6 +189,7 @@ export default function PublicBooking() {
       body: JSON.stringify({
         idCompania: clinicaId,
         idUsuarioNutricionista: profesionalId,
+        idServicio: servicioId || undefined,
         fechaHora: `${fecha}T${horaSeleccionada}`,
         tipoVisita,
         direccionDomicilio: tipoVisita === 'DOMICILIO' ? direccionDomicilio : undefined,
@@ -182,7 +202,7 @@ export default function PublicBooking() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'No se pudo agendar la cita.');
         setCitaCreada(data);
-        setPaso(6);
+        setPaso(7);
       })
       .catch(err => setError(err.message))
       .finally(() => setSubmitting(false));
@@ -232,7 +252,7 @@ export default function PublicBooking() {
             {profesionales.map(p => (
               <button
                 key={p.id}
-                onClick={() => { setProfesionalId(p.id); setPaso(3); }}
+                onClick={() => { setProfesionalId(p.id); setPaso(servicios.length > 0 ? 3 : 4); }}
                 className="w-full flex items-center justify-between p-3 rounded-xl border border-slate-200 hover:border-slate-400 transition-all text-left"
               >
                 <div>
@@ -247,8 +267,28 @@ export default function PublicBooking() {
         )}
 
         {paso === 3 && (
-          <div className="space-y-4">
+          <div className="space-y-3">
             <button onClick={() => setPaso(2)} className="text-xs text-slate-500 flex items-center gap-1 mb-2"><ArrowLeft className="w-3.5 h-3.5" /> Cambiar profesional</button>
+            <h2 className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1.5"><ListChecks className="w-4 h-4" /> Escoja un servicio</h2>
+            {servicios.map(s => (
+              <button
+                key={s.id}
+                onClick={() => { setServicioId(s.id); setPaso(4); }}
+                className={`w-full flex items-center justify-between p-3 rounded-xl border-2 transition-all text-left ${servicioId === s.id ? 'border-slate-800 bg-slate-50' : 'border-slate-200 hover:border-slate-400'}`}
+              >
+                <div>
+                  <span className="font-bold text-sm text-slate-800 block">{s.nombre}</span>
+                  <span className="text-[10px] text-slate-500">{s.duracionMinutos} min</span>
+                </div>
+                <span className="text-xs font-bold text-slate-700">₡{s.precio.toLocaleString('es-CR')}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {paso === 4 && (
+          <div className="space-y-4">
+            <button onClick={() => setPaso(servicios.length > 0 ? 3 : 2)} className="text-xs text-slate-500 flex items-center gap-1 mb-2"><ArrowLeft className="w-3.5 h-3.5" /> {servicios.length > 0 ? 'Cambiar servicio' : 'Cambiar profesional'}</button>
             <h2 className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1.5"><Calendar className="w-4 h-4" /> Tipo de visita y horario</h2>
 
             <div className="grid grid-cols-2 gap-2">
@@ -301,7 +341,7 @@ export default function PublicBooking() {
 
             <button
               disabled={!horaSeleccionada}
-              onClick={() => setPaso(tipoVisita === 'DOMICILIO' ? 4 : 5)}
+              onClick={() => setPaso(tipoVisita === 'DOMICILIO' ? 5 : 6)}
               className="w-full text-white font-bold text-xs py-3 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
               style={{ backgroundColor: colorPrimario }}
             >
@@ -310,9 +350,9 @@ export default function PublicBooking() {
           </div>
         )}
 
-        {paso === 4 && (
+        {paso === 5 && (
           <div className="space-y-4">
-            <button onClick={() => setPaso(3)} className="text-xs text-slate-500 flex items-center gap-1 mb-2"><ArrowLeft className="w-3.5 h-3.5" /> Cambiar horario</button>
+            <button onClick={() => setPaso(4)} className="text-xs text-slate-500 flex items-center gap-1 mb-2"><ArrowLeft className="w-3.5 h-3.5" /> Cambiar horario</button>
             <h2 className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1.5"><MapPin className="w-4 h-4" /> Su dirección</h2>
             <input
               id="direccion-domicilio-input"
@@ -328,7 +368,7 @@ export default function PublicBooking() {
             <p className="text-[10px] text-slate-500">El tiempo de traslado se validará al confirmar la cita en el siguiente paso.</p>
             <button
               disabled={!direccionDomicilio.trim() && (pacienteLat == null)}
-              onClick={() => setPaso(5)}
+              onClick={() => setPaso(6)}
               className="w-full text-white font-bold text-xs py-3 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
               style={{ backgroundColor: colorPrimario }}
             >
@@ -337,9 +377,9 @@ export default function PublicBooking() {
           </div>
         )}
 
-        {paso === 5 && (
+        {paso === 6 && (
           <div className="space-y-3">
-            <button onClick={() => setPaso(tipoVisita === 'DOMICILIO' ? 4 : 3)} className="text-xs text-slate-500 flex items-center gap-1 mb-2"><ArrowLeft className="w-3.5 h-3.5" /> Volver</button>
+            <button onClick={() => setPaso(tipoVisita === 'DOMICILIO' ? 5 : 4)} className="text-xs text-slate-500 flex items-center gap-1 mb-2"><ArrowLeft className="w-3.5 h-3.5" /> Volver</button>
             <h2 className="text-xs font-bold text-slate-500 uppercase">Sus datos</h2>
             <div>
               <label className="block text-slate-600 text-xs font-medium mb-1">Cédula</label>
@@ -370,16 +410,21 @@ export default function PublicBooking() {
           </div>
         )}
 
-        {paso === 6 && citaCreada && (
+        {paso === 7 && citaCreada && (
           <div className="text-center py-6 space-y-3">
             <div className="inline-flex p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-600">
               <Check className="w-8 h-8" />
             </div>
-            <h2 className="text-lg font-bold text-slate-900">¡Cita confirmada!</h2>
+            <h2 className="text-lg font-bold text-slate-900">
+              {citaCreada.estadoCita === 'PROGRAMADA' ? '¡Solicitud recibida!' : '¡Cita confirmada!'}
+            </h2>
             <p className="text-xs text-slate-500">
               {fecha} a las {horaSeleccionada} con {profesional?.nombre} en {clinica?.nombreComercial}.
               {tipoVisita === 'DOMICILIO' && citaCreada.tiempoTrasladoMinutos != null && (
                 <> Tiempo de traslado estimado: {citaCreada.tiempoTrasladoMinutos} min.</>
+              )}
+              {citaCreada.estadoCita === 'PROGRAMADA' && (
+                <> Tu cita está pendiente de confirmación por parte del negocio.</>
               )}
             </p>
           </div>

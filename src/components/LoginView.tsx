@@ -37,7 +37,7 @@ export default function LoginView({
   const [compRazon, setCompRazon] = useState('');
   const [compIdent, setCompIdent] = useState('');
   const [compCorreo, setCompCorreo] = useState('');
-  const [compPerfil, setCompPerfil] = useState<'Fisioterapia' | 'Nutrición' | 'Ambas'>('Ambas');
+  const [compPerfil, setCompPerfil] = useState<'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa'>('Ambas');
   const [compColor, setCompColor] = useState('#0f766e');
   
   // Register Admin states
@@ -105,18 +105,25 @@ export default function LoginView({
       ivaPorDefecto: 4.0,
       colorPrimario: compColor,
       colorSidebar: compColor === '#0f766e' ? '#115e59' : compColor,
-      logoUrl: compPerfil === 'Fisioterapia' 
-        ? 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=120' 
+      logoUrl: compPerfil === 'Fisioterapia'
+        ? 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=120'
         : compPerfil === 'Nutrición'
         ? 'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=120'
+        : compPerfil === 'Spa'
+        ? 'https://images.unsplash.com/photo-1544161515-4ab6ce6db874?w=120'
         : 'https://images.unsplash.com/photo-1505751172876-fa1923c5c528?w=120',
-      actividadEconomica: compPerfil === 'Fisioterapia' ? '869001 (Fisioterapia)' : '851201 (Nutrición)',
+      actividadEconomica: compPerfil === 'Fisioterapia' ? '869001 (Fisioterapia)' : compPerfil === 'Nutrición' ? '851201 (Nutrición)' : compPerfil === 'Spa' ? 'Por definir (Spa/Bienestar)' : '869001 (Fisioterapia y Nutrición)',
       perfilCompania: compPerfil,
       estadoSaas: 'PENDIENTE',
       maxUsuarios: 5,
       montoMensual: null,
       proximoVencimiento: null,
-      horarioAtencion: DEFAULT_HORARIO_ATENCION
+      horarioAtencion: DEFAULT_HORARIO_ATENCION,
+      requiereConfirmacionCitas: compPerfil === 'Spa',
+      provincia: '',
+      canton: '',
+      distrito: '',
+      otrasSenas: ''
     };
 
     // Create User
@@ -379,12 +386,13 @@ export default function LoginView({
                   <label className="block text-slate-400 text-[10px] font-bold mb-1">Perfil Compañía (Servicios) *</label>
                   <select
                     value={compPerfil}
-                    onChange={(e) => setCompPerfil(e.target.value as 'Fisioterapia' | 'Nutrición' | 'Ambas')}
+                    onChange={(e) => setCompPerfil(e.target.value as 'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa')}
                     className="w-full bg-slate-950 border border-slate-850 rounded-lg p-2 text-xs text-white focus:outline-hidden focus:border-teal-500"
                   >
                     <option value="Ambas">Ambas (Fisio y Nutrición)</option>
                     <option value="Fisioterapia">Sólo Fisioterapia</option>
                     <option value="Nutrición">Sólo Nutrición</option>
+                    <option value="Spa">Spa / Bienestar (Sauna, Cold Plunge, Masajes...)</option>
                   </select>
                 </div>
                 <div>

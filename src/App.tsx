@@ -57,7 +57,8 @@ import {
   SmtpConfigInput,
   CalendarBlock,
   CompanyPayment,
-  Servicio
+  Servicio,
+  Factura
 } from './data/mockData';
 
 import CompanySettings from './components/CompanySettings';
@@ -130,6 +131,7 @@ export default function App() {
   });
 
   const [companyPayments, setCompanyPayments] = useState<CompanyPayment[]>([]);
+  const [facturas, setFacturas] = useState<Factura[]>([]);
 
   // --- Initial MySQL Synchronization & Load ---
   useEffect(() => {
@@ -237,6 +239,17 @@ export default function App() {
         if (data && data.length > 0) setServicios(data);
       })
       .catch(err => console.log("MySQL offline, using local fallback for servicios"));
+
+    // 11. Fetch facturas
+    fetch('/api/facturas')
+      .then(res => {
+        if (!res.ok) throw new Error("API error");
+        return res.json();
+      })
+      .then(data => {
+        if (data) setFacturas(data);
+      })
+      .catch(err => console.log("MySQL offline, no factura history available"));
   }, []);
 
   // Save state updates to LocalStorage as secondary local cache / fallback
@@ -493,19 +506,6 @@ export default function App() {
     });
   };
 
-  const handleDeleteCita = (id: number) => {
-    if (confirm("¿Está seguro de que desea cancelar / eliminar esta cita?")) {
-      fetch(`/api/citas/${id}`, { method: 'DELETE' })
-        .then(() => {
-          setCitas(prev => prev.filter(c => c.id !== id));
-        })
-        .catch(err => {
-          console.error("Error deleting appointment from MySQL:", err);
-          setCitas(prev => prev.filter(c => c.id !== id));
-        });
-    }
-  };
-
   const handleSaveCalendarBlock = (block: CalendarBlock) => {
     fetch('/api/calendar-blocks', {
       method: 'POST',
@@ -548,6 +548,35 @@ export default function App() {
         return exists ? prev.map(s => s.id === servicio.id ? servicio : s) : [...prev, servicio];
       });
     });
+  };
+
+  // A diferencia de otros handlers, no hay fallback local optimista: una factura
+  // fallida debe mostrarse como error real, no simularse como si se hubiera creado.
+  const handleCrearFactura = async (payload: {
+    idCompania: number;
+    idCita: number | null;
+    idPaciente: number;
+    condicionVenta: string;
+    medioPago: string;
+    lineas: Array<{ idServicio: number; cantidad: number }>;
+  }): Promise<Factura> => {
+    const res = await fetch('/api/facturas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo generar la factura.');
+    setFacturas(prev => [...prev, data]);
+    return data;
+  };
+
+  const handleCargarServiciosDefecto = async (idCompania: number): Promise<Servicio[]> => {
+    const res = await fetch(`/api/companies/${idCompania}/servicios-defecto`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudieron cargar los servicios por defecto.');
+    setServicios(prev => [...prev, ...data.agregados]);
+    return data.agregados;
   };
 
   const handleDeleteCalendarBlock = (id: number) => {
@@ -1536,6 +1565,7 @@ export default function App() {
                 onSaveUser={handleSaveUser}
                 servicios={servicios}
                 onSaveServicio={handleSaveServicio}
+                onCargarServiciosDefecto={handleCargarServiciosDefecto}
               />
             )}
 
@@ -1570,12 +1600,14 @@ export default function App() {
                 activeCompanyId={selectedCompanyId}
                 currentUser={currentUser || users.filter(u => u.idCompania === selectedCompanyId)[0]}
                 onSaveCita={handleSaveCita}
-                onDeleteCita={handleDeleteCita}
                 onTriggerNotification={handleAddNotificationLog}
                 onStartConsultation={(patient) => handleStartSoapFromCalendar(patient.id)}
                 calendarBlocks={calendarBlocks}
                 onSaveCalendarBlock={handleSaveCalendarBlock}
                 onDeleteCalendarBlock={handleDeleteCalendarBlock}
+                servicios={servicios}
+                facturas={facturas}
+                onCrearFactura={handleCrearFactura}
                 themeColor={activeCompany.colorPrimario}
               />
             )}

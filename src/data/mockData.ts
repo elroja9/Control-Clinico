@@ -37,12 +37,18 @@ export interface Company {
   colorSidebar: string;
   logoUrl: string;
   actividadEconomica: string;
-  perfilCompania: 'Fisioterapia' | 'Nutrición' | 'Ambas';
+  perfilCompania: 'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa';
   estadoSaas: 'PENDIENTE' | 'ACTIVA' | 'SUSPENDIDA';
   maxUsuarios: number;
   montoMensual: number | null;
   proximoVencimiento: string | null; // 'YYYY-MM-DD'
   horarioAtencion: HorarioAtencion;
+  requiereConfirmacionCitas: boolean; // si es true, las citas creadas por el cliente quedan PROGRAMADA (pendiente de confirmar) en vez de CONFIRMADA
+  // Ubicación fiscal (requerida por Hacienda para el bloque Emisor.Ubicacion de la factura electrónica)
+  provincia: string; // código INEC, 1 dígito
+  canton: string; // código INEC, 2 dígitos
+  distrito: string; // código INEC, 2 dígitos
+  otrasSenas: string; // dirección exacta, 5-250 caracteres
 }
 
 export interface User {
@@ -95,6 +101,7 @@ export interface Cita {
   idPaciente: number;
   idUsuarioNutricionista: number; // Profesional a cargo
   idConsulta?: number | null; // Se llena cuando se inicia la consulta
+  idServicio?: number | null; // Servicio del catálogo elegido; su duracionMinutos define duracionMinutos de la cita
   fechaHora: string; // Formato "YYYY-MM-DDTHH:MM"
   duracionMinutos: number;
   estadoCita: 'PROGRAMADA' | 'CONFIRMADA' | 'CANCELADA' | 'COMPLETADA' | 'NO_ASISTIO';
@@ -317,7 +324,12 @@ export const defaultCompanies: Company[] = [
     maxUsuarios: 5,
     montoMensual: null,
     proximoVencimiento: null,
-    horarioAtencion: DEFAULT_HORARIO_ATENCION
+    horarioAtencion: DEFAULT_HORARIO_ATENCION,
+    requiereConfirmacionCitas: false,
+    provincia: "1",
+    canton: "01",
+    distrito: "01",
+    otrasSenas: "Escazú centro, edificio Torre Médica, tercer piso"
   },
   {
     id: 2,
@@ -336,7 +348,12 @@ export const defaultCompanies: Company[] = [
     maxUsuarios: 5,
     montoMensual: null,
     proximoVencimiento: null,
-    horarioAtencion: DEFAULT_HORARIO_ATENCION
+    horarioAtencion: DEFAULT_HORARIO_ATENCION,
+    requiereConfirmacionCitas: false,
+    provincia: "2",
+    canton: "01",
+    distrito: "01",
+    otrasSenas: "Alajuela centro, 200m norte del parque central"
   }
 ];
 
@@ -647,13 +664,56 @@ export interface CompanyPayment {
 
 export const defaultCompanyPayments: CompanyPayment[] = [];
 
+// Códigos de Unidad de Medida de Hacienda relevantes para servicios (no venta de bienes).
+// "Sp" = Servicios Profesionales, "Spe" = Servicios Personales, "St" = Servicios Técnicos.
+export type UnidadMedidaServicio = 'Sp' | 'Spe' | 'St';
+
 export interface Servicio {
   id: number;
   idCompania: number;
   nombre: string;
   precio: number;
   porcentajeIva: number | null; // null => usa el ivaPorDefecto de la empresa
+  duracionMinutos: number; // duración de la sesión/cita para este servicio
+  codigoCabys: string | null; // código CABYS de 13 dígitos — obligatorio para poder facturar este servicio
+  unidadMedida: UnidadMedidaServicio;
   activo: boolean;
 }
 
 export const defaultServicios: Servicio[] = [];
+
+export interface FacturaLinea {
+  idServicio: number | null;
+  codigoCabys: string;
+  nombre: string;
+  unidadMedida: UnidadMedidaServicio;
+  cantidad: number;
+  precioUnitario: number;
+  porcentajeIva: number;
+  codigoTarifaIva: string;
+  montoIva: number;
+  subTotal: number; // cantidad * precioUnitario
+  montoTotalLinea: number; // subTotal + montoIva
+}
+
+export type EstadoFactura = 'FIRMADA' | 'ENVIADA' | 'ACEPTADA' | 'RECHAZADA' | 'ERROR';
+
+export interface Factura {
+  id: number;
+  idCompania: number;
+  idCita: number | null;
+  idPaciente: number;
+  clave: string; // 50 dígitos
+  consecutivo: string; // 20 dígitos
+  fechaEmision: string; // ISO 8601 con offset
+  ambiente: 'SANDBOX' | 'PRODUCCION';
+  lineas: FacturaLinea[];
+  subtotal: number;
+  totalIva: number;
+  total: number;
+  estado: EstadoFactura;
+  mensajeError: string | null;
+  creadaEn: string;
+}
+
+export const defaultFacturas: Factura[] = [];

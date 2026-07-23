@@ -15,6 +15,7 @@ interface CompanySettingsProps {
   onSaveUser: (user: User) => void;
   servicios: Servicio[];
   onSaveServicio: (servicio: Servicio) => void;
+  onCargarServiciosDefecto: (idCompania: number) => Promise<Servicio[]>;
 }
 
 export default function CompanySettings({
@@ -29,7 +30,8 @@ export default function CompanySettings({
   currentUser,
   onSaveUser,
   servicios,
-  onSaveServicio
+  onSaveServicio,
+  onCargarServiciosDefecto
 }: CompanySettingsProps) {
   const currentCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
@@ -54,6 +56,14 @@ export default function CompanySettings({
   const [servicioNombre, setServicioNombre] = useState('');
   const [servicioPrecio, setServicioPrecio] = useState('');
   const [servicioIva, setServicioIva] = useState('');
+  const [servicioDuracion, setServicioDuracion] = useState('30');
+  const [servicioCabys, setServicioCabys] = useState('');
+  const [servicioUnidadMedida, setServicioUnidadMedida] = useState<'Sp' | 'Spe' | 'St'>('Sp');
+  const [cabysQuery, setCabysQuery] = useState('');
+  const [cabysResultados, setCabysResultados] = useState<Array<{ codigo: string; descripcion: string }>>([]);
+  const [buscandoCabys, setBuscandoCabys] = useState(false);
+  const [cargandoServiciosDefecto, setCargandoServiciosDefecto] = useState(false);
+  const [mensajeServiciosDefecto, setMensajeServiciosDefecto] = useState('');
 
   useEffect(() => {
     setIsAddingUser(false);
@@ -64,6 +74,7 @@ export default function CompanySettings({
     setNewUserRol('Profesional');
     setHorario(currentCompany.horarioAtencion || DEFAULT_HORARIO_ATENCION);
     setIsServicioFormOpen(false);
+    setMensajeServiciosDefecto('');
   }, [selectedCompanyId]);
 
   // Edit fields
@@ -76,7 +87,12 @@ export default function CompanySettings({
   const [editColorPri, setEditColorPri] = useState(currentCompany.colorPrimario);
   const [editColorSide, setEditColorSide] = useState(currentCompany.colorSidebar);
   const [editLogo, setEditLogo] = useState(currentCompany.logoUrl);
-  const [editPerfil, setEditPerfil] = useState<'Fisioterapia' | 'Nutrición' | 'Ambas'>(currentCompany.perfilCompania || 'Ambas');
+  const [editPerfil, setEditPerfil] = useState<'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa'>(currentCompany.perfilCompania || 'Ambas');
+  const [editRequiereConfirmacion, setEditRequiereConfirmacion] = useState(currentCompany.requiereConfirmacionCitas || false);
+  const [editProvincia, setEditProvincia] = useState(currentCompany.provincia || '');
+  const [editCanton, setEditCanton] = useState(currentCompany.canton || '');
+  const [editDistrito, setEditDistrito] = useState(currentCompany.distrito || '');
+  const [editOtrasSenas, setEditOtrasSenas] = useState(currentCompany.otrasSenas || '');
 
   // --- SMTP Configuration State ---
   const [smtpProveedor, setSmtpProveedor] = useState<CompaniaSmtpConfig['proveedor']>('OTRO');
@@ -262,6 +278,11 @@ export default function CompanySettings({
       setEditColorSide(comp.colorSidebar);
       setEditLogo(comp.logoUrl);
       setEditPerfil(comp.perfilCompania || 'Ambas');
+      setEditRequiereConfirmacion(comp.requiereConfirmacionCitas || false);
+      setEditProvincia(comp.provincia || '');
+      setEditCanton(comp.canton || '');
+      setEditDistrito(comp.distrito || '');
+      setEditOtrasSenas(comp.otrasSenas || '');
     }
     setIsEditing(false);
     setIsAdding(false);
@@ -279,7 +300,12 @@ export default function CompanySettings({
       colorPrimario: editColorPri,
       colorSidebar: editColorSide,
       logoUrl: editLogo,
-      perfilCompania: editPerfil
+      perfilCompania: editPerfil,
+      requiereConfirmacionCitas: editRequiereConfirmacion,
+      provincia: editProvincia,
+      canton: editCanton,
+      distrito: editDistrito,
+      otrasSenas: editOtrasSenas
     });
     setIsEditing(false);
   };
@@ -303,7 +329,12 @@ export default function CompanySettings({
       maxUsuarios: 5,
       montoMensual: null,
       proximoVencimiento: null,
-      horarioAtencion: DEFAULT_HORARIO_ATENCION
+      horarioAtencion: DEFAULT_HORARIO_ATENCION,
+      requiereConfirmacionCitas: editRequiereConfirmacion,
+      provincia: editProvincia,
+      canton: editCanton,
+      distrito: editDistrito,
+      otrasSenas: editOtrasSenas
     };
     onAddCompany(newComp);
     setIsAdding(false);
@@ -317,6 +348,11 @@ export default function CompanySettings({
     setEditCorreo('');
     setEditIva(4.0);
     setEditActividad('869001');
+    setEditRequiereConfirmacion(false);
+    setEditProvincia('');
+    setEditCanton('');
+    setEditDistrito('');
+    setEditOtrasSenas('');
     setEditColorPri('#2563eb');
     setEditColorSide('#1e3a8a');
     setEditLogo('https://images.unsplash.com/photo-1516549655169-df83a0774514?w=120&auto=format&fit=crop&q=60');
@@ -380,6 +416,11 @@ export default function CompanySettings({
     setServicioNombre('');
     setServicioPrecio('');
     setServicioIva('');
+    setServicioDuracion('30');
+    setServicioCabys('');
+    setServicioUnidadMedida('Sp');
+    setCabysQuery('');
+    setCabysResultados([]);
     setIsServicioFormOpen(true);
   };
 
@@ -388,13 +429,38 @@ export default function CompanySettings({
     setServicioNombre(s.nombre);
     setServicioPrecio(s.precio.toString());
     setServicioIva(s.porcentajeIva != null ? s.porcentajeIva.toString() : '');
+    setServicioDuracion(s.duracionMinutos.toString());
+    setServicioCabys(s.codigoCabys || '');
+    setServicioUnidadMedida(s.unidadMedida || 'Sp');
+    setCabysQuery('');
+    setCabysResultados([]);
     setIsServicioFormOpen(true);
+  };
+
+  const buscarCabys = (q: string) => {
+    setCabysQuery(q);
+    if (q.trim().length < 3) {
+      setCabysResultados([]);
+      return;
+    }
+    setBuscandoCabys(true);
+    fetch(`/api/cabys?q=${encodeURIComponent(q.trim())}`)
+      .then(res => res.json())
+      .then(data => {
+        const lista = Array.isArray(data) ? data : (data?.cabys || []);
+        setCabysResultados(lista.slice(0, 8).map((item: any) => ({
+          codigo: item.codigo || item.code || '',
+          descripcion: item.descripcion || item.description || ''
+        })));
+      })
+      .catch(() => setCabysResultados([]))
+      .finally(() => setBuscandoCabys(false));
   };
 
   const handleSubmitServicio = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!servicioNombre.trim() || !servicioPrecio.trim()) {
-      alert('Por favor complete el nombre y el precio del servicio.');
+    if (!servicioNombre.trim() || !servicioPrecio.trim() || !servicioDuracion.trim()) {
+      alert('Por favor complete el nombre, el precio y la duración del servicio.');
       return;
     }
     const servicioExistente = servicioEditId != null ? servicios.find(s => s.id === servicioEditId) : undefined;
@@ -404,6 +470,9 @@ export default function CompanySettings({
       nombre: servicioNombre.trim(),
       precio: parseFloat(servicioPrecio),
       porcentajeIva: servicioIva.trim() === '' ? null : parseFloat(servicioIva),
+      duracionMinutos: parseInt(servicioDuracion),
+      codigoCabys: servicioCabys.trim() || null,
+      unidadMedida: servicioUnidadMedida,
       activo: servicioExistente ? servicioExistente.activo : true
     };
     onSaveServicio(servicio);
@@ -412,6 +481,23 @@ export default function CompanySettings({
 
   const handleToggleServicioActivo = (s: Servicio) => {
     onSaveServicio({ ...s, activo: !s.activo });
+  };
+
+  const handleCargarServiciosDefecto = async () => {
+    setCargandoServiciosDefecto(true);
+    setMensajeServiciosDefecto('');
+    try {
+      const agregados = await onCargarServiciosDefecto(currentCompany.id);
+      setMensajeServiciosDefecto(
+        agregados.length > 0
+          ? `Se agregaron ${agregados.length} servicio(s) por defecto.`
+          : 'Esta empresa ya tiene todos los servicios por defecto de su colegio profesional.'
+      );
+    } catch (err: any) {
+      setMensajeServiciosDefecto(err.message || 'No se pudieron cargar los servicios por defecto.');
+    } finally {
+      setCargandoServiciosDefecto(false);
+    }
   };
 
   const diasLabel: Record<keyof HorarioAtencion, string> = {
@@ -539,6 +625,12 @@ export default function CompanySettings({
                 <span className="w-4 h-4 rounded-sm border border-slate-300 inline-block" style={{ backgroundColor: currentCompany.colorPrimario }} title="Primario"></span>
                 <span className="w-4 h-4 rounded-sm border border-slate-300 inline-block" style={{ backgroundColor: currentCompany.colorSidebar }} title="Sidebar"></span>
               </div>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Citas en Línea:</span>
+              <span className="font-medium text-slate-800 block">
+                {currentCompany.requiereConfirmacionCitas ? 'Requieren confirmación manual' : 'Se auto-confirman'}
+              </span>
             </div>
           </div>
         </div>
@@ -970,26 +1062,41 @@ export default function CompanySettings({
               </div>
             </div>
             {!isServicioFormOpen && (
-              <button
-                onClick={openNewServicioForm}
-                className="flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Nuevo Servicio
-              </button>
+              <div className="flex items-center gap-2">
+                {currentCompany.perfilCompania !== 'Spa' && (
+                  <button
+                    onClick={handleCargarServiciosDefecto}
+                    disabled={cargandoServiciosDefecto}
+                    className="flex items-center gap-1 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-60"
+                  >
+                    {cargandoServiciosDefecto ? 'Cargando...' : 'Cargar Servicios por Defecto'}
+                  </button>
+                )}
+                <button
+                  onClick={openNewServicioForm}
+                  className="flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Nuevo Servicio
+                </button>
+              </div>
             )}
           </div>
 
+          {mensajeServiciosDefecto && (
+            <p className="text-[10px] text-slate-500">{mensajeServiciosDefecto}</p>
+          )}
+
           {isServicioFormOpen && (
             <form onSubmit={handleSubmitServicio} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div>
                   <label className="block text-slate-600 font-medium mb-1">Nombre del Servicio *</label>
                   <input
                     type="text"
                     value={servicioNombre}
                     onChange={(e) => setServicioNombre(e.target.value)}
-                    placeholder="ej: Consulta Nutricional"
+                    placeholder="ej: Sesión de Sauna"
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
                   />
                 </div>
@@ -1005,6 +1112,17 @@ export default function CompanySettings({
                   />
                 </div>
                 <div>
+                  <label className="block text-slate-600 font-medium mb-1">Duración (min) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={servicioDuracion}
+                    onChange={(e) => setServicioDuracion(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                </div>
+                <div>
                   <label className="block text-slate-600 font-medium mb-1">% IVA (vacío = por defecto)</label>
                   <input
                     type="number"
@@ -1016,6 +1134,49 @@ export default function CompanySettings({
                     placeholder={`${currentCompany.ivaPorDefecto}%`}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
                   />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-slate-100">
+                <div className="relative">
+                  <label className="block text-slate-600 font-medium mb-1">Código CABYS * (obligatorio para facturar)</label>
+                  <input
+                    type="text"
+                    value={servicioCabys ? `${servicioCabys}` : cabysQuery}
+                    onChange={(e) => { setServicioCabys(''); buscarCabys(e.target.value); }}
+                    placeholder="Buscar por nombre o código de 13 dígitos..."
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                  {servicioCabys && (
+                    <p className="text-[10px] text-emerald-600 mt-1">Código seleccionado: {servicioCabys}</p>
+                  )}
+                  {buscandoCabys && <p className="text-[10px] text-slate-400 mt-1">Buscando...</p>}
+                  {cabysResultados.length > 0 && (
+                    <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg">
+                      {cabysResultados.map(r => (
+                        <button
+                          type="button"
+                          key={r.codigo}
+                          onClick={() => { setServicioCabys(r.codigo); setCabysResultados([]); setCabysQuery(''); }}
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
+                        >
+                          <span className="font-mono text-[10px] text-slate-500 block">{r.codigo}</span>
+                          <span className="text-slate-800">{r.descripcion}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-slate-600 font-medium mb-1">Unidad de Medida (Hacienda)</label>
+                  <select
+                    value={servicioUnidadMedida}
+                    onChange={(e) => setServicioUnidadMedida(e.target.value as 'Sp' | 'Spe' | 'St')}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  >
+                    <option value="Sp">Servicios Profesionales</option>
+                    <option value="Spe">Servicios Personales</option>
+                    <option value="St">Servicios Técnicos</option>
+                  </select>
                 </div>
               </div>
               <div className="flex gap-2 justify-end pt-1">
@@ -1045,8 +1206,11 @@ export default function CompanySettings({
                 <div>
                   <span className="font-semibold text-slate-800 block">{s.nombre}</span>
                   <span className="text-[10px] text-slate-500">
-                    ₡{s.precio.toLocaleString('es-CR')} &middot; IVA {s.porcentajeIva != null ? `${s.porcentajeIva}%` : `${currentCompany.ivaPorDefecto}% (por defecto)`}
+                    ₡{s.precio.toLocaleString('es-CR')} &middot; {s.duracionMinutos} min &middot; IVA {s.porcentajeIva != null ? `${s.porcentajeIva}%` : `${currentCompany.ivaPorDefecto}% (por defecto)`}
                   </span>
+                  {!s.codigoCabys && (
+                    <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full inline-block mt-1">Sin código CABYS — no se puede facturar</span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${s.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
@@ -1181,12 +1345,13 @@ export default function CompanySettings({
               <label className="block text-slate-600 mb-1">Perfil de la Clínica / Empresa</label>
               <select
                 value={editPerfil}
-                onChange={(e) => setEditPerfil(e.target.value as 'Fisioterapia' | 'Nutrición' | 'Ambas')}
+                onChange={(e) => setEditPerfil(e.target.value as 'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa')}
                 className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
               >
                 <option value="Ambas">Ambas (Fisioterapia y Nutrición)</option>
                 <option value="Fisioterapia">Sólo Fisioterapia</option>
                 <option value="Nutrición">Sólo Nutrición</option>
+                <option value="Spa">Spa / Bienestar (Sauna, Cold Plunge, Masajes...)</option>
               </select>
             </div>
             <div>
@@ -1210,6 +1375,66 @@ export default function CompanySettings({
                 onChange={(e) => setEditIva(parseFloat(e.target.value))}
                 className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
               />
+            </div>
+            <div className="flex items-center gap-2 pt-5">
+              <label className="flex items-center gap-2 text-slate-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editRequiereConfirmacion}
+                  onChange={(e) => setEditRequiereConfirmacion(e.target.checked)}
+                  className="w-3.5 h-3.5"
+                />
+                Las citas en línea requieren confirmación manual (no se auto-confirman)
+              </label>
+            </div>
+          </div>
+
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+            <p className="text-[11px] font-bold text-amber-800 uppercase mb-2">Ubicación Fiscal (requerida para Facturar)</p>
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-slate-600 mb-1">Provincia (código INEC)</label>
+                <input
+                  type="text"
+                  value={editProvincia}
+                  onChange={(e) => setEditProvincia(e.target.value)}
+                  placeholder="ej: 1"
+                  maxLength={1}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-600 mb-1">Cantón (código INEC)</label>
+                <input
+                  type="text"
+                  value={editCanton}
+                  onChange={(e) => setEditCanton(e.target.value)}
+                  placeholder="ej: 01"
+                  maxLength={2}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-600 mb-1">Distrito (código INEC)</label>
+                <input
+                  type="text"
+                  value={editDistrito}
+                  onChange={(e) => setEditDistrito(e.target.value)}
+                  placeholder="ej: 01"
+                  maxLength={2}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-600 mb-1">Otras Señas (dirección exacta)</label>
+                <input
+                  type="text"
+                  value={editOtrasSenas}
+                  onChange={(e) => setEditOtrasSenas(e.target.value)}
+                  placeholder="ej: 200m norte del parque central"
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
             </div>
           </div>
 
