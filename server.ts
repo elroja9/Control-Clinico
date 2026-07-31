@@ -33,6 +33,7 @@ import {
 } from "./server/haciendaFactura";
 import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda } from "./server/haciendaApi";
 import { serviciosDefectoParaPerfil } from "./server/serviciosDefecto";
+import { parsearFacturaProveedorXML } from "./server/xmlProveedorParser";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
 import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail } from "./server/emailTemplates";
@@ -83,6 +84,8 @@ interface LocalGastosManuales extends GastosManualesAnuales { idCompania: number
 let localGastosManuales: LocalGastosManuales[] = [];
 interface LocalCierreFiscal { id: number; idCompania: number; tipo: "D104" | "D101"; periodo: string; datos: ReporteD104 | ReporteD101; creadoPor: string | null; creadoEn: string; }
 let localCierresFiscales: LocalCierreFiscal[] = [];
+interface LocalCabysEntry { codigo: string; descripcion: string; actualizadoEn: string; }
+let localCabysCatalogo: LocalCabysEntry[] = [];
 
 interface LocalHaciendaConfig {
   idCompania: number;
@@ -447,6 +450,20 @@ async function createTables() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
+    // Catálogo CABYS local: NO es por-empresa (el código CABYS es un catálogo nacional). Se va
+    // alimentando solo con los códigos que aparecen en cada factura de proveedor importada por
+    // XML (ver POST /api/cxp/importar-xml) — un registro propio de los códigos realmente usados
+    // por los proveedores de esta instancia. El autocompletado al asignar CABYS a un
+    // servicio/artículo (ver CompanySettings.tsx) usa el proxy en vivo al catálogo oficial de
+    // Hacienda (GET /api/cabys, ya existente) en vez de esta tabla, que es mucho más completo.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cabys_catalogo (
+        codigo VARCHAR(13) NOT NULL PRIMARY KEY,
+        descripcion VARCHAR(500) NOT NULL,
+        actualizadoEn VARCHAR(30) NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS pagos_empresa (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -504,6 +521,10 @@ async function createTables() {
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS colorPrimario VARCHAR(50) NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS colorSidebar VARCHAR(50) NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS logoUrl TEXT NULL`);
+    // El logo ahora se sube como archivo y se guarda como data URL base64 (ver
+    // CompanySettings.tsx) — TEXT (64KB) y el logo_url legado VARCHAR(255) se quedan cortos.
+    await pool.query(`ALTER TABLE companias MODIFY COLUMN logoUrl LONGTEXT NULL`);
+    await pool.query(`ALTER TABLE companias MODIFY COLUMN logo_url LONGTEXT NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS actividadEconomica TEXT NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS perfilCompania VARCHAR(50) NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS estadoSaas ENUM('PENDIENTE','ACTIVA','SUSPENDIDA') NOT NULL DEFAULT 'ACTIVA'`);
@@ -1018,7 +1039,10 @@ setupDatabase();
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
+  // Límite subido de 100kb (default de Express) a 10mb: el logo de empresa ahora se sube como
+  // archivo y viaja como data URL base64 dentro del JSON de POST /api/companies (hasta 2MB
+  // crudos ~= 2.7MB en base64, ver CompanySettings.tsx).
+  app.use(express.json({ limit: '10mb' }));
   const PORT = 3000;
 
   // --- Authentication ---
@@ -3206,6 +3230,191 @@ async function startServer() {
         localCxpPagos.push(pago);
         res.json({ id: idCuentaPagar, saldoPendiente: cuenta.saldoPendiente, estado: cuenta.estado, pago });
       }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Importa una compra directamente desde el XML de Factura/Tiquete Electrónico que entrega el
+  // proveedor: matchea/crea el proveedor por identificación, y — si `alimentaInventario` — crea o
+  // actualiza artículos por CABYS incrementando stock (misma transacción atómica que el resto de
+  // rutas de inventario), o si no, la registra como compra de servicios sin tocar inventario. El
+  // IVA de la propia factura del proveedor se usa para completar `ivaAcreditable` automáticamente
+  // (crédito fiscal del D-104) en vez de pedírselo al usuario a mano. Cada línea también alimenta
+  // el catálogo CABYS compartido, se use o no para inventario.
+  app.post("/api/cxp/importar-xml", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      const xmlTexto = String(req.body.xmlTexto || "");
+      const alimentaInventario = !!req.body.alimentaInventario;
+      if (!xmlTexto.trim()) return res.status(400).json({ error: "No se recibió contenido de XML." });
+
+      let parsed;
+      try {
+        parsed = parsearFacturaProveedorXML(xmlTexto);
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message || "No se pudo leer el archivo XML." });
+      }
+
+      // 1. Encontrar o crear el proveedor por identificación (dentro de esta empresa)
+      let proveedor: Proveedor | undefined;
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM proveedores WHERE idCompania = ?", [idCompania]);
+        proveedor = (rows as Proveedor[]).find(p => p.identificacion.replace(/[^0-9]/g, "") === parsed.proveedor.identificacion);
+        if (!proveedor) {
+          const [result] = await pool.query(
+            "INSERT INTO proveedores (idCompania, tipoIdentificacion, identificacion, nombre, correo, telefono, direccion, activo, creadoEn) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            [idCompania, parsed.proveedor.tipoIdentificacion, parsed.proveedor.identificacion, parsed.proveedor.nombre, parsed.proveedor.correo, parsed.proveedor.telefono, parsed.proveedor.direccion, new Date().toISOString()]
+          );
+          proveedor = { id: (result as any).insertId, idCompania, tipoIdentificacion: parsed.proveedor.tipoIdentificacion, identificacion: parsed.proveedor.identificacion, nombre: parsed.proveedor.nombre, correo: parsed.proveedor.correo, telefono: parsed.proveedor.telefono, direccion: parsed.proveedor.direccion, activo: true, creadoEn: new Date().toISOString() };
+        }
+      } else {
+        proveedor = localProveedores.find(p => p.idCompania === idCompania && p.identificacion.replace(/[^0-9]/g, "") === parsed.proveedor.identificacion);
+        if (!proveedor) {
+          proveedor = {
+            id: Math.max(0, ...localProveedores.map(p => p.id), 0) + 1, idCompania,
+            tipoIdentificacion: parsed.proveedor.tipoIdentificacion, identificacion: parsed.proveedor.identificacion, nombre: parsed.proveedor.nombre,
+            correo: parsed.proveedor.correo, telefono: parsed.proveedor.telefono, direccion: parsed.proveedor.direccion, activo: true, creadoEn: new Date().toISOString()
+          };
+          localProveedores.push(proveedor);
+        }
+      }
+
+      const fechaRegistro = (parsed.fechaEmision ? parsed.fechaEmision.slice(0, 10) : new Date().toISOString().slice(0, 10));
+      const plazoDias = parsed.condicionVenta === "02" ? Math.max(1, parsed.plazoDias || 30) : 0;
+      const vencimiento = new Date(fechaRegistro);
+      vencimiento.setDate(vencimiento.getDate() + plazoDias);
+      const fechaVencimiento = vencimiento.toISOString().slice(0, 10);
+      const montoTotal = Math.round(parsed.montoTotal * 100000) / 100000;
+      const ivaAcreditable = Math.round(parsed.lineas.reduce((sum, l) => sum + l.montoIva, 0) * 100000) / 100000;
+
+      const lineasFinal: Array<{ idServicio: number; nombre: string; cantidad: number; costoUnitario: number }> = [];
+      const UNIDADES_VALIDAS = new Set(["Sp", "Spe", "St", "Os", "h", "Unid"]);
+
+      // 2. Si alimenta inventario: crear/actualizar artículos por CABYS e incrementar stock,
+      // dentro de una transacción atómica (misma lógica de bloqueo que POST /api/cxp).
+      if (alimentaInventario) {
+        if (dbConnected && pool) {
+          const connection = await pool.getConnection();
+          try {
+            await connection.beginTransaction();
+            for (const linea of parsed.lineas) {
+              const [rows] = await connection.query("SELECT * FROM servicios WHERE codigoCabys = ? AND idCompania = ? FOR UPDATE", [linea.codigoCabys, idCompania]);
+              const existente = (rows as any[]).map(normalizeRow)[0];
+              let idServicio: number;
+              let stockResultante: number;
+              if (existente) {
+                idServicio = existente.id;
+                stockResultante = (existente.stock || 0) + linea.cantidad;
+                await connection.query("UPDATE servicios SET stock = ?, costoUnitario = ? WHERE id = ? OR id_servicio = ?", [stockResultante, linea.precioUnitario, idServicio, idServicio]);
+              } else {
+                const unidadMedida = UNIDADES_VALIDAS.has(linea.unidadMedida) ? linea.unidadMedida : "Unid";
+                const [result] = await connection.query(
+                  "INSERT INTO servicios (idCompania, id_compania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo, tipo, stock, stockMinimo, costoUnitario, codigoBarras) VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1, 'ARTICULO', ?, 0, ?, ?)",
+                  [idCompania, idCompania, linea.nombre, linea.precioUnitario, linea.porcentajeIva, linea.codigoCabys, unidadMedida, linea.cantidad, linea.precioUnitario, linea.codigoComercial]
+                );
+                idServicio = (result as any).insertId;
+                stockResultante = linea.cantidad;
+              }
+              await connection.query(
+                "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'COMPRA', ?, ?, ?, ?, ?, ?)",
+                [idCompania, idServicio, linea.cantidad, stockResultante, `Importado de XML — Factura proveedor ${parsed.numeroFacturaProv || ""}`, null, null, new Date().toISOString()]
+              );
+              await connection.query(
+                "INSERT INTO cabys_catalogo (codigo, descripcion, actualizadoEn) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE descripcion = VALUES(descripcion), actualizadoEn = VALUES(actualizadoEn)",
+                [linea.codigoCabys, linea.nombre, new Date().toISOString()]
+              );
+              lineasFinal.push({ idServicio, nombre: linea.nombre, cantidad: linea.cantidad, costoUnitario: linea.precioUnitario });
+            }
+            await connection.commit();
+          } catch (err) {
+            await connection.rollback();
+            throw err;
+          } finally {
+            connection.release();
+          }
+        } else {
+          for (const linea of parsed.lineas) {
+            const servicio = localServicios.find(s => s.idCompania === idCompania && s.codigoCabys === linea.codigoCabys);
+            if (servicio) {
+              servicio.stock = (servicio.stock || 0) + linea.cantidad;
+              servicio.costoUnitario = linea.precioUnitario;
+              lineasFinal.push({ idServicio: servicio.id, nombre: linea.nombre, cantidad: linea.cantidad, costoUnitario: linea.precioUnitario });
+            } else {
+              const nuevo: any = {
+                id: Math.max(0, ...localServicios.map(s => s.id), 0) + 1, idCompania, nombre: linea.nombre, precio: linea.precioUnitario,
+                porcentajeIva: linea.porcentajeIva, duracionMinutos: 0, codigoCabys: linea.codigoCabys,
+                unidadMedida: UNIDADES_VALIDAS.has(linea.unidadMedida) ? linea.unidadMedida : "Unid",
+                activo: true, tipo: "ARTICULO", stock: linea.cantidad, stockMinimo: 0, costoUnitario: linea.precioUnitario, codigoBarras: linea.codigoComercial
+              };
+              localServicios.push(nuevo);
+              lineasFinal.push({ idServicio: nuevo.id, nombre: linea.nombre, cantidad: linea.cantidad, costoUnitario: linea.precioUnitario });
+            }
+            const existing = localCabysCatalogo.find(c => c.codigo === linea.codigoCabys);
+            if (existing) { existing.descripcion = linea.nombre; existing.actualizadoEn = new Date().toISOString(); }
+            else localCabysCatalogo.push({ codigo: linea.codigoCabys, descripcion: linea.nombre, actualizadoEn: new Date().toISOString() });
+          }
+        }
+      } else {
+        // Compra de servicios: solo alimenta el catálogo CABYS, sin tocar inventario.
+        if (dbConnected && pool) {
+          for (const linea of parsed.lineas) {
+            await pool.query(
+              "INSERT INTO cabys_catalogo (codigo, descripcion, actualizadoEn) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE descripcion = VALUES(descripcion), actualizadoEn = VALUES(actualizadoEn)",
+              [linea.codigoCabys, linea.nombre, new Date().toISOString()]
+            );
+          }
+        } else {
+          for (const linea of parsed.lineas) {
+            const existing = localCabysCatalogo.find(c => c.codigo === linea.codigoCabys);
+            if (existing) { existing.descripcion = linea.nombre; existing.actualizadoEn = new Date().toISOString(); }
+            else localCabysCatalogo.push({ codigo: linea.codigoCabys, descripcion: linea.nombre, actualizadoEn: new Date().toISOString() });
+          }
+        }
+      }
+
+      // 3. Registrar la cuenta por pagar — ya Pagada si la venta fue de contado (para no perder
+      // el historial de compras), Pendiente con el plazo indicado si fue a crédito.
+      const numeroFacturaProveedor = parsed.numeroFacturaProv || null;
+      const esContado = parsed.condicionVenta === "01";
+      let cxpCreada: CuentaPagar;
+
+      if (dbConnected && pool) {
+        const [result] = await pool.query(
+          "INSERT INTO cuentas_pagar (idCompania, idProveedor, numeroFacturaProveedor, esServicio, lineas, fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente, estado, ivaAcreditable, notas, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [idCompania, proveedor.id, numeroFacturaProveedor, alimentaInventario ? 0 : 1, JSON.stringify(lineasFinal), fechaRegistro, fechaVencimiento, plazoDias, montoTotal, esContado ? 0 : montoTotal, esContado ? "PAGADA" : "PENDIENTE", ivaAcreditable, "Importada desde XML", new Date().toISOString()]
+        );
+        const idCuentaPagar = (result as any).insertId;
+        const pagos: PagoCuentaPagar[] = [];
+        if (esContado) {
+          const [pagoResult] = await pool.query(
+            "INSERT INTO cxp_pagos (idCompania, idCuentaPagar, fecha, monto, medioPago, referencia, registradoPor, creadoEn) VALUES (?, ?, ?, ?, '01', NULL, NULL, ?)",
+            [idCompania, idCuentaPagar, fechaRegistro, montoTotal, new Date().toISOString()]
+          );
+          pagos.push({ id: (pagoResult as any).insertId, idCompania, idCuentaPagar, fecha: fechaRegistro, monto: montoTotal, medioPago: "01", referencia: null, registradoPor: null, creadoEn: new Date().toISOString() });
+        }
+        cxpCreada = {
+          id: idCuentaPagar, idCompania, idProveedor: proveedor.id, numeroFacturaProveedor, esServicio: !alimentaInventario, lineas: lineasFinal,
+          fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente: esContado ? 0 : montoTotal, estado: esContado ? "PAGADA" : "PENDIENTE",
+          ivaAcreditable, notas: "Importada desde XML", creadaEn: new Date().toISOString(), pagos
+        };
+      } else {
+        const nueva: any = {
+          id: Math.max(0, ...localCuentasPagar.map(c => c.id), 0) + 1, idCompania, idProveedor: proveedor.id, numeroFacturaProveedor,
+          esServicio: !alimentaInventario, lineas: lineasFinal, fechaRegistro, fechaVencimiento, plazoDias, montoTotal,
+          saldoPendiente: esContado ? 0 : montoTotal, estado: esContado ? "PAGADA" : "PENDIENTE", ivaAcreditable, notas: "Importada desde XML", creadaEn: new Date().toISOString()
+        };
+        localCuentasPagar.push(nueva);
+        const pagos: PagoCuentaPagar[] = [];
+        if (esContado) {
+          const pago: PagoCuentaPagar = { id: Math.max(0, ...localCxpPagos.map(p => p.id), 0) + 1, idCompania, idCuentaPagar: nueva.id, fecha: fechaRegistro, monto: montoTotal, medioPago: "01", referencia: null, registradoPor: null, creadoEn: new Date().toISOString() };
+          localCxpPagos.push(pago);
+          pagos.push(pago);
+        }
+        cxpCreada = { ...nueva, pagos };
+      }
+
+      res.json({ cxp: cxpCreada, proveedor, articulosAfectados: lineasFinal.length });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

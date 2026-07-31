@@ -321,6 +321,31 @@ export default function CompanySettings({
     setIsAdding(false);
   };
 
+  const MAX_LOGO_FILE_BYTES = 2 * 1024 * 1024; // 2MB — el archivo se guarda como data URL en la BD (columna LONGTEXT)
+
+  const handleLogoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLogoError('');
+    if (!file.type.startsWith('image/')) {
+      setLogoError('Seleccione un archivo de imagen (PNG, JPG, etc.).');
+      e.target.value = '';
+      return;
+    }
+    if (file.size > MAX_LOGO_FILE_BYTES) {
+      setLogoError('La imagen no puede superar 2MB.');
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') setEditLogo(reader.result);
+    };
+    reader.onerror = () => setLogoError('No se pudo leer el archivo.');
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   const saveEdit = () => {
     onUpdateCompany({
       ...currentCompany,

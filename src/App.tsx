@@ -653,6 +653,29 @@ export default function App() {
       : c));
   };
 
+  const handleImportarXmlCxp = async (xmlTexto: string, alimentaInventario: boolean): Promise<{ cxp: CuentaPagar; proveedor: Proveedor; articulosAfectados: number }> => {
+    const res = await fetch('/api/cxp/importar-xml', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ xmlTexto, alimentaInventario })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo importar el archivo XML.');
+    setCxp(prev => [data.cxp, ...prev]);
+    setProveedores(prev => {
+      const exists = prev.some(p => p.id === data.proveedor.id);
+      return exists ? prev.map(p => p.id === data.proveedor.id ? data.proveedor : p) : [...prev, data.proveedor];
+    });
+    if (alimentaInventario) {
+      const res2 = await fetch('/api/servicios');
+      if (res2.ok) {
+        const serviciosData = await res2.json();
+        if (serviciosData && serviciosData.length > 0) setServicios(serviciosData);
+      }
+    }
+    return data;
+  };
+
   const handleCargarServiciosDefecto = async (idCompania: number): Promise<Servicio[]> => {
     const res = await fetch(`/api/companies/${idCompania}/servicios-defecto`, { method: 'POST' });
     const data = await res.json();
@@ -1758,6 +1781,7 @@ export default function App() {
                   articulos={servicios.filter(s => s.idCompania === selectedCompanyId && s.tipo === 'ARTICULO')}
                   onCrearCxp={handleCrearCxp}
                   onRegistrarPago={handleRegistrarPagoCxp}
+                  onImportarXml={handleImportarXmlCxp}
                 />
               </div>
             )}
