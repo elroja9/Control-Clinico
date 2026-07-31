@@ -4,6 +4,20 @@ import path from "path";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
 import { encryptSecret, decryptSecret } from "./server/crypto";
+import {
+  createSessionToken,
+  verifySessionToken,
+  passwordMatches,
+  hashPassword,
+  isBcryptHash,
+  isSaasAdmin,
+  readCookie,
+  serializeSessionCookie,
+  generateNumericPassword,
+  SESSION_MAX_AGE_SECONDS,
+  SAAS_ADMIN_COMPANY_ID,
+  type SessionPayload
+} from "./server/auth";
 import { obtenerCertificadoHttps } from "./server/httpsCert";
 import { verificarLlaveP12, firmarXadesEpes } from "./server/haciendaSigner";
 import {
@@ -20,7 +34,7 @@ import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda } 
 import { serviciosDefectoParaPerfil } from "./server/serviciosDefecto";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
-import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail } from "./server/emailTemplates";
+import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
 import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura } from "./src/data/mockData";
 import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
@@ -154,6 +168,11 @@ async function createTables() {
     await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS pacienteLng DECIMAL(10,7) NULL`);
     await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS tiempoTrasladoMinutos INT NULL`);
     await pool.query(`ALTER TABLE citas ADD COLUMN IF NOT EXISTS idServicio INT NULL`);
+    // Todas las consultas de disponibilidad filtran por (idUsuarioNutricionista, fechaHora) —
+    // sin este índice, el `SELECT ... FOR UPDATE` que serializa reservas concurrentes en
+    // POST /api/public/citas haría un table scan y bloquearía filas de otros profesionales sin
+    // relación alguna con la reserva en curso.
+    await pool.query(`ALTER TABLE citas ADD INDEX IF NOT EXISTS idx_citas_profesional_fecha (idUsuarioNutricionista, fechaHora)`);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS calendar_blocks (
@@ -486,9 +505,23 @@ function slotLibre(params: {
   bloqueosDelDia: CalendarBlock[];
   fecha: string;
   horaCandidato: string;
+  abreMin: number;
+  cierraMin: number;
 }): boolean {
-  const { candidatoInicioMin, duracionMin, citasDelDia, bloqueosDelDia, fecha, horaCandidato } = params;
+  const { candidatoInicioMin, duracionMin, citasDelDia, bloqueosDelDia, fecha, horaCandidato, abreMin, cierraMin } = params;
   const candidatoFinMin = candidatoInicioMin + duracionMin;
+
+  // generarSlotsCandidatos() solo genera horas de INICIO anteriores al cierre — no garantiza
+  // que la cita quepa completa antes de cerrar. Sin este chequeo, un servicio de 60 min
+  // ofrecía como "libre" un inicio a las 17:30 con cierre a las 18:00 (terminaría a las 18:30,
+  // media hora después de cerrado). Verificado contra datos reales: la cita #15 de ELRONUTRI
+  // quedó agendada viernes 17:30–18:30 con horario de cierre 18:00.
+  if (candidatoFinMin > cierraMin) return false;
+  // El listado de disponibilidad (generarSlotsCandidatos) nunca ofrece horas antes de la
+  // apertura, pero POST /api/public/citas reutiliza esta misma función para re-verificar el
+  // horario justo antes de guardar — sin este límite inferior, una llamada directa al API (sin
+  // pasar por el listado) podía agendar antes de que abra el negocio.
+  if (candidatoInicioMin < abreMin) return false;
 
   for (const b of bloqueosDelDia) {
     if (fecha < b.fechaInicio || fecha > b.fechaFin) continue;
@@ -565,6 +598,205 @@ async function startServer() {
   app.use(express.json());
   const PORT = 3000;
 
+  // --- Authentication ---
+  // Every route below is protected by requireAuth unless explicitly marked "no auth" (the
+  // /api/public/* booking routes, /api/db-status, /api/login and the company-registration
+  // branch of POST /api/companies). Session lives in a signed, httpOnly cookie — see
+  // server/auth.ts. Handlers read `getSession(req)` and scope data to `session.idCompania`
+  // instead of trusting an idCompania the client put in the request body/query.
+
+  async function fetchUserById(id: number): Promise<any | undefined> {
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT * FROM usuarios WHERE id = ? OR id_usuario = ?", [id, id]);
+      return (rows as any[]).map(normalizeRow)[0];
+    }
+    return localUsers.find(u => u.id === id);
+  }
+
+  async function fetchCompanyById(id: number): Promise<Company | undefined> {
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [id, id]);
+      return (rows as any[]).map(normalizeRow)[0];
+    }
+    return localCompanies.find(c => c.id === id);
+  }
+
+  function getSession(req: express.Request): SessionPayload | null {
+    const token = readCookie(req.headers.cookie, "cc_session");
+    if (!token) return null;
+    return verifySessionToken(token);
+  }
+
+  function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const session = getSession(req);
+    if (!session) {
+      return res.status(401).json({ error: "No autenticado. Inicie sesión de nuevo." });
+    }
+    (req as any).session = session as SessionPayload;
+    next();
+  }
+
+  function requireSaasAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const session = (req as any).session as SessionPayload | undefined;
+    if (!isSaasAdmin(session)) {
+      return res.status(403).json({ error: "No autorizado." });
+    }
+    next();
+  }
+
+  function sessionOf(req: express.Request): SessionPayload {
+    return (req as any).session as SessionPayload;
+  }
+
+  function canAccessCompany(session: SessionPayload, idCompania: number): boolean {
+    return isSaasAdmin(session) || session.idCompania === idCompania;
+  }
+
+  // Los hashes de contraseña nunca deben llegar al navegador, ni siquiera los de otro
+  // colaborador de la misma empresa (bcrypt es lento, no infranqueable).
+  function sanitizeUser(u: any): any {
+    if (!u) return u;
+    const { contrasena, password_hash, ...safeUser } = u;
+    return safeUser;
+  }
+
+  app.post("/api/login", async (req, res) => {
+    try {
+      const usuario = String(req.body?.usuario || "").trim().toLowerCase();
+      const password = String(req.body?.password || "");
+      if (!usuario || !password) {
+        return res.status(400).json({ error: "Usuario y contraseña son requeridos." });
+      }
+
+      let user: any;
+      if (dbConnected && pool) {
+        const [rows] = await pool.query(
+          "SELECT * FROM usuarios WHERE LOWER(usuario) = ? OR LOWER(email) = ?",
+          [usuario, usuario]
+        );
+        user = (rows as any[]).map(normalizeRow)[0];
+      } else {
+        user = localUsers.find(u => u.usuario.trim().toLowerCase() === usuario);
+      }
+
+      if (!user || !passwordMatches(user.contrasena, password)) {
+        return res.status(401).json({ error: "Usuario o contraseña incorrectos." });
+      }
+      if (user.activo === false) {
+        return res.status(403).json({ error: "Este usuario está inactivo. Contacte a su administrador." });
+      }
+
+      const company = await fetchCompanyById(user.idCompania);
+      if (company?.estadoSaas === "PENDIENTE") {
+        return res.status(403).json({ error: "Esta cuenta está pendiente de aprobación. Un administrador se pondrá en contacto pronto." });
+      }
+      if (company?.estadoSaas === "SUSPENDIDA") {
+        return res.status(403).json({ error: "Esta cuenta se encuentra suspendida. Contacte al administrador de la plataforma." });
+      }
+
+      // Migración oportunista: las contraseñas de datos de prueba antiguos quedan en texto
+      // plano hasta el primer login exitoso, momento en el que se reemplazan por un hash bcrypt.
+      if (!isBcryptHash(user.contrasena)) {
+        const upgraded = hashPassword(password);
+        if (dbConnected && pool) {
+          await pool.query("UPDATE usuarios SET contrasena = ?, password_hash = ? WHERE id = ? OR id_usuario = ?", [upgraded, upgraded, user.id, user.id]);
+        } else {
+          localUsers = localUsers.map(u => u.id === user.id ? { ...u, contrasena: upgraded } : u);
+        }
+        user.contrasena = upgraded;
+      }
+
+      const token = createSessionToken({ userId: user.id, idCompania: user.idCompania, rol: user.rol });
+      res.setHeader("Set-Cookie", serializeSessionCookie(token, SESSION_MAX_AGE_SECONDS));
+
+      const { contrasena, password_hash, ...safeUser } = user;
+      res.json({ user: safeUser, company });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/logout", (req, res) => {
+    res.setHeader("Set-Cookie", serializeSessionCookie("", 0));
+    res.json({ success: true });
+  });
+
+  // Restablecimiento de contraseña — pública (sin sesión) por definición: el usuario que la pide
+  // no puede iniciar sesión. Genera una contraseña temporal de 8 dígitos y la envía SOLO al
+  // correo ya registrado para esa cuenta (nunca a uno que mande el cliente en el body, para que
+  // esto no sirva para secuestrar cuentas ajenas). La respuesta es siempre el mismo mensaje
+  // genérico, exista o no ese usuario/correo, para no permitir enumerar cuentas válidas.
+  app.post("/api/forgot-password", async (req, res) => {
+    const respuestaGenerica = { message: "Si el usuario existe, se envió un correo con una contraseña temporal." };
+    try {
+      const identificador = String(req.body?.usuario || "").trim().toLowerCase();
+      if (!identificador) {
+        return res.status(400).json({ error: "Indique su usuario o correo." });
+      }
+
+      let user: any;
+      if (dbConnected && pool) {
+        const [rows] = await pool.query(
+          "SELECT * FROM usuarios WHERE LOWER(usuario) = ? OR LOWER(correo) = ? OR LOWER(email) = ?",
+          [identificador, identificador, identificador]
+        );
+        user = (rows as any[]).map(normalizeRow)[0];
+      } else {
+        user = localUsers.find(u => u.usuario.trim().toLowerCase() === identificador || u.correo.trim().toLowerCase() === identificador);
+      }
+
+      if (!user || !user.correo) {
+        return res.json(respuestaGenerica);
+      }
+
+      const company = await fetchCompanyById(user.idCompania);
+      let smtpConfig: CompaniaSmtpConfig | undefined;
+      if (dbConnected && pool) {
+        const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [user.idCompania]);
+        const smtpRow = (smtpRows as any[])[0];
+        smtpConfig = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
+      } else {
+        smtpConfig = localSmtpConfigs.find(s => s.idCompania === user.idCompania);
+      }
+
+      if (!company || !smtpConfig || !smtpConfig.activo) {
+        // No hay forma de avisarle a esta cuenta por correo — no se revela esto al cliente
+        // (evitaría la protección contra enumeración de arriba), solo se registra en el servidor.
+        console.error(`[ForgotPassword] No se pudo enviar contraseña temporal a "${user.usuario}": SMTP no configurado/activo para idCompania=${user.idCompania}.`);
+        return res.json(respuestaGenerica);
+      }
+
+      const nuevaContrasena = generateNumericPassword(8);
+      const hash = hashPassword(nuevaContrasena);
+
+      if (dbConnected && pool) {
+        await pool.query("UPDATE usuarios SET contrasena = ?, password_hash = ? WHERE id = ? OR id_usuario = ?", [hash, hash, user.id, user.id]);
+      } else {
+        localUsers = localUsers.map(u => u.id === user.id ? { ...u, contrasena: hash } : u);
+      }
+
+      const rendered = renderPasswordResetEmail({ company, user, nuevaContrasena });
+      await sendMail(smtpConfig, { to: user.correo, subject: rendered.subject, html: rendered.html, text: rendered.text });
+
+      res.json(respuestaGenerica);
+    } catch (err: any) {
+      console.error("[ForgotPassword] Error:", err);
+      res.status(500).json({ error: "No se pudo procesar la solicitud. Intente de nuevo." });
+    }
+  });
+
+  app.get("/api/me", async (req, res) => {
+    const session = getSession(req);
+    if (!session) return res.status(401).json({ error: "No autenticado." });
+
+    const user = await fetchUserById(session.userId);
+    if (!user || user.activo === false) return res.status(401).json({ error: "No autenticado." });
+    const company = await fetchCompanyById(session.idCompania);
+
+    const { contrasena, password_hash, ...safeUser } = user;
+    res.json({ user: safeUser, company });
+  });
+
   // DB Connection Status Endpoint
   app.get("/api/db-status", (req, res) => {
     res.json({
@@ -579,13 +811,16 @@ async function startServer() {
   // --- API Routes for Database Management (Dual Mode) ---
 
   // 1. Companies
-  app.get("/api/companies", async (req, res) => {
+  app.get("/api/companies", requireAuth, async (req, res) => {
     try {
+      const session = sessionOf(req);
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM companias");
+        const [rows] = isSaasAdmin(session)
+          ? await pool.query("SELECT * FROM companias")
+          : await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [session.idCompania, session.idCompania]);
         res.json((rows as any[]).map(normalizeRow));
       } else {
-        res.json(localCompanies);
+        res.json(isSaasAdmin(session) ? localCompanies : localCompanies.filter(c => c.id === session.idCompania));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -595,6 +830,17 @@ async function startServer() {
   app.post("/api/companies", async (req, res) => {
     try {
       const c = req.body;
+
+      // Editing an existing company requires being its Administrador (or the SaaS admin) — a
+      // missing c.id is the public self-registration flow (new clinic signup) and stays open.
+      if (c.id) {
+        const session = getSession(req);
+        const authorized = !!session && (isSaasAdmin(session) || (session.idCompania === parseInt(c.id) && session.rol === "Administrador"));
+        if (!authorized) {
+          return res.status(403).json({ error: "No autorizado para modificar esta empresa." });
+        }
+      }
+
       if (dbConnected && pool) {
         if (c.id) {
           const [exists] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [c.id, c.id]);
@@ -678,7 +924,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/companies/:id/estado-saas", async (req, res) => {
+  app.post("/api/companies/:id/estado-saas", requireAuth, requireSaasAdmin, async (req, res) => {
     try {
       const companyId = parseInt(req.params.id);
       const nuevoEstado = req.body.estadoSaas as Company["estadoSaas"];
@@ -746,7 +992,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/companies/:id/pagos", async (req, res) => {
+  app.get("/api/companies/:id/pagos", requireAuth, requireSaasAdmin, async (req, res) => {
     try {
       const companyId = parseInt(req.params.id);
       if (dbConnected && pool) {
@@ -760,7 +1006,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/companies/:id/pagos", async (req, res) => {
+  app.post("/api/companies/:id/pagos", requireAuth, requireSaasAdmin, async (req, res) => {
     try {
       const companyId = parseInt(req.params.id);
       const p = req.body;
@@ -798,13 +1044,16 @@ async function startServer() {
   });
 
   // 2. Users
-  app.get("/api/users", async (req, res) => {
+  app.get("/api/users", requireAuth, async (req, res) => {
     try {
+      const session = sessionOf(req);
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM usuarios");
-        res.json((rows as any[]).map(normalizeRow));
+        const [rows] = isSaasAdmin(session)
+          ? await pool.query("SELECT * FROM usuarios")
+          : await pool.query("SELECT * FROM usuarios WHERE idCompania = ? OR id_compania = ?", [session.idCompania, session.idCompania]);
+        res.json((rows as any[]).map(normalizeRow).map(sanitizeUser));
       } else {
-        res.json(localUsers);
+        res.json((isSaasAdmin(session) ? localUsers : localUsers.filter(u => u.idCompania === session.idCompania)).map(sanitizeUser));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -814,56 +1063,110 @@ async function startServer() {
   app.post("/api/users", async (req, res) => {
     try {
       const u = req.body;
+      const idCompania = parseInt(u.idCompania);
+
+      let totalUsuariosCompania = 0;
+      let maxUsuarios = 5;
+      if (dbConnected && pool) {
+        const [companyRows] = await pool.query("SELECT maxUsuarios FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        const companyRow = (companyRows as any[])[0];
+        if (companyRow) maxUsuarios = companyRow.maxUsuarios;
+        const [countRows] = await pool.query("SELECT COUNT(*) as count FROM usuarios WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
+        totalUsuariosCompania = (countRows as any)[0].count;
+      } else {
+        const company = localCompanies.find(c => c.id === idCompania);
+        if (company) maxUsuarios = company.maxUsuarios;
+        totalUsuariosCompania = localUsers.filter(item => item.idCompania === idCompania).length;
+      }
+
+      // Editing an existing user, or adding staff to a company that already has at least one
+      // user, requires auth (that company's own Administrador, the user themself, or the SaaS
+      // admin). Creating the very first user of a brand-new company stays open — that's the
+      // public self-registration flow's founding admin (see POST /api/companies immediately
+      // before it, in the same flow).
+      if (u.id || totalUsuariosCompania > 0) {
+        const session = getSession(req);
+        const authorized = !!session && (
+          isSaasAdmin(session) ||
+          (u.id && session.userId === parseInt(u.id)) ||
+          (session.idCompania === idCompania && session.rol === "Administrador")
+        );
+        if (!authorized) {
+          return res.status(403).json({ error: "No autorizado." });
+        }
+      }
 
       if (!u.id) {
         // Solo se valida el límite al CREAR un usuario nuevo, no al editar uno existente.
-        let maxUsuarios = 5;
-        let activosActuales = 0;
-
-        if (dbConnected && pool) {
-          const [companyRows] = await pool.query("SELECT maxUsuarios FROM companias WHERE id = ? OR id_compania = ?", [u.idCompania, u.idCompania]);
-          const companyRow = (companyRows as any[])[0];
-          if (companyRow) maxUsuarios = companyRow.maxUsuarios;
-          const [countRows] = await pool.query("SELECT COUNT(*) as count FROM usuarios WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [u.idCompania, u.idCompania]);
-          activosActuales = (countRows as any)[0].count;
-        } else {
-          const company = localCompanies.find(c => c.id === parseInt(u.idCompania));
-          if (company) maxUsuarios = company.maxUsuarios;
-          activosActuales = localUsers.filter(item => item.idCompania === parseInt(u.idCompania) && item.activo).length;
-        }
+        const activosActuales = dbConnected && pool
+          ? ((await pool.query("SELECT COUNT(*) as count FROM usuarios WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]))[0] as any)[0].count
+          : localUsers.filter(item => item.idCompania === idCompania && item.activo).length;
 
         if (activosActuales >= maxUsuarios) {
           return res.status(400).json({ error: `Límite de usuarios alcanzado (máximo ${maxUsuarios}).` });
+        }
+
+        // El usuario de login es global (POST /api/login lo busca sin acotar por empresa), así
+        // que debe ser único en todo el sistema, no solo dentro de esta empresa.
+        const usuarioNormalizado = String(u.usuario || "").trim().toLowerCase();
+        const yaExiste = dbConnected && pool
+          ? ((await pool.query("SELECT id FROM usuarios WHERE LOWER(usuario) = ?", [usuarioNormalizado]))[0] as any).length > 0
+          : localUsers.some(item => item.usuario.trim().toLowerCase() === usuarioNormalizado);
+        if (yaExiste) {
+          return res.status(400).json({ error: "El nombre de usuario ya se encuentra registrado." });
         }
       }
 
       if (dbConnected && pool) {
         if (u.id) {
-          const [exists] = await pool.query("SELECT * FROM usuarios WHERE id = ? OR id_usuario = ?", [u.id, u.id]);
-          if ((exists as any).length > 0) {
+          // Scoped by idCompania too — an id that only collides by coincidence (never a real
+          // edit of this tenant's own record) must fall through to INSERT below instead of
+          // overwriting another company's user.
+          const [exists] = await pool.query("SELECT * FROM usuarios WHERE (id = ? OR id_usuario = ?) AND (idCompania = ? OR id_compania = ?)", [u.id, u.id, parseInt(u.idCompania), parseInt(u.idCompania)]);
+          const existingRow = (exists as any[])[0];
+          if (existingRow) {
+            // Un `contrasena` vacío significa "no está cambiando la contraseña" (el cliente ya
+            // no recibe hashes de contraseña en ninguna respuesta, así que un guardado que solo
+            // cambia p.ej. `activo` llega sin este campo) — se conserva el hash existente en ese
+            // caso en vez de sobreescribirlo con un valor vacío.
+            const contrasenaFinal = u.contrasena && String(u.contrasena).trim()
+              ? hashPassword(String(u.contrasena).trim())
+              : (existingRow.contrasena || existingRow.password_hash);
             await pool.query(
               "UPDATE usuarios SET idCompania = ?, id_compania = ?, nombre = ?, usuario = ?, correo = ?, email = ?, contrasena = ?, password_hash = ?, rol = ?, activo = ?, ubicacionDireccion = ?, ubicacionLat = ?, ubicacionLng = ?, maxTiempoTrasladoMinutos = ? WHERE id = ? OR id_usuario = ?",
-              [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, u.contrasena, u.contrasena, u.rol, u.activo ? 1 : 0, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45, u.id, u.id]
+              [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, contrasenaFinal, contrasenaFinal, u.rol, u.activo ? 1 : 0, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45, u.id, u.id]
             );
-            return res.json(u);
+            const { contrasena, password_hash, ...safeUser } = u;
+            return res.json(safeUser);
           }
         }
+        const contrasenaNueva = hashPassword(String(u.contrasena || "").trim());
         const [result] = await pool.query(
           "INSERT INTO usuarios (idCompania, id_compania, nombre, usuario, correo, email, contrasena, password_hash, rol, activo, ubicacionDireccion, ubicacionLat, ubicacionLng, maxTiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, u.contrasena, u.contrasena, u.rol, u.activo === false ? 0 : 1, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45]
+          [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, contrasenaNueva, contrasenaNueva, u.rol, u.activo === false ? 0 : 1, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45]
         );
         u.id = (result as any).insertId;
         u.activo = u.activo === false ? false : true;
-        res.json(u);
+        const { contrasena, ...safeUser } = u;
+        res.json(safeUser);
       } else {
         if (u.id) {
-          localUsers = localUsers.map(item => item.id === u.id ? u : item);
+          const existing = localUsers.find(item => item.id === u.id);
+          const merged = {
+            ...u,
+            contrasena: u.contrasena && String(u.contrasena).trim() ? hashPassword(String(u.contrasena).trim()) : existing?.contrasena
+          };
+          localUsers = localUsers.map(item => item.id === u.id ? merged : item);
+          const { contrasena, ...safeUser } = merged;
+          return res.json(safeUser);
         } else {
           u.id = Math.max(0, ...localUsers.map(item => item.id)) + 1;
           u.activo = u.activo === false ? false : true;
+          u.contrasena = hashPassword(String(u.contrasena || "").trim());
           localUsers.push(u);
         }
-        res.json(u);
+        const { contrasena, ...safeUser } = u;
+        res.json(safeUser);
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -871,10 +1174,11 @@ async function startServer() {
   });
 
   // 3. Patients
-  app.get("/api/patients", async (req, res) => {
+  app.get("/api/patients", requireAuth, async (req, res) => {
     try {
+      const session = sessionOf(req);
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM pacientes");
+        const [rows] = await pool.query("SELECT * FROM pacientes WHERE idCompania = ? OR id_compania = ?", [session.idCompania, session.idCompania]);
         const formatted = (rows as any[]).map(row => {
           const norm = normalizeRow(row);
           return {
@@ -887,19 +1191,21 @@ async function startServer() {
         });
         res.json(formatted);
       } else {
-        res.json(localPatients);
+        res.json(localPatients.filter(p => p.idCompania === session.idCompania));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post("/api/patients", async (req, res) => {
+  app.post("/api/patients", requireAuth, async (req, res) => {
     try {
       const p = req.body;
+      p.idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         if (p.id) {
-          const [exists] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [p.id, p.id]);
+          // Scoped by idCompania too — see comment on the equivalent usuarios check above.
+          const [exists] = await pool.query("SELECT * FROM pacientes WHERE (id = ? OR id_paciente = ?) AND (idCompania = ? OR id_compania = ?)", [p.id, p.id, parseInt(p.idCompania), parseInt(p.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
               "UPDATE pacientes SET idCompania = ?, id_compania = ?, nombreCompleto = ?, nombre_completo = ?, fechaNacimiento = ?, fecha_nacimiento = ?, edad = ?, ocupacion = ?, correoElectronico = ?, correo_electronico = ?, situacionVivienda = ?, situacion_vivienda = ?, tipoIdentificacion = ?, fact_tipo_identificacion = ?, identificacion = ?, fact_identificacion = ?, telefono = ?, provinciaId = ?, cantonId = ?, distritoId = ?, otrasSenas = ?, diabetes = ?, hipertension = ?, gastritis = ?, estrenimiento = ?, alergiasAlimentarias = ?, fracturas = ?, esguinces = ?, cirugiasOrtopedicas = ?, actividadFisica = ? WHERE id = ? OR id_paciente = ?",
@@ -934,10 +1240,11 @@ async function startServer() {
   });
 
   // 4. Consultations
-  app.get("/api/consultations", async (req, res) => {
+  app.get("/api/consultations", requireAuth, async (req, res) => {
     try {
+      const session = sessionOf(req);
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM consultas");
+        const [rows] = await pool.query("SELECT * FROM consultas WHERE idCompania = ? OR id_compania = ?", [session.idCompania, session.idCompania]);
         const formatted = (rows as any[]).map(row => {
           const norm = normalizeRow(row);
           return {
@@ -954,19 +1261,21 @@ async function startServer() {
         });
         res.json(formatted);
       } else {
-        res.json(localConsultations);
+        res.json(localConsultations.filter(c => c.idCompania === session.idCompania));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post("/api/consultations", async (req, res) => {
+  app.post("/api/consultations", requireAuth, async (req, res) => {
     try {
       const con = req.body;
+      con.idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         if (con.id) {
-          const [exists] = await pool.query("SELECT * FROM consultas WHERE id = ? OR id_consulta = ?", [con.id, con.id]);
+          // Scoped by idCompania too — see comment on the equivalent usuarios check above.
+          const [exists] = await pool.query("SELECT * FROM consultas WHERE (id = ? OR id_consulta = ?) AND (idCompania = ? OR id_compania = ?)", [con.id, con.id, parseInt(con.idCompania), parseInt(con.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
               "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, dieta = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, evaluacionAntropometrica = ?, evaluacionBioquimica = ?, evaluacionDietetica = ?, composicionSegmentada = ?, estiloVida = ? WHERE id = ? OR id_consulta = ?",
@@ -1003,25 +1312,28 @@ async function startServer() {
   });
 
   // 5. Citas (Appointments)
-  app.get("/api/citas", async (req, res) => {
+  app.get("/api/citas", requireAuth, async (req, res) => {
     try {
+      const session = sessionOf(req);
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM citas");
+        const [rows] = await pool.query("SELECT * FROM citas WHERE idCompania = ?", [session.idCompania]);
         res.json((rows as any[]).map(normalizeRow));
       } else {
-        res.json(localCitas);
+        res.json(localCitas.filter(c => c.idCompania === session.idCompania));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post("/api/citas", async (req, res) => {
+  app.post("/api/citas", requireAuth, async (req, res) => {
     try {
       const ct = req.body;
+      ct.idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         if (ct.id) {
-          const [exists] = await pool.query("SELECT * FROM citas WHERE id = ?", [ct.id]);
+          // Scoped by idCompania too — see comment on the equivalent usuarios check above.
+          const [exists] = await pool.query("SELECT * FROM citas WHERE id = ? AND idCompania = ?", [ct.id, parseInt(ct.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
               "UPDATE citas SET idCompania = ?, idPaciente = ?, idUsuarioNutricionista = ?, idConsulta = ?, idServicio = ?, fechaHora = ?, duracionMinutos = ?, estadoCita = ?, notas = ?, confirmacionEnviadaEn = ?, recordatorioEnviadoEn = ?, cancelacionEnviadaEn = ?, tipoVisita = ?, direccionDomicilio = ?, pacienteLat = ?, pacienteLng = ?, tiempoTrasladoMinutos = ? WHERE id = ?",
@@ -1055,25 +1367,28 @@ async function startServer() {
   // un DELETE /api/citas/:id.
 
   // 9. Calendar Blocks (specialist agenda blocking)
-  app.get("/api/calendar-blocks", async (req, res) => {
+  app.get("/api/calendar-blocks", requireAuth, async (req, res) => {
     try {
+      const session = sessionOf(req);
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM calendar_blocks");
+        const [rows] = await pool.query("SELECT * FROM calendar_blocks WHERE idCompania = ?", [session.idCompania]);
         res.json(rows);
       } else {
-        res.json(localCalendarBlocks);
+        res.json(localCalendarBlocks.filter(b => b.idCompania === session.idCompania));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post("/api/calendar-blocks", async (req, res) => {
+  app.post("/api/calendar-blocks", requireAuth, async (req, res) => {
     try {
       const b = req.body;
+      b.idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         if (b.id) {
-          const [exists] = await pool.query("SELECT id FROM calendar_blocks WHERE id = ?", [b.id]);
+          // Scoped by idCompania too — see comment on the equivalent usuarios check above.
+          const [exists] = await pool.query("SELECT id FROM calendar_blocks WHERE id = ? AND idCompania = ?", [b.id, parseInt(b.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
               "UPDATE calendar_blocks SET idCompania = ?, idUsuarioNutricionista = ?, fechaInicio = ?, fechaFin = ?, horaInicio = ?, horaFin = ?, motivo = ? WHERE id = ?",
@@ -1102,14 +1417,15 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/calendar-blocks/:id", async (req, res) => {
+  app.delete("/api/calendar-blocks/:id", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
+      const idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
-        await pool.query("DELETE FROM calendar_blocks WHERE id = ?", [id]);
+        await pool.query("DELETE FROM calendar_blocks WHERE id = ? AND idCompania = ?", [id, idCompania]);
         res.json({ success: true });
       } else {
-        localCalendarBlocks = localCalendarBlocks.filter(item => item.id !== id);
+        localCalendarBlocks = localCalendarBlocks.filter(item => !(item.id === id && item.idCompania === idCompania));
         res.json({ success: true });
       }
     } catch (err: any) {
@@ -1119,25 +1435,28 @@ async function startServer() {
 
   // 10. Servicios (catálogo de servicios/tarifas por empresa, con IVA opcional
   // por servicio que cae al ivaPorDefecto de la empresa cuando es NULL)
-  app.get("/api/servicios", async (req, res) => {
+  app.get("/api/servicios", requireAuth, async (req, res) => {
     try {
+      const session = sessionOf(req);
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM servicios");
+        const [rows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ? OR id_compania = ?", [session.idCompania, session.idCompania]);
         res.json((rows as any[]).map(normalizeRow));
       } else {
-        res.json(localServicios);
+        res.json(localServicios.filter(s => s.idCompania === session.idCompania));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post("/api/servicios", async (req, res) => {
+  app.post("/api/servicios", requireAuth, async (req, res) => {
     try {
       const s = req.body;
+      s.idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         if (s.id) {
-          const [exists] = await pool.query("SELECT id FROM servicios WHERE id = ? OR id_servicio = ?", [s.id, s.id]);
+          // Scoped by idCompania too — see comment on the equivalent usuarios check above.
+          const [exists] = await pool.query("SELECT id FROM servicios WHERE (id = ? OR id_servicio = ?) AND (idCompania = ? OR id_compania = ?)", [s.id, s.id, parseInt(s.idCompania), parseInt(s.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
               "UPDATE servicios SET idCompania = ?, id_compania = ?, nombre = ?, precio = ?, porcentajeIva = ?, duracionMinutos = ?, codigoCabys = ?, unidadMedida = ?, activo = ? WHERE id = ? OR id_servicio = ?",
@@ -1169,9 +1488,13 @@ async function startServer() {
   // Rellena los servicios por defecto del colegio profesional correspondiente para una
   // empresa ya existente (Fisioterapia/Nutrición/Ambas). Idempotente: no duplica servicios
   // cuyo nombre ya exista para esa empresa. No hace nada para Spa (perfilCompania sin colegio).
-  app.post("/api/companies/:id/servicios-defecto", async (req, res) => {
+  app.post("/api/companies/:id/servicios-defecto", requireAuth, async (req, res) => {
     try {
       const idCompania = parseInt(req.params.id);
+      const session = sessionOf(req);
+      if (!isSaasAdmin(session) && !(session.idCompania === idCompania && session.rol === "Administrador")) {
+        return res.status(403).json({ error: "No autorizado." });
+      }
       let company: Company | undefined;
       let existentes: Servicio[];
       if (dbConnected && pool) {
@@ -1210,9 +1533,12 @@ async function startServer() {
   });
 
   // 10. Hacienda Digital Signature Config
-  app.get("/api/hacienda-config/:idCompania", async (req, res) => {
+  app.get("/api/hacienda-config/:idCompania", requireAuth, async (req, res) => {
     try {
       const idCompania = parseInt(req.params.idCompania);
+      if (!canAccessCompany(sessionOf(req), idCompania)) {
+        return res.status(403).json({ error: "No autorizado." });
+      }
 
       if (dbConnected && pool) {
         const [rows] = await pool.query("SELECT * FROM compania_hacienda_config WHERE id_compania = ?", [idCompania]);
@@ -1255,10 +1581,13 @@ async function startServer() {
     }
   });
 
-  app.post("/api/hacienda-config", async (req, res) => {
+  app.post("/api/hacienda-config", requireAuth, async (req, res) => {
     try {
       const b = req.body;
       const idCompania = parseInt(b.idCompania);
+      if (!canAccessCompany(sessionOf(req), idCompania)) {
+        return res.status(403).json({ error: "No autorizado." });
+      }
 
       let existing: { passwordAtvCifrado: string; certificadoP12Cifrado: string; certificadoPinCifrado: string; certificadoNombreArchivo: string | null } | undefined;
 
@@ -1376,9 +1705,12 @@ async function startServer() {
     };
   }
 
-  app.post("/api/hacienda/verificar-certificado", async (req, res) => {
+  app.post("/api/hacienda/verificar-certificado", requireAuth, async (req, res) => {
     try {
       const idCompania = parseInt(req.body.idCompania);
+      if (!canAccessCompany(sessionOf(req), idCompania)) {
+        return res.status(403).json({ error: "No autorizado." });
+      }
       const cert = await cargarCertificadoEmpresa(idCompania);
       if (!cert) {
         return res.status(400).json({ error: "No se ha configurado un certificado criptográfico (.p12) para esta empresa." });
@@ -1390,9 +1722,12 @@ async function startServer() {
     }
   });
 
-  app.post("/api/hacienda/firmar", async (req, res) => {
+  app.post("/api/hacienda/firmar", requireAuth, async (req, res) => {
     try {
       const idCompania = parseInt(req.body.idCompania);
+      if (!canAccessCompany(sessionOf(req), idCompania)) {
+        return res.status(403).json({ error: "No autorizado." });
+      }
       const xml = req.body.xml;
       if (!xml || typeof xml !== 'string') {
         return res.status(400).json({ error: "Falta el XML a firmar." });
@@ -1422,7 +1757,7 @@ async function startServer() {
   }
 
   // Proxy al catálogo oficial CABYS de Hacienda (evita CORS desde el navegador).
-  app.get("/api/cabys", async (req, res) => {
+  app.get("/api/cabys", requireAuth, async (req, res) => {
     try {
       const q = (req.query.q as string) || "";
       if (!q.trim()) return res.json([]);
@@ -1438,27 +1773,27 @@ async function startServer() {
     }
   });
 
-  // 10.1 Facturas (Factura Electrónica v4.4)
-  app.get("/api/facturas", async (req, res) => {
+  // 10.1 Facturas (Factura Electrónica v4.4) — siempre acotadas a la empresa de la sesión;
+  // se ignora cualquier idCompania que venga en el query/body para evitar que una empresa
+  // lea o facture a nombre de otra.
+  app.get("/api/facturas", requireAuth, async (req, res) => {
     try {
-      const idCompania = req.query.idCompania ? parseInt(req.query.idCompania as string) : null;
+      const idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
-        const [rows] = idCompania
-          ? await pool.query("SELECT * FROM facturas WHERE idCompania = ?", [idCompania])
-          : await pool.query("SELECT * FROM facturas");
+        const [rows] = await pool.query("SELECT * FROM facturas WHERE idCompania = ?", [idCompania]);
         res.json((rows as any[]).map(r => ({ ...r, lineas: typeof r.lineas === 'string' ? JSON.parse(r.lineas) : r.lineas })));
       } else {
-        res.json(idCompania ? localFacturas.filter(f => f.idCompania === idCompania) : localFacturas);
+        res.json(localFacturas.filter(f => f.idCompania === idCompania));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post("/api/facturas", async (req, res) => {
+  app.post("/api/facturas", requireAuth, async (req, res) => {
     try {
       const body = req.body;
-      const idCompania = parseInt(body.idCompania);
+      const idCompania = sessionOf(req).idCompania;
       const idCita = body.idCita != null ? parseInt(body.idCita) : null;
       const idPaciente = parseInt(body.idPaciente);
       const condicionVenta = body.condicionVenta || "01";
@@ -1636,7 +1971,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/facturas/:id/estado", async (req, res) => {
+  app.post("/api/facturas/:id/estado", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       let factura: any;
@@ -1647,6 +1982,9 @@ async function startServer() {
         factura = localFacturas.find(f => f.id === id);
       }
       if (!factura) return res.status(404).json({ error: "Factura no encontrada." });
+      if (!canAccessCompany(sessionOf(req), factura.idCompania)) {
+        return res.status(403).json({ error: "No autorizado." });
+      }
 
       const credenciales = await cargarCredencialesAtv(factura.idCompania);
       if (!credenciales) return res.status(400).json({ error: "No hay credenciales ATV configuradas para esta empresa." });
@@ -1671,14 +2009,15 @@ async function startServer() {
   });
 
   // 6. SMTP Configs
-  app.get("/api/smtp-configs", async (req, res) => {
+  app.get("/api/smtp-configs", requireAuth, async (req, res) => {
     try {
+      const idCompania = sessionOf(req).idCompania;
       let rows: CompaniaSmtpConfig[];
       if (dbConnected && pool) {
-        const [dbRows] = await pool.query("SELECT * FROM compania_smtp_config");
+        const [dbRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [idCompania]);
         rows = (dbRows as any[]).map(row => ({ ...row, activo: !!row.activo }));
       } else {
-        rows = localSmtpConfigs;
+        rows = localSmtpConfigs.filter(c => c.idCompania === idCompania);
       }
       const sanitized = rows.map(row => ({
         ...row,
@@ -1691,10 +2030,10 @@ async function startServer() {
     }
   });
 
-  app.post("/api/smtp-configs", async (req, res) => {
+  app.post("/api/smtp-configs", requireAuth, async (req, res) => {
     try {
       const s = req.body;
-      const idCompania = parseInt(s.idCompania);
+      const idCompania = sessionOf(req).idCompania;
 
       let existingPassword = "";
       if (dbConnected && pool) {
@@ -1768,22 +2107,24 @@ async function startServer() {
   });
 
   // 7. Notification Logs
-  app.get("/api/notification-logs", async (req, res) => {
+  app.get("/api/notification-logs", requireAuth, async (req, res) => {
     try {
+      const idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM notification_logs");
+        const [rows] = await pool.query("SELECT * FROM notification_logs WHERE idCompania = ?", [idCompania]);
         res.json(rows);
       } else {
-        res.json(localLogs);
+        res.json(localLogs.filter(l => l.idCompania === idCompania));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post("/api/notification-logs", async (req, res) => {
+  app.post("/api/notification-logs", requireAuth, async (req, res) => {
     try {
       const l = req.body;
+      l.idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         const [result] = await pool.query(
           "INSERT INTO notification_logs (idCompania, idCita, tipo, destinatario, asunto, cuerpo, enviadoEn) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -1802,10 +2143,10 @@ async function startServer() {
   });
 
   // 8. Real-time notification sending (Cita + Consulta)
-  app.post("/api/notifications/send", async (req: express.Request, res: express.Response) => {
+  app.post("/api/notifications/send", requireAuth, async (req: express.Request, res: express.Response) => {
     try {
       const body = req.body;
-      const idCompania = parseInt(body.idCompania);
+      const idCompania = sessionOf(req).idCompania;
 
       let company: Company | undefined;
       let smtpConfig: CompaniaSmtpConfig | undefined;
@@ -2084,13 +2425,17 @@ async function startServer() {
         if (servicio) duracionMin = servicio.duracionMinutos;
       }
       const candidatos = generarSlotsCandidatos(abre, cierra);
+      const abreMin = minutosDesdeMedianoche(abre);
+      const cierraMin = minutosDesdeMedianoche(cierra);
       const libres = candidatos.filter(hora => slotLibre({
         candidatoInicioMin: minutosDesdeMedianoche(hora),
         duracionMin,
         citasDelDia,
         bloqueosDelDia,
         fecha,
-        horaCandidato: hora
+        horaCandidato: hora,
+        abreMin,
+        cierraMin
       }));
 
       res.json(libres);
@@ -2194,113 +2539,243 @@ async function startServer() {
         }
       }
 
-      // Re-verificar disponibilidad (condición de carrera)
-      let citasDelDia: any[];
-      let bloqueosDelDia: CalendarBlock[];
-      if (dbConnected && pool) {
-        const [citaRows] = await pool.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ?", [idUsuarioNutricionista, `${fecha}%`]);
-        citasDelDia = citaRows as any[];
-        const [blockRows] = await pool.query("SELECT * FROM calendar_blocks WHERE idUsuarioNutricionista = ?", [idUsuarioNutricionista]);
-        bloqueosDelDia = blockRows as any[];
-      } else {
-        citasDelDia = localCitas.filter(c => c.idUsuarioNutricionista === idUsuarioNutricionista && c.fechaHora.startsWith(fecha));
-        bloqueosDelDia = localCalendarBlocks.filter(b => b.idUsuarioNutricionista === idUsuarioNutricionista);
-      }
-      const libre = slotLibre({
-        candidatoInicioMin: minutosDesdeMedianoche(hora),
-        duracionMin: duracionMinutos,
-        citasDelDia,
-        bloqueosDelDia,
-        fecha,
-        horaCandidato: hora
-      });
-      if (!libre) {
-        return res.status(409).json({ error: "Ese horario ya no está disponible. Por favor escoja otro." });
-      }
-
-      // Buscar o crear paciente por cédula
       const pac = body.paciente;
       let paciente: Patient | undefined;
+      let nuevaCita: any;
+
       if (dbConnected && pool) {
-        const [existing] = await pool.query("SELECT * FROM pacientes WHERE (idCompania = ? OR id_compania = ?) AND (identificacion = ? OR fact_identificacion = ?)", [idCompania, idCompania, pac.identificacion, pac.identificacion]);
-        paciente = (existing as any[]).map(normalizeRow)[0];
-      } else {
-        paciente = localPatients.find(p => p.idCompania === idCompania && p.identificacion === pac.identificacion);
-      }
+        // Todo el bloque de re-verificación + inserción va en una sola transacción: sin esto,
+        // dos solicitudes casi simultáneas para el mismo horario podían pasar ambas el chequeo
+        // de disponibilidad antes de que cualquiera insertara, agendando doble al profesional
+        // (condición de carrera "check-then-insert").
+        //
+        // El lock se toma sobre la fila de `usuarios` del profesional (que siempre existe), NO
+        // sobre `citas` — se verificó empíricamente contra esta base (MariaDB 10.4) que un
+        // `SELECT ... FOR UPDATE` sobre `citas` con cero filas coincidentes (el caso exacto de
+        // dos personas compitiendo por un horario libre) no toma ningún bloqueo de rango/gap:
+        // una segunda transacción concurrente pasaba igual, sin esperar. Bloquear una fila que
+        // siempre existe evita depender de ese comportamiento de gap-locking.
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
 
-      if (!paciente) {
-        const nuevoPaciente: any = {
-          idCompania,
-          nombreCompleto: pac.nombreCompleto,
-          fechaNacimiento: pac.fechaNacimiento,
-          edad: (() => {
-            const nacimiento = new Date(pac.fechaNacimiento);
-            const hoy = new Date();
-            let edad = hoy.getFullYear() - nacimiento.getFullYear();
-            const m = hoy.getMonth() - nacimiento.getMonth();
-            if (m < 0 || (m === 0 && hoy.getDate() < nacimiento.getDate())) edad--;
-            return isNaN(edad) ? 0 : edad;
-          })(),
-          ocupacion: "",
-          correoElectronico: pac.correoElectronico,
-          situacionVivienda: "SOLO",
-          tipoIdentificacion: pac.tipoIdentificacion,
-          identificacion: pac.identificacion,
-          telefono: pac.telefono,
-          provinciaId: 1,
-          cantonId: 101,
-          distritoId: 10101,
-          otrasSenas: tipoVisita === "DOMICILIO" ? (body.direccionDomicilio || "") : "",
-          diabetes: false,
-          hipertension: false,
-          gastritis: false,
-          estrenimiento: false,
-          alergiasAlimentarias: "",
-          fracturas: "",
-          esguinces: "",
-          cirugiasOrtopedicas: "",
-          actividadFisica: ""
-        };
+          await connection.query("SELECT id FROM usuarios WHERE id = ? OR id_usuario = ? FOR UPDATE", [idUsuarioNutricionista, idUsuarioNutricionista]);
 
-        if (dbConnected && pool) {
-          const [result] = await pool.query(
-            "INSERT INTO pacientes (idCompania, id_compania, nombreCompleto, nombre_completo, fechaNacimiento, fecha_nacimiento, edad, ocupacion, correoElectronico, correo_electronico, situacionVivienda, situacion_vivienda, tipoIdentificacion, fact_tipo_identificacion, identificacion, fact_identificacion, telefono, provinciaId, cantonId, distritoId, otrasSenas, diabetes, hipertension, gastritis, estrenimiento, alergiasAlimentarias, fracturas, esguinces, cirugiasOrtopedicas, actividadFisica) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-              nuevoPaciente.idCompania, nuevoPaciente.idCompania, nuevoPaciente.nombreCompleto, nuevoPaciente.nombreCompleto, nuevoPaciente.fechaNacimiento, nuevoPaciente.fechaNacimiento, nuevoPaciente.edad, nuevoPaciente.ocupacion, nuevoPaciente.correoElectronico, nuevoPaciente.correoElectronico, nuevoPaciente.situacionVivienda, nuevoPaciente.situacionVivienda, nuevoPaciente.tipoIdentificacion, nuevoPaciente.tipoIdentificacion, nuevoPaciente.identificacion, nuevoPaciente.identificacion, nuevoPaciente.telefono, nuevoPaciente.provinciaId, nuevoPaciente.cantonId, nuevoPaciente.distritoId, nuevoPaciente.otrasSenas, 0, 0, 0, 0, nuevoPaciente.alergiasAlimentarias, nuevoPaciente.fracturas, nuevoPaciente.esguinces, nuevoPaciente.cirugiasOrtopedicas, nuevoPaciente.actividadFisica
-            ]
+          const [citaRows] = await connection.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ?", [idUsuarioNutricionista, `${fecha}%`]);
+          const citasDelDia = citaRows as any[];
+          const [blockRows] = await connection.query("SELECT * FROM calendar_blocks WHERE idUsuarioNutricionista = ?", [idUsuarioNutricionista]);
+          const bloqueosDelDia = blockRows as any[];
+
+          const { abre: abreDelDia, cierra: cierraDelDia } = horarioDelDia(company?.horarioAtencion, fecha);
+          const libre = !!abreDelDia && !!cierraDelDia && slotLibre({
+            candidatoInicioMin: minutosDesdeMedianoche(hora),
+            duracionMin: duracionMinutos,
+            citasDelDia,
+            bloqueosDelDia,
+            fecha,
+            horaCandidato: hora,
+            abreMin: minutosDesdeMedianoche(abreDelDia),
+            cierraMin: minutosDesdeMedianoche(cierraDelDia)
+          });
+          if (!libre) {
+            await connection.rollback();
+            connection.release();
+            return res.status(409).json({ error: "Ese horario ya no está disponible. Por favor escoja otro." });
+          }
+
+          // Buscar o crear paciente por cédula
+          const [existing] = await connection.query("SELECT * FROM pacientes WHERE (idCompania = ? OR id_compania = ?) AND (identificacion = ? OR fact_identificacion = ?)", [idCompania, idCompania, pac.identificacion, pac.identificacion]);
+          paciente = (existing as any[]).map(normalizeRow)[0];
+
+          if (!paciente) {
+            const nuevoPaciente: any = {
+              idCompania,
+              nombreCompleto: pac.nombreCompleto,
+              fechaNacimiento: pac.fechaNacimiento,
+              edad: (() => {
+                const nacimiento = new Date(pac.fechaNacimiento);
+                const hoy = new Date();
+                let edad = hoy.getFullYear() - nacimiento.getFullYear();
+                const m = hoy.getMonth() - nacimiento.getMonth();
+                if (m < 0 || (m === 0 && hoy.getDate() < nacimiento.getDate())) edad--;
+                return isNaN(edad) ? 0 : edad;
+              })(),
+              ocupacion: "",
+              correoElectronico: pac.correoElectronico,
+              situacionVivienda: "SOLO",
+              tipoIdentificacion: pac.tipoIdentificacion,
+              identificacion: pac.identificacion,
+              telefono: pac.telefono,
+              provinciaId: 1,
+              cantonId: 101,
+              distritoId: 10101,
+              otrasSenas: tipoVisita === "DOMICILIO" ? (body.direccionDomicilio || "") : "",
+              diabetes: false,
+              hipertension: false,
+              gastritis: false,
+              estrenimiento: false,
+              alergiasAlimentarias: "",
+              fracturas: "",
+              esguinces: "",
+              cirugiasOrtopedicas: "",
+              actividadFisica: ""
+            };
+
+            const [result] = await connection.query(
+              "INSERT INTO pacientes (idCompania, id_compania, nombreCompleto, nombre_completo, fechaNacimiento, fecha_nacimiento, edad, ocupacion, correoElectronico, correo_electronico, situacionVivienda, situacion_vivienda, tipoIdentificacion, fact_tipo_identificacion, identificacion, fact_identificacion, telefono, provinciaId, cantonId, distritoId, otrasSenas, diabetes, hipertension, gastritis, estrenimiento, alergiasAlimentarias, fracturas, esguinces, cirugiasOrtopedicas, actividadFisica) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              [
+                nuevoPaciente.idCompania, nuevoPaciente.idCompania, nuevoPaciente.nombreCompleto, nuevoPaciente.nombreCompleto, nuevoPaciente.fechaNacimiento, nuevoPaciente.fechaNacimiento, nuevoPaciente.edad, nuevoPaciente.ocupacion, nuevoPaciente.correoElectronico, nuevoPaciente.correoElectronico, nuevoPaciente.situacionVivienda, nuevoPaciente.situacionVivienda, nuevoPaciente.tipoIdentificacion, nuevoPaciente.tipoIdentificacion, nuevoPaciente.identificacion, nuevoPaciente.identificacion, nuevoPaciente.telefono, nuevoPaciente.provinciaId, nuevoPaciente.cantonId, nuevoPaciente.distritoId, nuevoPaciente.otrasSenas, 0, 0, 0, 0, nuevoPaciente.alergiasAlimentarias, nuevoPaciente.fracturas, nuevoPaciente.esguinces, nuevoPaciente.cirugiasOrtopedicas, nuevoPaciente.actividadFisica
+              ]
+            );
+            nuevoPaciente.id = (result as any).insertId;
+            paciente = nuevoPaciente;
+          } else {
+            // Paciente encontrado por cédula: el formulario público precarga estos campos desde
+            // el registro existente pero, sin este UPDATE, cualquier corrección que la persona
+            // escriba aquí (p.ej. un correo desactualizado) se descartaba en silencio — la cita
+            // se guardaba igual, pero la confirmación seguía yendo al correo viejo. Se
+            // actualizan los datos de contacto con lo realmente enviado antes de usarlos para
+            // el correo de confirmación.
+            const contactoActualizado = {
+              nombreCompleto: pac.nombreCompleto,
+              correoElectronico: pac.correoElectronico,
+              telefono: pac.telefono,
+              tipoIdentificacion: pac.tipoIdentificacion,
+              fechaNacimiento: pac.fechaNacimiento
+            };
+            await connection.query(
+              "UPDATE pacientes SET nombreCompleto = ?, nombre_completo = ?, correoElectronico = ?, correo_electronico = ?, telefono = ?, tipoIdentificacion = ?, fact_tipo_identificacion = ?, fechaNacimiento = ?, fecha_nacimiento = ? WHERE id = ? OR id_paciente = ?",
+              [
+                contactoActualizado.nombreCompleto, contactoActualizado.nombreCompleto,
+                contactoActualizado.correoElectronico, contactoActualizado.correoElectronico,
+                contactoActualizado.telefono,
+                contactoActualizado.tipoIdentificacion, contactoActualizado.tipoIdentificacion,
+                contactoActualizado.fechaNacimiento, contactoActualizado.fechaNacimiento,
+                paciente.id, paciente.id
+              ]
+            );
+            paciente = { ...paciente, ...contactoActualizado };
+          }
+
+          nuevaCita = {
+            idCompania,
+            idPaciente: paciente!.id,
+            idUsuarioNutricionista,
+            idConsulta: null,
+            idServicio,
+            fechaHora,
+            duracionMinutos,
+            estadoCita: company?.requiereConfirmacionCitas ? "PROGRAMADA" : "CONFIRMADA",
+            notas: "",
+            tipoVisita,
+            direccionDomicilio: tipoVisita === "DOMICILIO" ? body.direccionDomicilio : null,
+            pacienteLat: tipoVisita === "DOMICILIO" ? parseFloat(body.pacienteLat) : null,
+            pacienteLng: tipoVisita === "DOMICILIO" ? parseFloat(body.pacienteLng) : null,
+            tiempoTrasladoMinutos
+          };
+
+          const [result] = await connection.query(
+            "INSERT INTO citas (idCompania, idPaciente, idUsuarioNutricionista, idConsulta, idServicio, fechaHora, duracionMinutos, estadoCita, notas, tipoVisita, direccionDomicilio, pacienteLat, pacienteLng, tiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nuevaCita.idCompania, nuevaCita.idPaciente, nuevaCita.idUsuarioNutricionista, nuevaCita.idConsulta, nuevaCita.idServicio, nuevaCita.fechaHora, nuevaCita.duracionMinutos, nuevaCita.estadoCita, nuevaCita.notas, nuevaCita.tipoVisita, nuevaCita.direccionDomicilio, nuevaCita.pacienteLat, nuevaCita.pacienteLng, nuevaCita.tiempoTrasladoMinutos]
           );
-          nuevoPaciente.id = (result as any).insertId;
-        } else {
+          nuevaCita.id = (result as any).insertId;
+
+          await connection.commit();
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
+        }
+      } else {
+        // Modo local (sin MySQL): un solo proceso Node operando sobre arreglos en memoria sin
+        // await entre el chequeo y la escritura — no hay ventana real de condición de carrera
+        // que una transacción pudiera cerrar aquí.
+        const citasDelDia: any[] = localCitas.filter(c => c.idUsuarioNutricionista === idUsuarioNutricionista && c.fechaHora.startsWith(fecha));
+        const bloqueosDelDia = localCalendarBlocks.filter(b => b.idUsuarioNutricionista === idUsuarioNutricionista);
+
+        const { abre: abreDelDia, cierra: cierraDelDia } = horarioDelDia(company?.horarioAtencion, fecha);
+        const libre = !!abreDelDia && !!cierraDelDia && slotLibre({
+          candidatoInicioMin: minutosDesdeMedianoche(hora),
+          duracionMin: duracionMinutos,
+          citasDelDia,
+          bloqueosDelDia,
+          fecha,
+          horaCandidato: hora,
+          abreMin: minutosDesdeMedianoche(abreDelDia),
+          cierraMin: minutosDesdeMedianoche(cierraDelDia)
+        });
+        if (!libre) {
+          return res.status(409).json({ error: "Ese horario ya no está disponible. Por favor escoja otro." });
+        }
+
+        paciente = localPatients.find(p => p.idCompania === idCompania && p.identificacion === pac.identificacion);
+
+        if (!paciente) {
+          const nuevoPaciente: any = {
+            idCompania,
+            nombreCompleto: pac.nombreCompleto,
+            fechaNacimiento: pac.fechaNacimiento,
+            edad: (() => {
+              const nacimiento = new Date(pac.fechaNacimiento);
+              const hoy = new Date();
+              let edad = hoy.getFullYear() - nacimiento.getFullYear();
+              const m = hoy.getMonth() - nacimiento.getMonth();
+              if (m < 0 || (m === 0 && hoy.getDate() < nacimiento.getDate())) edad--;
+              return isNaN(edad) ? 0 : edad;
+            })(),
+            ocupacion: "",
+            correoElectronico: pac.correoElectronico,
+            situacionVivienda: "SOLO",
+            tipoIdentificacion: pac.tipoIdentificacion,
+            identificacion: pac.identificacion,
+            telefono: pac.telefono,
+            provinciaId: 1,
+            cantonId: 101,
+            distritoId: 10101,
+            otrasSenas: tipoVisita === "DOMICILIO" ? (body.direccionDomicilio || "") : "",
+            diabetes: false,
+            hipertension: false,
+            gastritis: false,
+            estrenimiento: false,
+            alergiasAlimentarias: "",
+            fracturas: "",
+            esguinces: "",
+            cirugiasOrtopedicas: "",
+            actividadFisica: ""
+          };
           nuevoPaciente.id = Math.max(0, ...localPatients.map(p => p.id)) + 1;
           localPatients.push(nuevoPaciente);
+          paciente = nuevoPaciente;
+        } else {
+          const contactoActualizado = {
+            nombreCompleto: pac.nombreCompleto,
+            correoElectronico: pac.correoElectronico,
+            telefono: pac.telefono,
+            tipoIdentificacion: pac.tipoIdentificacion,
+            fechaNacimiento: pac.fechaNacimiento
+          };
+          const idx = localPatients.findIndex(p => p.id === paciente!.id);
+          if (idx !== -1) localPatients[idx] = { ...localPatients[idx], ...contactoActualizado };
+          paciente = { ...paciente, ...contactoActualizado };
         }
-        paciente = nuevoPaciente;
-      }
 
-      const nuevaCita: any = {
-        idCompania,
-        idPaciente: paciente!.id,
-        idUsuarioNutricionista,
-        idConsulta: null,
-        idServicio,
-        fechaHora,
-        duracionMinutos,
-        estadoCita: company?.requiereConfirmacionCitas ? "PROGRAMADA" : "CONFIRMADA",
-        notas: "",
-        tipoVisita,
-        direccionDomicilio: tipoVisita === "DOMICILIO" ? body.direccionDomicilio : null,
-        pacienteLat: tipoVisita === "DOMICILIO" ? parseFloat(body.pacienteLat) : null,
-        pacienteLng: tipoVisita === "DOMICILIO" ? parseFloat(body.pacienteLng) : null,
-        tiempoTrasladoMinutos
-      };
-
-      if (dbConnected && pool) {
-        const [result] = await pool.query(
-          "INSERT INTO citas (idCompania, idPaciente, idUsuarioNutricionista, idConsulta, idServicio, fechaHora, duracionMinutos, estadoCita, notas, tipoVisita, direccionDomicilio, pacienteLat, pacienteLng, tiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [nuevaCita.idCompania, nuevaCita.idPaciente, nuevaCita.idUsuarioNutricionista, nuevaCita.idConsulta, nuevaCita.idServicio, nuevaCita.fechaHora, nuevaCita.duracionMinutos, nuevaCita.estadoCita, nuevaCita.notas, nuevaCita.tipoVisita, nuevaCita.direccionDomicilio, nuevaCita.pacienteLat, nuevaCita.pacienteLng, nuevaCita.tiempoTrasladoMinutos]
-        );
-        nuevaCita.id = (result as any).insertId;
-      } else {
+        nuevaCita = {
+          idCompania,
+          idPaciente: paciente!.id,
+          idUsuarioNutricionista,
+          idConsulta: null,
+          idServicio,
+          fechaHora,
+          duracionMinutos,
+          estadoCita: company?.requiereConfirmacionCitas ? "PROGRAMADA" : "CONFIRMADA",
+          notas: "",
+          tipoVisita,
+          direccionDomicilio: tipoVisita === "DOMICILIO" ? body.direccionDomicilio : null,
+          pacienteLat: tipoVisita === "DOMICILIO" ? parseFloat(body.pacienteLat) : null,
+          pacienteLng: tipoVisita === "DOMICILIO" ? parseFloat(body.pacienteLng) : null,
+          tiempoTrasladoMinutos
+        };
         nuevaCita.id = Math.max(0, ...localCitas.map(c => c.id)) + 1;
         localCitas.push(nuevaCita);
       }

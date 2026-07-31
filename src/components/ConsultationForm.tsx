@@ -162,8 +162,8 @@ export default function ConsultationForm({ patient, onSave, onCancel, themeColor
   const [soapAnalisis, setSoapAnalisis] = useState('');
   const [soapPlan, setSoapPlan] = useState('');
 
-  // Auto-calculate IMC
-  const calculatedImc = parseFloat((peso / ((talla / 100) * (talla / 100))).toFixed(1));
+  // Auto-calculate IMC (talla=0 while the field is still empty would otherwise divide by zero)
+  const calculatedImc = talla > 0 ? parseFloat((peso / ((talla / 100) * (talla / 100))).toFixed(1)) : 0;
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1575,7 +1575,7 @@ export default function ConsultationForm({ patient, onSave, onCancel, themeColor
                       min="0"
                       max="10"
                       value={evaDolor}
-                      onChange={(e) => setEvaDolor(parseInt(e.target.value))}
+                      onChange={(e) => setEvaDolor(parseInt(e.target.value) || 0)}
                       className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-bold"
                     />
                   </div>

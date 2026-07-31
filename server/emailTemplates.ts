@@ -293,3 +293,26 @@ export function renderNuevaEmpresaEmail(params: {
 
   return { subject, html: emailShell(platformCompany, title, bodyHtml), text };
 }
+
+export function renderPasswordResetEmail(params: {
+  company: Company;
+  user: User;
+  nuevaContrasena: string;
+}): RenderedEmail {
+  const { company, user, nuevaContrasena } = params;
+  const title = "Restablecimiento de Contraseña";
+  const subject = `${title} - ${company.nombreComercial}`;
+
+  const bodyHtml = `
+    <p>Estimado(a) ${escapeHtml(user.nombre)},</p>
+    <p>Recibimos una solicitud para restablecer la contraseña de su cuenta.</p>
+    ${infoCard("Usuario", escapeHtml(user.usuario))}
+    ${infoCard("Contraseña Temporal", escapeHtml(nuevaContrasena))}
+    <p style="margin-top:16px;">Use esta contraseña para iniciar sesión. Si usted no solicitó este cambio, contacte a su administrador de inmediato.</p>
+    <p style="margin-top:16px;font-weight:bold;">${escapeHtml(company.nombreComercial)}</p>
+  `;
+
+  const text = `${title}\n\nUsuario: ${user.usuario}\nContraseña Temporal: ${nuevaContrasena}\n\nSi usted no solicitó este cambio, contacte a su administrador de inmediato.\n\n${company.nombreComercial}`;
+
+  return { subject, html: emailShell(company, title, bodyHtml), text };
+}

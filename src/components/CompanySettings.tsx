@@ -311,7 +311,14 @@ export default function CompanySettings({
   };
 
   const createCompany = () => {
-    const newId = Math.max(...companies.map(c => c.id)) + 1;
+    // `companies` here is pre-filtered to the single active company (see CompanySettings
+    // caller in App.tsx), so Math.max() over it previously always produced
+    // selectedCompanyId + 1 — an id that routinely already belongs to a different,
+    // unrelated company. The server's upsert-by-id logic (POST /api/companies) would then
+    // silently overwrite that other company's entire profile instead of inserting a new
+    // branch. Date.now() avoids colliding with real sequential DB ids, matching the same
+    // placeholder-id pattern already used for new consultations.
+    const newId = Date.now();
     const newComp: Company = {
       id: newId,
       nombreComercial: editName || `Nueva Clínica ${newId}`,
@@ -463,14 +470,21 @@ export default function CompanySettings({
       alert('Por favor complete el nombre, el precio y la duración del servicio.');
       return;
     }
+    const precioParsed = parseFloat(servicioPrecio);
+    const ivaParsed = servicioIva.trim() === '' ? null : parseFloat(servicioIva);
+    const duracionParsed = parseInt(servicioDuracion);
+    if (!Number.isFinite(precioParsed) || (ivaParsed != null && !Number.isFinite(ivaParsed)) || !Number.isFinite(duracionParsed)) {
+      alert('El precio, el IVA y la duración deben ser valores numéricos válidos.');
+      return;
+    }
     const servicioExistente = servicioEditId != null ? servicios.find(s => s.id === servicioEditId) : undefined;
     const servicio: Servicio = {
       id: servicioEditId ?? Math.max(0, ...servicios.map(s => s.id)) + 1,
       idCompania: currentCompany.id,
       nombre: servicioNombre.trim(),
-      precio: parseFloat(servicioPrecio),
-      porcentajeIva: servicioIva.trim() === '' ? null : parseFloat(servicioIva),
-      duracionMinutos: parseInt(servicioDuracion),
+      precio: precioParsed,
+      porcentajeIva: ivaParsed,
+      duracionMinutos: duracionParsed,
       codigoCabys: servicioCabys.trim() || null,
       unidadMedida: servicioUnidadMedida,
       activo: servicioExistente ? servicioExistente.activo : true
@@ -1372,7 +1386,7 @@ export default function CompanySettings({
                 max="100"
                 step="0.01"
                 value={editIva}
-                onChange={(e) => setEditIva(parseFloat(e.target.value))}
+                onChange={(e) => setEditIva(parseFloat(e.target.value) || 0)}
                 className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
               />
             </div>

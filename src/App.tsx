@@ -100,10 +100,11 @@ export default function App() {
     return local ? JSON.parse(local) : defaultUsers;
   });
 
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const local = localStorage.getItem('fisio_current_user');
-    return local ? JSON.parse(local) : null;
-  });
+  // El usuario actual ya no se restaura desde localStorage: la sesión real vive en una cookie
+  // httpOnly firmada por el servidor (ver server/auth.ts) y se recupera vía GET /api/me al
+  // montar la app — así un valor de localStorage manipulado no puede simular un login.
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
   const [citas, setCitas] = useState<Cita[]>(() => {
     const local = localStorage.getItem('fisio_citas');
@@ -133,124 +134,90 @@ export default function App() {
   const [companyPayments, setCompanyPayments] = useState<CompanyPayment[]>([]);
   const [facturas, setFacturas] = useState<Factura[]>([]);
 
-  // --- Initial MySQL Synchronization & Load ---
+  // --- Session bootstrap: restores the login from the httpOnly session cookie, if any ---
   useEffect(() => {
-    // 1. Fetch DB Connection status
     fetch('/api/db-status')
       .then(res => res.json())
       .then(data => setDbStatus(data))
       .catch(err => console.error("Error fetching database status:", err));
 
-    // 2. Fetch companies from MySQL
+    fetch('/api/me')
+      .then(res => {
+        if (!res.ok) throw new Error("No autenticado");
+        return res.json();
+      })
+      .then(data => {
+        setCurrentUser(data.user);
+        setSelectedCompanyId(data.user.idCompania);
+        if (data.company) {
+          setCompanies(prev => prev.some((c: Company) => c.id === data.company.id) ? prev.map((c: Company) => c.id === data.company.id ? data.company : c) : [...prev, data.company]);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  // --- Tenant data load: only once there's a logged-in session, since every one of these
+  // endpoints now requires auth and is scoped server-side to the current user's company ---
+  useEffect(() => {
+    if (!currentUser) return;
+
     fetch('/api/companies')
       .then(res => {
+        // A 401 here means the session cookie expired (or was revoked) while the app was
+        // open — bounce back to the login screen instead of silently running on stale data.
+        if (res.status === 401) { setCurrentUser(null); throw new Error("Sesión expirada"); }
         if (!res.ok) throw new Error("API error");
         return res.json();
       })
-      .then(data => {
-        if (data && data.length > 0) setCompanies(data);
-      })
+      .then(data => { if (data && data.length > 0) setCompanies(data); })
       .catch(err => console.log("MySQL offline, using local storage fallback for companies"));
 
-    // 3. Fetch users
     fetch('/api/users')
-      .then(res => {
-        if (!res.ok) throw new Error("API error");
-        return res.json();
-      })
-      .then(data => {
-        if (data && data.length > 0) setUsers(data);
-      })
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data && data.length > 0) setUsers(data); })
       .catch(err => console.log("MySQL offline, using local fallback for users"));
 
-    // 4. Fetch patients
     fetch('/api/patients')
-      .then(res => {
-        if (!res.ok) throw new Error("API error");
-        return res.json();
-      })
-      .then(data => {
-        if (data && data.length > 0) setPatients(data);
-      })
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data && data.length > 0) setPatients(data); })
       .catch(err => console.log("MySQL offline, using local fallback for patients"));
 
-    // 5. Fetch consultations
     fetch('/api/consultations')
-      .then(res => {
-        if (!res.ok) throw new Error("API error");
-        return res.json();
-      })
-      .then(data => {
-        if (data && data.length > 0) setConsultations(data);
-      })
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data && data.length > 0) setConsultations(data); })
       .catch(err => console.log("MySQL offline, using local fallback for consultations"));
 
-    // 6. Fetch appointments
     fetch('/api/citas')
-      .then(res => {
-        if (!res.ok) throw new Error("API error");
-        return res.json();
-      })
-      .then(data => {
-        if (data && data.length > 0) setCitas(data);
-      })
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data && data.length > 0) setCitas(data); })
       .catch(err => console.log("MySQL offline, using local fallback for citas"));
 
-    // 7. Fetch SMTP configs
     fetch('/api/smtp-configs')
-      .then(res => {
-        if (!res.ok) throw new Error("API error");
-        return res.json();
-      })
-      .then(data => {
-        if (data && data.length > 0) setSmtpConfigs(data);
-      })
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data && data.length > 0) setSmtpConfigs(data); })
       .catch(err => console.log("MySQL offline, using local fallback for SMTP configs"));
 
-    // 8. Fetch notification logs
     fetch('/api/notification-logs')
-      .then(res => {
-        if (!res.ok) throw new Error("API error");
-        return res.json();
-      })
-      .then(data => {
-        if (data && data.length > 0) setLogs(data);
-      })
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data && data.length > 0) setLogs(data); })
       .catch(err => console.log("MySQL offline, using local fallback for logs"));
 
-    // 9. Fetch calendar blocks
     fetch('/api/calendar-blocks')
-      .then(res => {
-        if (!res.ok) throw new Error("API error");
-        return res.json();
-      })
-      .then(data => {
-        if (data && data.length > 0) setCalendarBlocks(data);
-      })
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data && data.length > 0) setCalendarBlocks(data); })
       .catch(err => console.log("MySQL offline, using local fallback for calendar blocks"));
 
-    // 10. Fetch servicios
     fetch('/api/servicios')
-      .then(res => {
-        if (!res.ok) throw new Error("API error");
-        return res.json();
-      })
-      .then(data => {
-        if (data && data.length > 0) setServicios(data);
-      })
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data && data.length > 0) setServicios(data); })
       .catch(err => console.log("MySQL offline, using local fallback for servicios"));
 
-    // 11. Fetch facturas
     fetch('/api/facturas')
-      .then(res => {
-        if (!res.ok) throw new Error("API error");
-        return res.json();
-      })
-      .then(data => {
-        if (data) setFacturas(data);
-      })
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data) setFacturas(data); })
       .catch(err => console.log("MySQL offline, no factura history available"));
-  }, []);
+  }, [currentUser?.id]);
 
   // Save state updates to LocalStorage as secondary local cache / fallback
   useEffect(() => {
@@ -293,14 +260,6 @@ export default function App() {
     localStorage.setItem('fisio_users', JSON.stringify(users));
   }, [users]);
 
-  useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem('fisio_current_user', JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem('fisio_current_user');
-    }
-  }, [currentUser]);
-
   // Sync selectedCompanyId with logged-in user's company to prevent cross-company viewing
   useEffect(() => {
     if (currentUser && selectedCompanyId !== currentUser.idCompania) {
@@ -316,45 +275,48 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // --- Login and Company Registration Handlers ---
-  const handleLogin = (user: User, companyId: number) => {
+  const handleLoginSuccess = (user: User, company: Company | undefined) => {
     setCurrentUser(user);
-    setSelectedCompanyId(companyId);
+    setSelectedCompanyId(user.idCompania);
+    if (company) {
+      setCompanies(prev => prev.some(c => c.id === company.id) ? prev.map(c => c.id === company.id ? company : c) : [...prev, company]);
+    }
     setActiveTab('dashboard');
   };
 
-  const handleRegisterCompany = (newCompany: Company, newAdminUser: User) => {
-    fetch('/api/companies', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newCompany)
-    })
-    .then(res => res.json())
-    .then(savedCompany => {
-      setCompanies(prev => {
-        const exists = prev.some(c => c.id === savedCompany.id);
-        return exists ? prev.map(c => c.id === savedCompany.id ? savedCompany : c) : [...prev, savedCompany];
-      });
-      
-      const userToSave = { ...newAdminUser, idCompania: savedCompany.id };
-      return fetch('/api/users', {
+  // Registro público de empresa nueva: ninguna de las dos llamadas manda un `id` real (ver
+  // LoginView) — el id definitivo lo asigna la base de datos, así que la segunda llamada
+  // (crear el admin) usa el id que la primera realmente devolvió, no uno adivinado en el
+  // cliente. Ambas respuestas se revisan explícitamente (`res.ok`) porque un 400 (usuario
+  // duplicado, etc.) sigue siendo JSON válido y no cae solo en el `catch`.
+  const handleRegisterCompany = async (newCompany: Company, newAdminUser: User): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const companyRes = await fetch('/api/companies', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(userToSave)
+        body: JSON.stringify(newCompany)
       });
-    })
-    .then(res => res.json())
-    .then(savedUser => {
-      setUsers(prev => {
-        const exists = prev.some(u => u.id === savedUser.id);
-        return exists ? prev.map(u => u.id === savedUser.id ? savedUser : u) : [...prev, savedUser];
+      const savedCompany = await companyRes.json();
+      if (!companyRes.ok) {
+        return { ok: false, error: savedCompany.error || 'No se pudo registrar la empresa.' };
+      }
+      setCompanies(prev => [...prev, savedCompany]);
+
+      const userRes = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newAdminUser, idCompania: savedCompany.id })
       });
-    })
-    .catch(err => {
+      const savedUser = await userRes.json();
+      if (!userRes.ok) {
+        return { ok: false, error: savedUser.error || 'No se pudo crear el usuario administrador.' };
+      }
+      setUsers(prev => [...prev, savedUser]);
+      return { ok: true };
+    } catch (err: any) {
       console.error("Error registering company to MySQL:", err);
-      // Local fallback
-      setCompanies(prev => [...prev, newCompany]);
-      setUsers(prev => [...prev, newAdminUser]);
-    });
+      return { ok: false, error: 'No se pudo conectar con el servidor. Intente de nuevo.' };
+    }
   };
 
   const handleUpdateCompany = (updated: Company) => {
@@ -390,8 +352,8 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    fetch('/api/logout', { method: 'POST' }).catch(() => {});
     setCurrentUser(null);
-    localStorage.removeItem('fisio_current_user');
   };
 
   // Search & Filtering Queries
@@ -755,11 +717,12 @@ export default function App() {
   };
 
   if (!currentUser) {
+    // Espera a que se resuelva GET /api/me antes de mostrar el login, para no parpadear la
+    // pantalla de login un instante y luego saltar al dashboard si ya había una sesión válida.
+    if (!authChecked) return null;
     return (
       <LoginView
-        companies={companies}
-        users={users}
-        onLogin={handleLogin}
+        onLoginSuccess={handleLoginSuccess}
         onRegisterCompany={handleRegisterCompany}
       />
     );
@@ -953,7 +916,7 @@ export default function App() {
               </div>
             </button>
 
-            {currentUser?.idCompania === 7 && (
+            {currentUser?.idCompania === 7 && currentUser?.rol === 'Administrador' && (
               <button
                 onClick={() => { setActiveTab('saas-admin'); setIsMobileMenuOpen(false); }}
                 className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
@@ -1123,7 +1086,7 @@ export default function App() {
                 </div>
               </button>
 
-              {currentUser?.idCompania === 7 && (
+              {currentUser?.idCompania === 7 && currentUser?.rol === 'Administrador' && (
                 <button
                   onClick={() => setActiveTab('saas-admin')}
                   className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
@@ -1569,7 +1532,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'saas-admin' && currentUser?.idCompania === 7 && (
+            {activeTab === 'saas-admin' && currentUser?.idCompania === 7 && currentUser?.rol === 'Administrador' && (
               <SaasAdminPanel
                 companies={companies.filter(c => c.id !== 7)}
                 users={users}

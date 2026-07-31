@@ -360,9 +360,36 @@ export default function AgendaCalendar({
         setFormError(`Este horario está bloqueado${blockingBlock.motivo ? `: ${blockingBlock.motivo}` : '.'} Elige otra fecha/hora.`);
         return;
       }
+
+      const aMinutos = (hhmm: string) => {
+        const [h, m] = hhmm.split(':').map(Number);
+        return h * 60 + m;
+      };
+      const nuevoInicio = aMinutos(formTime);
+      const nuevoFin = nuevoInicio + formDuration;
+      const citaEnConflicto = citas.find(c => {
+        if (c.id === selectedCita?.id) return false;
+        if (c.idUsuarioNutricionista !== formDoctorId || c.estadoCita === 'CANCELADA') return false;
+        const [citaFecha, citaHora] = c.fechaHora.split('T');
+        if (citaFecha !== formDate) return false;
+        const citaInicio = aMinutos(citaHora);
+        const citaFin = citaInicio + c.duracionMinutos;
+        return nuevoInicio < citaFin && nuevoFin > citaInicio;
+      });
+      if (citaEnConflicto) {
+        setFormError('Este profesional ya tiene otra cita en ese horario. Elige otra fecha/hora.');
+        return;
+      }
     }
 
-    const nextId = selectedCita ? selectedCita.id : Math.max(...citas.map(c => c.id), 0) + 1;
+    // `citas` here is pre-filtered to the active company (see AgendaCalendar caller in
+    // App.tsx), but cita IDs are global/auto-increment across all companies in the DB —
+    // Math.max() over this filtered subset previously produced IDs that could already
+    // belong to another company's appointment, causing the server's upsert-by-id logic
+    // (POST /api/citas) to silently overwrite that unrelated appointment instead of
+    // inserting a new one. Date.now() avoids colliding with real sequential DB ids,
+    // matching the same placeholder-id pattern already used for new consultations.
+    const nextId = selectedCita ? selectedCita.id : Date.now();
 
     const savedCita: Cita = {
       id: nextId,

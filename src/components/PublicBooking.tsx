@@ -365,9 +365,9 @@ export default function PublicBooking() {
             <button onClick={usarUbicacionActual} className="text-xs text-slate-600 flex items-center gap-1.5 underline">
               <MapPin className="w-3.5 h-3.5" /> Usar mi ubicación actual
             </button>
-            <p className="text-[10px] text-slate-500">El tiempo de traslado se validará al confirmar la cita en el siguiente paso.</p>
+            <p className="text-[10px] text-slate-500">Seleccione una sugerencia de la lista al escribir, o use su ubicación actual — se necesita la ubicación exacta para calcular el tiempo de traslado.</p>
             <button
-              disabled={!direccionDomicilio.trim() && (pacienteLat == null)}
+              disabled={pacienteLat == null || pacienteLng == null}
               onClick={() => setPaso(6)}
               className="w-full text-white font-bold text-xs py-3 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
               style={{ backgroundColor: colorPrimario }}
