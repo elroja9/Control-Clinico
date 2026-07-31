@@ -198,8 +198,10 @@ export interface DatosFacturaXml {
   resumen: ResumenCalculado;
 }
 
-/** Construye el XML sin firmar de una Factura Electrónica v4.4. */
-export function construirXmlFactura(datos: DatosFacturaXml): string {
+/** Cuerpo común a Factura Electrónica y Nota de Crédito Electrónica (idéntico de <Clave> a
+ * </ResumenFactura> — solo cambia la etiqueta raíz y, en la Nota de Crédito, el bloque
+ * <InformacionReferencia> que se agrega después). Evita duplicar esta plantilla dos veces. */
+function construirCuerpoComprobante(datos: DatosFacturaXml): string {
   const { clave, consecutivo, fechaEmision, emisor, receptor, condicionVenta, medioPago, lineas, resumen } = datos;
 
   const lineasXml = lineas.map(l => `
@@ -224,9 +226,7 @@ export function construirXmlFactura(datos: DatosFacturaXml): string {
       <MontoTotalLinea>${fmtDinero(l.montoTotalLinea)}</MontoTotalLinea>
     </LineaDetalle>`).join("");
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<FacturaElectronica xmlns="${NAMESPACE_FACTURA}" xmlns:ds="${NAMESPACE_DS}">
-  <Clave>${clave}</Clave>
+  return `  <Clave>${clave}</Clave>
   <ProveedorSistemas>${escapeXml(limpiarIdentificacion(emisor.identificacion).slice(0, 20))}</ProveedorSistemas>
   <CodigoActividadEmisor>${emisor.codigoActividad}</CodigoActividadEmisor>
   <NumeroConsecutivo>${consecutivo}</NumeroConsecutivo>
@@ -275,6 +275,53 @@ export function construirXmlFactura(datos: DatosFacturaXml): string {
       <TotalMedioPago>${fmtDinero(resumen.totalComprobante)}</TotalMedioPago>
     </MedioPago>
     <TotalComprobante>${fmtDinero(resumen.totalComprobante)}</TotalComprobante>
-  </ResumenFactura>
+  </ResumenFactura>`;
+}
+
+/** Construye el XML sin firmar de una Factura Electrónica v4.4. */
+export function construirXmlFactura(datos: DatosFacturaXml): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<FacturaElectronica xmlns="${NAMESPACE_FACTURA}" xmlns:ds="${NAMESPACE_DS}">
+${construirCuerpoComprobante(datos)}
 </FacturaElectronica>`;
+}
+
+const NAMESPACE_NOTA_CREDITO = "https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/notaCreditoElectronica";
+
+export interface InformacionReferenciaFactura {
+  tipoDocumento: string; // catálogo "Tipo de documento de referencia" — '01' = Factura Electrónica
+  numero: string; // clave de 50 dígitos del documento que se referencia
+  fechaEmision: Date; // fecha de emisión del documento referenciado
+  codigo: string; // catálogo "Código de referencia" — '01' = Anula documento de referencia
+  razon: string; // texto libre explicando el motivo
+}
+
+export interface DatosNotaCreditoXml extends DatosFacturaXml {
+  referencia: InformacionReferenciaFactura;
+}
+
+/**
+ * Construye el XML sin firmar de una Nota de Crédito Electrónica v4.4 — usada aquí únicamente
+ * para anular una Factura Electrónica ya emitida (referencia.codigo = '01').
+ *
+ * El orden y nombres de campos de <InformacionReferencia> (TipoDoc/Numero/FechaEmision/Codigo/
+ * Razon, después de </ResumenFactura>) se armaron cruzando fuentes públicas — el sitio de
+ * Hacienda bloqueó el acceso automatizado al XSD oficial en esta sesión, así que esto NO quedó
+ * verificado contra el XSD como sí lo está el resto de este archivo (ver comentario al inicio).
+ * Antes de usar en producción: generar una Nota de Crédito de prueba contra el ambiente SANDBOX
+ * de Hacienda y confirmar que la acepte.
+ */
+export function construirXmlNotaCredito(datos: DatosNotaCreditoXml): string {
+  const { referencia } = datos;
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<NotaCreditoElectronica xmlns="${NAMESPACE_NOTA_CREDITO}" xmlns:ds="${NAMESPACE_DS}">
+${construirCuerpoComprobante(datos)}
+  <InformacionReferencia>
+    <TipoDoc>${referencia.tipoDocumento}</TipoDoc>
+    <Numero>${referencia.numero}</Numero>
+    <FechaEmision>${fechaEmisionCR(referencia.fechaEmision)}</FechaEmision>
+    <Codigo>${referencia.codigo}</Codigo>
+    <Razon>${escapeXml(referencia.razon)}</Razon>
+  </InformacionReferencia>
+</NotaCreditoElectronica>`;
 }

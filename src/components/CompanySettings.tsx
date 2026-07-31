@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION, Servicio } from '../data/mockData';
+import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit } from 'lucide-react';
 
 interface CompanySettingsProps {
@@ -16,6 +17,7 @@ interface CompanySettingsProps {
   servicios: Servicio[];
   onSaveServicio: (servicio: Servicio) => void;
   onCargarServiciosDefecto: (idCompania: number) => Promise<Servicio[]>;
+  onAjustarStock: (idServicio: number, nuevoStock: number, notas: string) => Promise<void>;
 }
 
 export default function CompanySettings({
@@ -31,7 +33,8 @@ export default function CompanySettings({
   onSaveUser,
   servicios,
   onSaveServicio,
-  onCargarServiciosDefecto
+  onCargarServiciosDefecto,
+  onAjustarStock
 }: CompanySettingsProps) {
   const currentCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
@@ -50,20 +53,29 @@ export default function CompanySettings({
   const [horario, setHorario] = useState<HorarioAtencion>(currentCompany.horarioAtencion || DEFAULT_HORARIO_ATENCION);
   const [horarioGuardado, setHorarioGuardado] = useState(false);
 
-  // Servicios section
+  // Servicios / Artículos section (catálogo único — ver tipo TipoServicio en mockData.ts)
   const [isServicioFormOpen, setIsServicioFormOpen] = useState(false);
   const [servicioEditId, setServicioEditId] = useState<number | null>(null);
+  const [servicioTipo, setServicioTipo] = useState<'SERVICIO' | 'ARTICULO'>('SERVICIO');
   const [servicioNombre, setServicioNombre] = useState('');
   const [servicioPrecio, setServicioPrecio] = useState('');
   const [servicioIva, setServicioIva] = useState('');
   const [servicioDuracion, setServicioDuracion] = useState('30');
   const [servicioCabys, setServicioCabys] = useState('');
-  const [servicioUnidadMedida, setServicioUnidadMedida] = useState<'Sp' | 'Spe' | 'St'>('Sp');
+  const [servicioUnidadMedida, setServicioUnidadMedida] = useState<'Sp' | 'Spe' | 'St' | 'Os' | 'h' | 'Unid'>('Sp');
+  const [servicioStock, setServicioStock] = useState('0');
+  const [servicioStockMinimo, setServicioStockMinimo] = useState('');
+  const [servicioCostoUnitario, setServicioCostoUnitario] = useState('');
+  const [servicioCodigoBarras, setServicioCodigoBarras] = useState('');
   const [cabysQuery, setCabysQuery] = useState('');
   const [cabysResultados, setCabysResultados] = useState<Array<{ codigo: string; descripcion: string }>>([]);
   const [buscandoCabys, setBuscandoCabys] = useState(false);
   const [cargandoServiciosDefecto, setCargandoServiciosDefecto] = useState(false);
   const [mensajeServiciosDefecto, setMensajeServiciosDefecto] = useState('');
+  const [ajustandoStockId, setAjustandoStockId] = useState<number | null>(null);
+  const [ajusteStockValor, setAjusteStockValor] = useState('');
+  const [ajusteStockNotas, setAjusteStockNotas] = useState('');
+  const [ajusteStockGuardando, setAjusteStockGuardando] = useState(false);
 
   useEffect(() => {
     setIsAddingUser(false);
@@ -87,12 +99,32 @@ export default function CompanySettings({
   const [editColorPri, setEditColorPri] = useState(currentCompany.colorPrimario);
   const [editColorSide, setEditColorSide] = useState(currentCompany.colorSidebar);
   const [editLogo, setEditLogo] = useState(currentCompany.logoUrl);
+  const [logoError, setLogoError] = useState('');
   const [editPerfil, setEditPerfil] = useState<'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa'>(currentCompany.perfilCompania || 'Ambas');
   const [editRequiereConfirmacion, setEditRequiereConfirmacion] = useState(currentCompany.requiereConfirmacionCitas || false);
+  const [editRegimenSimplificado, setEditRegimenSimplificado] = useState(currentCompany.regimenSimplificado || false);
   const [editProvincia, setEditProvincia] = useState(currentCompany.provincia || '');
   const [editCanton, setEditCanton] = useState(currentCompany.canton || '');
   const [editDistrito, setEditDistrito] = useState(currentCompany.distrito || '');
   const [editOtrasSenas, setEditOtrasSenas] = useState(currentCompany.otrasSenas || '');
+
+  // Ubicación fiscal: selects en cascada sobre el catálogo oficial DTA (src/data/costaRicaLocations.ts)
+  // — Company usa códigos string tal cual (a diferencia de Patient, que codifica IDs numéricos).
+  const provinciaSeleccionada = COSTA_RICA_PROVINCIAS.find(p => p.codigo === editProvincia);
+  const cantonesDisponiblesCompania = provinciaSeleccionada?.cantones || [];
+  const cantonSeleccionado = cantonesDisponiblesCompania.find(c => c.codigo === editCanton);
+  const distritosDisponiblesCompania = cantonSeleccionado?.distritos || [];
+
+  const handleCambiarProvinciaFiscal = (codigo: string) => {
+    setEditProvincia(codigo);
+    setEditCanton('');
+    setEditDistrito('');
+  };
+
+  const handleCambiarCantonFiscal = (codigo: string) => {
+    setEditCanton(codigo);
+    setEditDistrito('');
+  };
 
   // --- SMTP Configuration State ---
   const [smtpProveedor, setSmtpProveedor] = useState<CompaniaSmtpConfig['proveedor']>('OTRO');
@@ -279,6 +311,7 @@ export default function CompanySettings({
       setEditLogo(comp.logoUrl);
       setEditPerfil(comp.perfilCompania || 'Ambas');
       setEditRequiereConfirmacion(comp.requiereConfirmacionCitas || false);
+      setEditRegimenSimplificado(comp.regimenSimplificado || false);
       setEditProvincia(comp.provincia || '');
       setEditCanton(comp.canton || '');
       setEditDistrito(comp.distrito || '');
@@ -302,6 +335,7 @@ export default function CompanySettings({
       logoUrl: editLogo,
       perfilCompania: editPerfil,
       requiereConfirmacionCitas: editRequiereConfirmacion,
+      regimenSimplificado: editRegimenSimplificado,
       provincia: editProvincia,
       canton: editCanton,
       distrito: editDistrito,
@@ -338,6 +372,7 @@ export default function CompanySettings({
       proximoVencimiento: null,
       horarioAtencion: DEFAULT_HORARIO_ATENCION,
       requiereConfirmacionCitas: editRequiereConfirmacion,
+      regimenSimplificado: editRegimenSimplificado,
       provincia: editProvincia,
       canton: editCanton,
       distrito: editDistrito,
@@ -420,12 +455,17 @@ export default function CompanySettings({
 
   const openNewServicioForm = () => {
     setServicioEditId(null);
+    setServicioTipo('SERVICIO');
     setServicioNombre('');
     setServicioPrecio('');
     setServicioIva('');
     setServicioDuracion('30');
     setServicioCabys('');
     setServicioUnidadMedida('Sp');
+    setServicioStock('0');
+    setServicioStockMinimo('');
+    setServicioCostoUnitario('');
+    setServicioCodigoBarras('');
     setCabysQuery('');
     setCabysResultados([]);
     setIsServicioFormOpen(true);
@@ -433,12 +473,17 @@ export default function CompanySettings({
 
   const openEditServicioForm = (s: Servicio) => {
     setServicioEditId(s.id);
+    setServicioTipo(s.tipo || 'SERVICIO');
     setServicioNombre(s.nombre);
     setServicioPrecio(s.precio.toString());
     setServicioIva(s.porcentajeIva != null ? s.porcentajeIva.toString() : '');
     setServicioDuracion(s.duracionMinutos.toString());
     setServicioCabys(s.codigoCabys || '');
     setServicioUnidadMedida(s.unidadMedida || 'Sp');
+    setServicioStock(s.stock != null ? s.stock.toString() : '0');
+    setServicioStockMinimo(s.stockMinimo != null ? s.stockMinimo.toString() : '');
+    setServicioCostoUnitario(s.costoUnitario != null ? s.costoUnitario.toString() : '');
+    setServicioCodigoBarras(s.codigoBarras || '');
     setCabysQuery('');
     setCabysResultados([]);
     setIsServicioFormOpen(true);
@@ -466,28 +511,45 @@ export default function CompanySettings({
 
   const handleSubmitServicio = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!servicioNombre.trim() || !servicioPrecio.trim() || !servicioDuracion.trim()) {
-      alert('Por favor complete el nombre, el precio y la duración del servicio.');
+    const esArticulo = servicioTipo === 'ARTICULO';
+    if (!servicioNombre.trim() || !servicioPrecio.trim() || (!esArticulo && !servicioDuracion.trim())) {
+      alert(`Por favor complete el nombre, el precio${esArticulo ? '' : ' y la duración'} del ${esArticulo ? 'artículo' : 'servicio'}.`);
       return;
     }
     const precioParsed = parseFloat(servicioPrecio);
     const ivaParsed = servicioIva.trim() === '' ? null : parseFloat(servicioIva);
-    const duracionParsed = parseInt(servicioDuracion);
-    if (!Number.isFinite(precioParsed) || (ivaParsed != null && !Number.isFinite(ivaParsed)) || !Number.isFinite(duracionParsed)) {
-      alert('El precio, el IVA y la duración deben ser valores numéricos válidos.');
+    const duracionParsed = esArticulo ? 0 : parseInt(servicioDuracion);
+    const stockParsed = esArticulo ? parseInt(servicioStock || '0') : null;
+    const stockMinimoParsed = esArticulo && servicioStockMinimo.trim() !== '' ? parseInt(servicioStockMinimo) : null;
+    const costoParsed = esArticulo && servicioCostoUnitario.trim() !== '' ? parseFloat(servicioCostoUnitario) : null;
+    if (
+      !Number.isFinite(precioParsed) || (ivaParsed != null && !Number.isFinite(ivaParsed)) || !Number.isFinite(duracionParsed) ||
+      (esArticulo && (!Number.isFinite(stockParsed) || (stockParsed as number) < 0)) ||
+      (stockMinimoParsed != null && !Number.isFinite(stockMinimoParsed)) ||
+      (costoParsed != null && !Number.isFinite(costoParsed))
+    ) {
+      alert('El precio, el IVA, la duración y los campos de inventario deben ser valores numéricos válidos.');
       return;
     }
     const servicioExistente = servicioEditId != null ? servicios.find(s => s.id === servicioEditId) : undefined;
     const servicio: Servicio = {
       id: servicioEditId ?? Math.max(0, ...servicios.map(s => s.id)) + 1,
       idCompania: currentCompany.id,
+      tipo: servicioTipo,
       nombre: servicioNombre.trim(),
       precio: precioParsed,
       porcentajeIva: ivaParsed,
       duracionMinutos: duracionParsed,
       codigoCabys: servicioCabys.trim() || null,
       unidadMedida: servicioUnidadMedida,
-      activo: servicioExistente ? servicioExistente.activo : true
+      activo: servicioExistente ? servicioExistente.activo : true,
+      // El servidor ignora `stock` al editar un artículo ya existente (solo Ajustar Stock puede
+      // cambiarlo) — se manda de todas formas para que la creación de uno nuevo tenga su
+      // existencia inicial.
+      stock: stockParsed,
+      stockMinimo: stockMinimoParsed,
+      costoUnitario: costoParsed,
+      codigoBarras: esArticulo ? (servicioCodigoBarras.trim() || null) : null
     };
     onSaveServicio(servicio);
     setIsServicioFormOpen(false);
@@ -495,6 +557,31 @@ export default function CompanySettings({
 
   const handleToggleServicioActivo = (s: Servicio) => {
     onSaveServicio({ ...s, activo: !s.activo });
+  };
+
+  const openAjustarStock = (s: Servicio) => {
+    setAjustandoStockId(s.id);
+    setAjusteStockValor(s.stock != null ? s.stock.toString() : '0');
+    setAjusteStockNotas('');
+  };
+
+  const handleGuardarAjusteStock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (ajustandoStockId == null) return;
+    const nuevoStock = parseInt(ajusteStockValor);
+    if (!Number.isFinite(nuevoStock) || nuevoStock < 0) {
+      alert('La nueva existencia debe ser un número entero mayor o igual a cero.');
+      return;
+    }
+    setAjusteStockGuardando(true);
+    try {
+      await onAjustarStock(ajustandoStockId, nuevoStock, ajusteStockNotas.trim());
+      setAjustandoStockId(null);
+    } catch (err: any) {
+      alert(err.message || 'No se pudo ajustar la existencia.');
+    } finally {
+      setAjusteStockGuardando(false);
+    }
   };
 
   const handleCargarServiciosDefecto = async () => {
@@ -1091,7 +1178,7 @@ export default function CompanySettings({
                   className="flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  Nuevo Servicio
+                  Nuevo Servicio o Artículo
                 </button>
               </div>
             )}
@@ -1103,14 +1190,30 @@ export default function CompanySettings({
 
           {isServicioFormOpen && (
             <form onSubmit={handleSubmitServicio} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setServicioTipo('SERVICIO'); if (servicioUnidadMedida === 'Unid') setServicioUnidadMedida('Sp'); }}
+                  className={`py-1.5 rounded-lg text-xs font-bold border-2 ${servicioTipo === 'SERVICIO' ? 'border-slate-800 bg-slate-50' : 'border-slate-200 text-slate-500'}`}
+                >
+                  Servicio (sesión/cita)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setServicioTipo('ARTICULO'); setServicioUnidadMedida('Unid'); }}
+                  className={`py-1.5 rounded-lg text-xs font-bold border-2 ${servicioTipo === 'ARTICULO' ? 'border-slate-800 bg-slate-50' : 'border-slate-200 text-slate-500'}`}
+                >
+                  Artículo (con existencias)
+                </button>
+              </div>
+              <div className={`grid grid-cols-1 sm:grid-cols-4 gap-3`}>
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">Nombre del Servicio *</label>
+                  <label className="block text-slate-600 font-medium mb-1">Nombre {servicioTipo === 'ARTICULO' ? 'del Artículo' : 'del Servicio'} *</label>
                   <input
                     type="text"
                     value={servicioNombre}
                     onChange={(e) => setServicioNombre(e.target.value)}
-                    placeholder="ej: Sesión de Sauna"
+                    placeholder={servicioTipo === 'ARTICULO' ? 'ej: Crema Post-Sesión 250ml' : 'ej: Sesión de Sauna'}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
                   />
                 </div>
@@ -1125,17 +1228,19 @@ export default function CompanySettings({
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
                   />
                 </div>
-                <div>
-                  <label className="block text-slate-600 font-medium mb-1">Duración (min) *</label>
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={servicioDuracion}
-                    onChange={(e) => setServicioDuracion(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                  />
-                </div>
+                {servicioTipo === 'SERVICIO' && (
+                  <div>
+                    <label className="block text-slate-600 font-medium mb-1">Duración (min) *</label>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={servicioDuracion}
+                      onChange={(e) => setServicioDuracion(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="block text-slate-600 font-medium mb-1">% IVA (vacío = por defecto)</label>
                   <input
@@ -1150,6 +1255,55 @@ export default function CompanySettings({
                   />
                 </div>
               </div>
+              {servicioTipo === 'ARTICULO' && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 border-t border-slate-100">
+                  <div>
+                    <label className="block text-slate-600 font-medium mb-1">{servicioEditId != null ? 'Existencia Actual' : 'Existencia Inicial'}</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={servicioStock}
+                      onChange={(e) => setServicioStock(e.target.value)}
+                      disabled={servicioEditId != null}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 disabled:opacity-60"
+                    />
+                    {servicioEditId != null && <p className="text-[10px] text-slate-400 mt-1">Use "Ajustar Stock" en la lista para cambiarla.</p>}
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 font-medium mb-1">Stock Mínimo</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={servicioStockMinimo}
+                      onChange={(e) => setServicioStockMinimo(e.target.value)}
+                      placeholder="Alerta de faltante"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 font-medium mb-1">Costo Unitario (₡)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={servicioCostoUnitario}
+                      onChange={(e) => setServicioCostoUnitario(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 font-medium mb-1">Código de Barras</label>
+                    <input
+                      type="text"
+                      value={servicioCodigoBarras}
+                      onChange={(e) => setServicioCodigoBarras(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                    />
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-slate-100">
                 <div className="relative">
                   <label className="block text-slate-600 font-medium mb-1">Código CABYS * (obligatorio para facturar)</label>
@@ -1184,12 +1338,20 @@ export default function CompanySettings({
                   <label className="block text-slate-600 font-medium mb-1">Unidad de Medida (Hacienda)</label>
                   <select
                     value={servicioUnidadMedida}
-                    onChange={(e) => setServicioUnidadMedida(e.target.value as 'Sp' | 'Spe' | 'St')}
+                    onChange={(e) => setServicioUnidadMedida(e.target.value as 'Sp' | 'Spe' | 'St' | 'Os' | 'h' | 'Unid')}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
                   >
-                    <option value="Sp">Servicios Profesionales</option>
-                    <option value="Spe">Servicios Personales</option>
-                    <option value="St">Servicios Técnicos</option>
+                    {servicioTipo === 'ARTICULO' ? (
+                      <option value="Unid">Unidad</option>
+                    ) : (
+                      <>
+                        <option value="Sp">Servicios Profesionales</option>
+                        <option value="Spe">Servicios Personales</option>
+                        <option value="St">Servicios Técnicos</option>
+                        <option value="Os">Otros Servicios</option>
+                        <option value="h">Horas</option>
+                      </>
+                    )}
                   </select>
                 </div>
               </div>
@@ -1215,38 +1377,105 @@ export default function CompanySettings({
             {companyServicios.length === 0 && !isServicioFormOpen && (
               <p className="text-slate-400 text-center py-3">Todavía no has registrado ningún servicio.</p>
             )}
-            {companyServicios.map(s => (
-              <div key={s.id} className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg">
-                <div>
-                  <span className="font-semibold text-slate-800 block">{s.nombre}</span>
-                  <span className="text-[10px] text-slate-500">
-                    ₡{s.precio.toLocaleString('es-CR')} &middot; {s.duracionMinutos} min &middot; IVA {s.porcentajeIva != null ? `${s.porcentajeIva}%` : `${currentCompany.ivaPorDefecto}% (por defecto)`}
-                  </span>
-                  {!s.codigoCabys && (
-                    <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full inline-block mt-1">Sin código CABYS — no se puede facturar</span>
+            {companyServicios.map(s => {
+              const esArticulo = s.tipo === 'ARTICULO';
+              const faltante = esArticulo && s.stockMinimo != null && (s.stock || 0) <= s.stockMinimo;
+              return (
+                <div key={s.id} className="p-2.5 bg-white border border-slate-200 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="font-semibold text-slate-800 inline-flex items-center gap-1.5">
+                        {s.nombre}
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${esArticulo ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-600'}`}>
+                          {esArticulo ? 'Artículo' : 'Servicio'}
+                        </span>
+                      </span>
+                      <span className="text-[10px] text-slate-500 block">
+                        ₡{s.precio.toLocaleString('es-CR')}
+                        {esArticulo ? ` · Existencia: ${s.stock ?? 0}` : ` · ${s.duracionMinutos} min`}
+                        {' · IVA '}{s.porcentajeIva != null ? `${s.porcentajeIva}%` : `${currentCompany.ivaPorDefecto}% (por defecto)`}
+                      </span>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        {!s.codigoCabys && (
+                          <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full inline-block">Sin código CABYS — no se puede facturar</span>
+                        )}
+                        {faltante && (
+                          <span className="text-[9px] font-bold text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded-full inline-block">Faltante (mín: {s.stockMinimo})</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${s.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
+                        {s.activo ? 'Activo' : 'Inactivo'}
+                      </span>
+                      {esArticulo && (
+                        <button
+                          onClick={() => openAjustarStock(s)}
+                          className="text-[10px] font-semibold text-indigo-700 hover:underline"
+                        >
+                          Ajustar Stock
+                        </button>
+                      )}
+                      <button
+                        onClick={() => openEditServicioForm(s)}
+                        title="Editar"
+                        className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleToggleServicioActivo(s)}
+                        title={s.activo ? 'Desactivar' : 'Activar'}
+                        className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                      >
+                        <Power className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  {ajustandoStockId === s.id && (
+                    <form onSubmit={handleGuardarAjusteStock} className="mt-2.5 pt-2.5 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
+                      <div>
+                        <label className="block text-slate-600 font-medium mb-1">Nueva Existencia</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={ajusteStockValor}
+                          onChange={(e) => setAjusteStockValor(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-slate-600 font-medium mb-1">Motivo (opcional)</label>
+                        <input
+                          type="text"
+                          value={ajusteStockNotas}
+                          onChange={(e) => setAjusteStockNotas(e.target.value)}
+                          placeholder="ej: Conteo físico, merma, compra"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setAjustandoStockId(null)}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={ajusteStockGuardando}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60"
+                        >
+                          {ajusteStockGuardando ? 'Guardando…' : 'Guardar'}
+                        </button>
+                      </div>
+                    </form>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${s.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
-                    {s.activo ? 'Activo' : 'Inactivo'}
-                  </span>
-                  <button
-                    onClick={() => openEditServicioForm(s)}
-                    title="Editar"
-                    className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
-                  >
-                    <Edit className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => handleToggleServicioActivo(s)}
-                    title={s.activo ? 'Desactivar' : 'Activar'}
-                    className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
-                  >
-                    <Power className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -1401,43 +1630,62 @@ export default function CompanySettings({
                 Las citas en línea requieren confirmación manual (no se auto-confirman)
               </label>
             </div>
+            <div className="flex items-center gap-2 pt-1 sm:col-span-2">
+              <label className="flex items-center gap-2 text-slate-600 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editRegimenSimplificado}
+                  onChange={(e) => setEditRegimenSimplificado(e.target.checked)}
+                  className="w-3.5 h-3.5"
+                />
+                Empresa inscrita en Régimen de Tributación Simplificada (no declara IVA por D-104 tradicional)
+              </label>
+            </div>
           </div>
 
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
             <p className="text-[11px] font-bold text-amber-800 uppercase mb-2">Ubicación Fiscal (requerida para Facturar)</p>
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <div>
-                <label className="block text-slate-600 mb-1">Provincia (código INEC)</label>
-                <input
-                  type="text"
+                <label className="block text-slate-600 mb-1">Provincia</label>
+                <select
                   value={editProvincia}
-                  onChange={(e) => setEditProvincia(e.target.value)}
-                  placeholder="ej: 1"
-                  maxLength={1}
+                  onChange={(e) => handleCambiarProvinciaFiscal(e.target.value)}
                   className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
-                />
+                >
+                  <option value="">Seleccione...</option>
+                  {COSTA_RICA_PROVINCIAS.map(p => (
+                    <option key={p.codigo} value={p.codigo}>{p.nombre}</option>
+                  ))}
+                </select>
               </div>
               <div>
-                <label className="block text-slate-600 mb-1">Cantón (código INEC)</label>
-                <input
-                  type="text"
+                <label className="block text-slate-600 mb-1">Cantón</label>
+                <select
                   value={editCanton}
-                  onChange={(e) => setEditCanton(e.target.value)}
-                  placeholder="ej: 01"
-                  maxLength={2}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
-                />
+                  onChange={(e) => handleCambiarCantonFiscal(e.target.value)}
+                  disabled={!editProvincia}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500 disabled:opacity-60"
+                >
+                  <option value="">Seleccione...</option>
+                  {cantonesDisponiblesCompania.map(c => (
+                    <option key={c.codigo} value={c.codigo}>{c.nombre}</option>
+                  ))}
+                </select>
               </div>
               <div>
-                <label className="block text-slate-600 mb-1">Distrito (código INEC)</label>
-                <input
-                  type="text"
+                <label className="block text-slate-600 mb-1">Distrito</label>
+                <select
                   value={editDistrito}
                   onChange={(e) => setEditDistrito(e.target.value)}
-                  placeholder="ej: 01"
-                  maxLength={2}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
-                />
+                  disabled={!editCanton}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500 disabled:opacity-60"
+                >
+                  <option value="">Seleccione...</option>
+                  {distritosDisponiblesCompania.map(d => (
+                    <option key={d.codigo} value={d.codigo}>{d.nombre}</option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label className="block text-slate-600 mb-1">Otras Señas (dirección exacta)</label>
@@ -1490,14 +1738,19 @@ export default function CompanySettings({
           </div>
 
           <div>
-            <label className="block text-slate-600 mb-1">URL de Logo de la Empresa</label>
-            <input
-              type="text"
-              value={editLogo}
-              onChange={(e) => setEditLogo(e.target.value)}
-              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 mb-2"
-            />
-            <span className="text-[10px] text-slate-400 block mb-1">Preset Logos Rápidos:</span>
+            <label className="block text-slate-600 mb-1">Logo de la Empresa</label>
+            <div className="flex items-center gap-3 mb-2">
+              {editLogo && (
+                <img src={editLogo} alt="Logo actual" className="w-14 h-14 rounded-xl object-cover border border-slate-200" />
+              )}
+              <label className="cursor-pointer bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5">
+                <Upload className="w-3.5 h-3.5" />
+                {editLogo ? 'Cambiar imagen' : 'Subir imagen'}
+                <input type="file" accept="image/*" onChange={handleLogoFileChange} className="hidden" />
+              </label>
+            </div>
+            {logoError && <p className="text-[10px] text-rose-600 mb-2">{logoError}</p>}
+            <span className="text-[10px] text-slate-400 block mb-1">O elija un logo predeterminado:</span>
             <div className="flex gap-2">
               {presetLogos.map((pl, idx) => (
                 <button

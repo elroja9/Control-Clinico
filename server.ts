@@ -28,7 +28,8 @@ import {
   generarConsecutivo,
   generarClaveNumerica,
   fechaEmisionCR,
-  construirXmlFactura
+  construirXmlFactura,
+  construirXmlNotaCredito
 } from "./server/haciendaFactura";
 import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda } from "./server/haciendaApi";
 import { serviciosDefectoParaPerfil } from "./server/serviciosDefecto";
@@ -36,7 +37,7 @@ import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
 import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
-import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura } from "./src/data/mockData";
+import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales } from "./src/data/mockData";
 import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
@@ -52,6 +53,7 @@ import {
   defaultServicios,
   defaultFacturas
 } from "./src/data/mockData";
+import { COSTA_RICA_PROVINCIAS } from "./src/data/costaRicaLocations";
 
 dotenv.config();
 
@@ -72,6 +74,15 @@ let localCalendarBlocks = [...defaultCalendarBlocks];
 let localCompanyPayments: CompanyPayment[] = [...defaultCompanyPayments];
 let localServicios: Servicio[] = [...defaultServicios];
 let localFacturas: Factura[] = [...defaultFacturas];
+let localCuentasCobrar: Omit<CuentaCobrar, "pagos">[] = [];
+let localCxcPagos: PagoCuentaCobrar[] = [];
+let localProveedores: Proveedor[] = [];
+let localCuentasPagar: Omit<CuentaPagar, "pagos">[] = [];
+let localCxpPagos: PagoCuentaPagar[] = [];
+interface LocalGastosManuales extends GastosManualesAnuales { idCompania: number; anio: number; }
+let localGastosManuales: LocalGastosManuales[] = [];
+interface LocalCierreFiscal { id: number; idCompania: number; tipo: "D104" | "D101"; periodo: string; datos: ReporteD104 | ReporteD101; creadoPor: string | null; creadoEn: string; }
+let localCierresFiscales: LocalCierreFiscal[] = [];
 
 interface LocalHaciendaConfig {
   idCompania: number;
@@ -83,6 +94,7 @@ interface LocalHaciendaConfig {
   certificadoNombreArchivo: string | null;
   certificadoVenceEn: string | null;
   ultimoConsecutivo: number;
+  ultimoConsecutivoNc: number;
 }
 let localHaciendaConfigs: LocalHaciendaConfig[] = [];
 
@@ -120,12 +132,20 @@ async function setupDatabase() {
       connectionLimit: 10,
       queueLimit: 0,
       connectTimeout: 5000,
-      multipleStatements: true
+      multipleStatements: true,
+      // Sin esto, mysql2 devuelve las columnas DECIMAL como string (p.ej. "1200.00") — rompe
+      // cualquier .toLocaleString()/aritmética directa en el frontend sobre montos de
+      // facturas/CXC/CXP. Los montos de esta app caben muy por debajo de Number.MAX_SAFE_INTEGER,
+      // así que no hay riesgo real de pérdida de precisión de punto flotante.
+      decimalNumbers: true
     });
 
     console.log(`[MySQL] Conexión establecida con éxito a '${database}'. Inicializando esquema desde ConsultorioDB_schema.sql...`);
     await createTables();
-    
+
+    console.log(`[MySQL] Verificando y poblando catálogo de ubicaciones (provincia/cantón/distrito) si está vacío...`);
+    await seedUbicaciones();
+
     console.log(`[MySQL] Verificando y poblando datos de prueba si están vacíos...`);
     await seedDefaultData();
 
@@ -210,6 +230,31 @@ async function createTables() {
     await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS porcentajeIva DECIMAL(5,2) NULL`);
     await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE`);
 
+    // Inventarios — extiende el catálogo de servicios para cubrir también artículos físicos con
+    // existencias (ver tipo TipoServicio en mockData.ts). `stock`/`stockMinimo`/`costoUnitario`/
+    // `codigoBarras` solo tienen sentido para tipo='ARTICULO'; quedan NULL en 'SERVICIO'.
+    await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS tipo VARCHAR(10) NOT NULL DEFAULT 'SERVICIO'`);
+    await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS stock INT NULL`);
+    await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS stockMinimo INT NULL`);
+    await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS costoUnitario DECIMAL(12,2) NULL`);
+    await pool.query(`ALTER TABLE servicios ADD COLUMN IF NOT EXISTS codigoBarras VARCHAR(50) NULL`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS movimientos_inventario (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        idServicio INT NOT NULL,
+        tipo VARCHAR(20) NOT NULL,
+        cantidad INT NOT NULL,
+        stockResultante INT NOT NULL,
+        referencia VARCHAR(100) NULL,
+        notas VARCHAR(255) NULL,
+        creadoPor VARCHAR(150) NULL,
+        creadoEn VARCHAR(30) NOT NULL,
+        INDEX idx_movimientos_servicio (idServicio)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS facturas (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -229,11 +274,178 @@ async function createTables() {
         creadaEn VARCHAR(30) NOT NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS condicionVenta VARCHAR(2) NOT NULL DEFAULT '01'`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS tipoDocumento VARCHAR(2) NOT NULL DEFAULT '01'`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS idFacturaReferencia INT NULL`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS motivoAnulacion VARCHAR(255) NULL`);
+    // La tabla `facturas` YA EXISTÍA desde ConsultorioDB_schema.sql con columnas totalmente
+    // distintas (id_factura, id_compania, id_consulta, fecha_emision, total_comprobante,
+    // estado_hacienda... — sin `ambiente`, `lineas`, `total` ni `mensajeError` en absoluto) — el
+    // CREATE TABLE IF NOT EXISTS de arriba nunca tocó esta tabla real. A diferencia de
+    // companias/usuarios/pacientes/consultas/servicios, a esta tabla nunca se le habían agregado
+    // las columnas camelCase que el resto del código asume — POST /api/facturas fallaba con
+    // "Unknown column 'idCompania'" en cada intento real de facturar (verificado: 0 filas en la
+    // tabla en producción). Se agregan aquí, igual que para las demás tablas heredadas.
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS id INT NULL`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS idCompania INT NULL`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS idCita INT NULL`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS idPaciente INT NULL`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS fechaEmision VARCHAR(30) NULL`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ambiente VARCHAR(20) NULL`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS lineas JSON NULL`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS totalIva DECIMAL(14,5) NULL`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS total DECIMAL(14,5) NULL`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS mensajeError TEXT NULL`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS creadaEn VARCHAR(30) NULL`);
+    // Tres columnas heredadas más bloqueaban cada INSERT real (verificado): `id_compania`,
+    // `id_consulta` e `id_paciente` son NOT NULL con FOREIGN KEY — sin valor, MariaDB las rellena
+    // con 0 (sql_mode no está en modo estricto) y la FK rechaza ese 0 porque no existe. Esta app
+    // no usa esas columnas heredadas (mantiene su propia idCompania/idPaciente camelCase), así
+    // que se liberan en vez de duplicar la escritura en ambos juegos de columnas.
+    await pool.query(`ALTER TABLE facturas MODIFY COLUMN id_compania INT NULL`);
+    await pool.query(`ALTER TABLE facturas MODIFY COLUMN id_consulta INT NULL`);
+    await pool.query(`ALTER TABLE facturas MODIFY COLUMN id_paciente INT NULL`);
+    // Mismo problema que ya se resolvió para usuarios.rol: la columna heredada `estado` es
+    // tinyint(1) (bandera booleana), pero es la ÚNICA columna `estado` que existe — no hay una
+    // camelCase aparte — así que todo el código de esta app (que espera 'FIRMADA'/'ENVIADA'/
+    // 'ACEPTADA'/'RECHAZADA'/'ERROR'/'ANULADA') estaba escribiendo un string en un tinyint,
+    // truncado en silencio a 0 en cada factura.
+    await pool.query(`ALTER TABLE facturas MODIFY COLUMN estado VARCHAR(20) NOT NULL DEFAULT 'FIRMADA'`);
 
     // compania_hacienda_config ya existe desde ConsultorioDB_schema.sql (sin esta columna) —
     // se agrega aquí en vez de en el .sql para no perder el contador de facturas ya emitidas
     // si el esquema se re-importa.
     await pool.query(`ALTER TABLE compania_hacienda_config ADD COLUMN IF NOT EXISTS ultimo_consecutivo INT NOT NULL DEFAULT 0`);
+    // Contador independiente para Notas de Crédito — Hacienda numera cada tipo de documento en
+    // su propia secuencia (el consecutivo de 20 dígitos ya incluye el tipoDocumento, así que
+    // compartir un solo contador entre Factura y Nota de Crédito no colisionaría, pero
+    // arrancarían ambas desde donde iba la otra en vez de cada una desde 1).
+    await pool.query(`ALTER TABLE compania_hacienda_config ADD COLUMN IF NOT EXISTS ultimo_consecutivo_nc INT NOT NULL DEFAULT 0`);
+
+    // CXC (Cuentas por Cobrar) — se crea automáticamente al facturar con condicionVenta='02'
+    // (ver POST /api/facturas). `estado` solo guarda PENDIENTE/PAGADA/ANULADA — "vencida" se
+    // deriva comparando fechaVencimiento contra hoy, no se persiste (mismo enfoque que ya usa
+    // esta app para "Vencido" en pagos_empresa/estadoSaas).
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cuentas_cobrar (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        idFactura INT NOT NULL,
+        facturaConsecutivo VARCHAR(20) NOT NULL,
+        idPaciente INT NOT NULL,
+        fechaEmision VARCHAR(10) NOT NULL,
+        fechaVencimiento VARCHAR(10) NOT NULL,
+        plazoDias INT NOT NULL DEFAULT 30,
+        montoTotal DECIMAL(14,5) NOT NULL,
+        saldoPendiente DECIMAL(14,5) NOT NULL,
+        estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+        creadaEn VARCHAR(30) NOT NULL,
+        INDEX idx_cxc_compania_estado (idCompania, estado)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cxc_pagos (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        idCuentaCobrar INT NOT NULL,
+        fecha VARCHAR(10) NOT NULL,
+        monto DECIMAL(14,5) NOT NULL,
+        medioPago VARCHAR(2) NOT NULL DEFAULT '01',
+        referencia VARCHAR(150) NULL,
+        registradoPor VARCHAR(150) NULL,
+        creadoEn VARCHAR(30) NOT NULL,
+        INDEX idx_cxc_pagos_cuenta (idCuentaCobrar)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // CXP (Cuentas por Pagar) — proveedores, la cuenta por pagar en sí (opcionalmente ligada a
+    // líneas de artículos que alimentan inventario) y sus abonos. Nombres verificados contra
+    // ConsultorioDB_schema.sql antes de crear: sin colisión con tablas heredadas.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS proveedores (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        tipoIdentificacion VARCHAR(2) NOT NULL DEFAULT '02',
+        identificacion VARCHAR(30) NOT NULL,
+        nombre VARCHAR(150) NOT NULL,
+        correo VARCHAR(150) NULL,
+        telefono VARCHAR(30) NULL,
+        direccion VARCHAR(255) NULL,
+        activo BOOLEAN NOT NULL DEFAULT TRUE,
+        creadoEn VARCHAR(30) NOT NULL,
+        UNIQUE KEY uq_proveedor_compania_identificacion (idCompania, identificacion)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cuentas_pagar (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        idProveedor INT NOT NULL,
+        numeroFacturaProveedor VARCHAR(100) NULL,
+        esServicio BOOLEAN NOT NULL DEFAULT FALSE,
+        lineas JSON NULL,
+        fechaRegistro VARCHAR(10) NOT NULL,
+        fechaVencimiento VARCHAR(10) NOT NULL,
+        plazoDias INT NOT NULL DEFAULT 30,
+        montoTotal DECIMAL(14,5) NOT NULL,
+        saldoPendiente DECIMAL(14,5) NOT NULL,
+        estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+        notas VARCHAR(255) NULL,
+        creadaEn VARCHAR(30) NOT NULL,
+        INDEX idx_cxp_compania_estado (idCompania, estado)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    // IVA acreditable (crédito fiscal) de esta compra, tomado de la factura de compra recibida
+    // del proveedor — se ingresa a mano porque este sistema no emite ni valida facturas de
+    // compra ante Hacienda, así que no hay forma de derivarlo de forma confiable del costo
+    // unitario local. Alimenta el D-104 (ver GET /api/reportes/d104).
+    await pool.query(`ALTER TABLE cuentas_pagar ADD COLUMN IF NOT EXISTS ivaAcreditable DECIMAL(14,5) NOT NULL DEFAULT 0`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cxp_pagos (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        idCuentaPagar INT NOT NULL,
+        fecha VARCHAR(10) NOT NULL,
+        monto DECIMAL(14,5) NOT NULL,
+        medioPago VARCHAR(2) NOT NULL DEFAULT '03',
+        referencia VARCHAR(150) NULL,
+        registradoPor VARCHAR(150) NULL,
+        creadoEn VARCHAR(30) NOT NULL,
+        INDEX idx_cxp_pagos_cuenta (idCuentaPagar)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // Gastos anuales que este sistema no puede derivar de ninguna otra tabla (no hay módulo de
+    // planilla ni de alquileres) — se capturan a mano por año para alimentar el D-101, separados
+    // de las compras reales (esas sí se derivan de cuentas_pagar automáticamente).
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS d101_gastos_manuales (
+        idCompania INT NOT NULL,
+        anio INT NOT NULL,
+        alquileres DECIMAL(14,2) NOT NULL DEFAULT 0,
+        servicios DECIMAL(14,2) NOT NULL DEFAULT 0,
+        planilla DECIMAL(14,2) NOT NULL DEFAULT 0,
+        otros DECIMAL(14,2) NOT NULL DEFAULT 0,
+        actualizadoEn VARCHAR(30) NOT NULL,
+        PRIMARY KEY (idCompania, anio)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // Un cierre fiscal (D-104 mensual o D-101 anual) declarado es un registro permanente: una
+    // vez creado no se recalcula ni se sobrescribe, igual que una Factura Electrónica ya firmada.
+    // `datos` congela el resultado exacto mostrado al usuario en el momento del cierre.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cierres_fiscales (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        tipo ENUM('D104','D101') NOT NULL,
+        periodo VARCHAR(7) NOT NULL,
+        datos JSON NOT NULL,
+        creadoPor VARCHAR(150) NULL,
+        creadoEn VARCHAR(30) NOT NULL,
+        UNIQUE KEY uq_cierre_fiscal (idCompania, tipo, periodo)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS pagos_empresa (
@@ -300,6 +512,7 @@ async function createTables() {
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS proximoVencimiento DATE NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS horarioAtencion JSON NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS requiereConfirmacionCitas BOOLEAN NOT NULL DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS regimenSimplificado BOOLEAN NOT NULL DEFAULT FALSE`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS provincia VARCHAR(2) NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS canton VARCHAR(2) NULL`);
     await pool.query(`ALTER TABLE companias ADD COLUMN IF NOT EXISTS distrito VARCHAR(2) NULL`);
@@ -377,11 +590,86 @@ async function createTables() {
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS composicionSegmentada JSON NULL`);
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS estiloVida JSON NULL`);
 
+    // Catálogo global (sin idCompania) de división territorial de Costa Rica (INEC) — mismo
+    // diseño que en POS-RESTAURANTE (id compuesto: cantón = provincia+código, distrito =
+    // cantón+código), sembrado desde src/data/costaRicaLocations.ts (ver seedUbicaciones()).
+    //
+    // Prefijo `cr_` a propósito: `provincias`/`cantones`/`distritos` (sin prefijo) YA EXISTÍAN
+    // desde ConsultorioDB_schema.sql con una estructura totalmente distinta (PK entero
+    // autoincremental `id_provincia`/`id_canton`/`id_distrito`, no el código natural) y datos
+    // incompletos (21 de 84 cantones, 15 de 494 distritos) — y otras tres tablas heredadas
+    // (`barrios`, `compania_direcciones`, `paciente_direcciones`, ninguna usada por esta app)
+    // tienen FOREIGN KEY hacia esos IDs enteros. Reusar esos nombres habría exigido reconciliar
+    // dos numeraciones que mi propia fuente de datos ya advierte que a veces difieren
+    // (ver comentario sobre Grecia en costaRicaLocations.ts) — más simple y más seguro usar
+    // nombres de tabla propios que no colisionen con ese árbol heredado.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cr_provincias (
+        codigo VARCHAR(1) NOT NULL PRIMARY KEY,
+        nombre VARCHAR(100) NOT NULL,
+        activo BOOLEAN NOT NULL DEFAULT TRUE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cr_cantones (
+        id VARCHAR(5) NOT NULL PRIMARY KEY,
+        provinciaCodigo VARCHAR(1) NOT NULL,
+        codigo VARCHAR(2) NOT NULL,
+        nombre VARCHAR(100) NOT NULL,
+        activo BOOLEAN NOT NULL DEFAULT TRUE,
+        FOREIGN KEY (provinciaCodigo) REFERENCES cr_provincias(codigo),
+        UNIQUE (provinciaCodigo, codigo)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS cr_distritos (
+        id VARCHAR(8) NOT NULL PRIMARY KEY,
+        cantonId VARCHAR(5) NOT NULL,
+        codigo VARCHAR(2) NOT NULL,
+        nombre VARCHAR(100) NOT NULL,
+        activo BOOLEAN NOT NULL DEFAULT TRUE,
+        FOREIGN KEY (cantonId) REFERENCES cr_cantones(id),
+        UNIQUE (cantonId, codigo)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
     console.log("[MySQL] Columnas de compatibilidad añadidas con éxito.");
   } catch (err: any) {
     console.error("❌ [MySQL] Error al inicializar/migrar la base de datos:", err);
     throw err;
   }
+}
+
+// Siembra provincias/cantones/distritos desde COSTA_RICA_PROVINCIAS (fuente ya cotejada contra
+// Registro Nacional/IGN/SNITCR, INEC y el catálogo v4.4 de Hacienda — ver comentario al inicio de
+// src/data/costaRicaLocations.ts) si la tabla está vacía. id de cantón = provincia+código propio
+// (p.ej. "101"), id de distrito = cantón+código propio (p.ej. "10101") — mismo esquema que
+// POS-RESTAURANTE, y coincide con la convención de cantonId/distritoId que Patient ya usaba.
+async function seedUbicaciones() {
+  if (!pool) return;
+
+  const [provRows] = await pool.query("SELECT COUNT(*) as count FROM cr_provincias");
+  if ((provRows as any)[0].count > 0) return;
+
+  console.log("[MySQL] Sembrando catálogo de provincias/cantones/distritos...");
+  for (const provincia of COSTA_RICA_PROVINCIAS) {
+    await pool.query("INSERT INTO cr_provincias (codigo, nombre) VALUES (?, ?)", [provincia.codigo, provincia.nombre]);
+    for (const canton of provincia.cantones) {
+      const cantonId = `${provincia.codigo}${canton.codigo}`;
+      await pool.query(
+        "INSERT INTO cr_cantones (id, provinciaCodigo, codigo, nombre) VALUES (?, ?, ?, ?)",
+        [cantonId, provincia.codigo, canton.codigo, canton.nombre]
+      );
+      for (const distrito of canton.distritos) {
+        const distritoId = `${cantonId}${distrito.codigo}`;
+        await pool.query(
+          "INSERT INTO cr_distritos (id, cantonId, codigo, nombre) VALUES (?, ?, ?, ?)",
+          [distritoId, cantonId, distrito.codigo, distrito.nombre]
+        );
+      }
+    }
+  }
+  console.log("[MySQL] Catálogo de ubicaciones sembrado con éxito.");
 }
 
 async function seedDefaultData() {
@@ -554,6 +842,7 @@ function normalizeRow(row: any): any {
   if (copy.id_consulta != null && copy.id == null) copy.id = copy.id_consulta;
   if (copy.id_cita != null && copy.id == null) copy.id = copy.id_cita;
   if (copy.id_servicio != null && copy.id == null) copy.id = copy.id_servicio;
+  if (copy.id_factura != null && copy.id == null) copy.id = copy.id_factura;
   if (copy.id_compania != null && copy.id == null) copy.id = copy.id_compania;
 
   // companias
@@ -588,6 +877,140 @@ function normalizeRow(row: any): any {
   if (copy.fact_identificacion != null && copy.identificacion == null) copy.identificacion = copy.fact_identificacion;
 
   return copy;
+}
+
+// --- Reportes fiscales D-104 (IVA mensual) y D-101 (Renta anual) ---
+// Funciones puras: reciben datos ya obtenidos (de MySQL o del fallback local) y calculan el
+// reporte, para que GET /api/reportes/d104 y POST /api/reportes/d104/cerrar (que necesita
+// recalcular para no confiar en lo que mande el cliente) compartan exactamente la misma lógica.
+
+interface TarifaAcumulador { base: number; iva: number; }
+
+function acumularLineasD104(lineas: any[], signo: 1 | -1, acc: { t13: TarifaAcumulador; t4: TarifaAcumulador; t2: TarifaAcumulador; t1: TarifaAcumulador; exento: TarifaAcumulador }) {
+  for (const l of lineas || []) {
+    const porcentaje = Number(l.porcentajeIva) || 0;
+    const base = (Number(l.subTotal) || 0) * signo;
+    const iva = (Number(l.montoIva) || 0) * signo;
+    if (porcentaje >= 12.5) { acc.t13.base += base; acc.t13.iva += iva; }
+    else if (porcentaje >= 3.5) { acc.t4.base += base; acc.t4.iva += iva; }
+    else if (porcentaje >= 1.5) { acc.t2.base += base; acc.t2.iva += iva; }
+    else if (porcentaje >= 0.5) { acc.t1.base += base; acc.t1.iva += iva; }
+    else { acc.exento.base += base; }
+  }
+}
+
+function construirReporteD104(periodo: string, company: Company, facturasMes: any[], notasCreditoMes: any[], creditoFiscal: number, yaCerrado: boolean, fechaCierre: string | null): ReporteD104 {
+  const tarifas = {
+    t13: { base: 0, iva: 0 }, t4: { base: 0, iva: 0 }, t2: { base: 0, iva: 0 }, t1: { base: 0, iva: 0 }, exento: { base: 0, iva: 0 }
+  };
+  facturasMes.forEach(f => acumularLineasD104(f.lineas, 1, tarifas));
+  notasCreditoMes.forEach(f => acumularLineasD104(f.lineas, -1, tarifas));
+
+  const debitoFiscal = tarifas.t13.iva + tarifas.t4.iva + tarifas.t2.iva + tarifas.t1.iva;
+  const redondear2 = (n: number) => Math.round(n * 100) / 100;
+
+  return {
+    periodo,
+    regimenSimplificado: !!company.regimenSimplificado,
+    tarifas: {
+      t13: { base: redondear2(tarifas.t13.base), iva: redondear2(tarifas.t13.iva) },
+      t4: { base: redondear2(tarifas.t4.base), iva: redondear2(tarifas.t4.iva) },
+      t2: { base: redondear2(tarifas.t2.base), iva: redondear2(tarifas.t2.iva) },
+      t1: { base: redondear2(tarifas.t1.base), iva: redondear2(tarifas.t1.iva) },
+      exento: { base: redondear2(tarifas.exento.base), iva: 0 }
+    },
+    debitoFiscal: redondear2(debitoFiscal),
+    creditoFiscal: redondear2(creditoFiscal),
+    saldoAPagar: redondear2(debitoFiscal - creditoFiscal),
+    cantidadFacturas: facturasMes.length,
+    cantidadNotasCredito: notasCreditoMes.length,
+    yaCerrado,
+    fechaCierre
+  };
+}
+
+// Tarifas del Impuesto sobre la Renta (D-101) de Costa Rica — tramos progresivos para Persona
+// Física con Actividad Lucrativa y Persona Jurídica (régimen de tarifa reducida para PYMEs).
+function calcularImpuestoRenta(utilidad: number, tipo: "fisica" | "juridica"): { total: number; tramos: string[] } {
+  let total = 0;
+  const tramos: string[] = [];
+  const fmt = (n: number) => `₡${Math.round(n).toLocaleString("es-CR")}`;
+
+  if (tipo === "fisica") {
+    const limites = [4181000, 6244000, 10414000, 20883000];
+    const tasas = [0.10, 0.15, 0.20, 0.25];
+    tramos.push(`Exento hasta ${fmt(limites[0])}: ₡0`);
+    if (utilidad > limites[0]) {
+      const b2 = Math.min(utilidad, limites[1]) - limites[0];
+      total += b2 * tasas[0];
+      tramos.push(`10% sobre exceso de ${fmt(limites[0])} (hasta ${fmt(limites[1])}): ${fmt(b2)} gravados ➔ ${fmt(b2 * tasas[0])}`);
+      if (utilidad > limites[1]) {
+        const b3 = Math.min(utilidad, limites[2]) - limites[1];
+        total += b3 * tasas[1];
+        tramos.push(`15% sobre exceso de ${fmt(limites[1])} (hasta ${fmt(limites[2])}): ${fmt(b3)} gravados ➔ ${fmt(b3 * tasas[1])}`);
+      }
+      if (utilidad > limites[2]) {
+        const b4 = Math.min(utilidad, limites[3]) - limites[2];
+        total += b4 * tasas[2];
+        tramos.push(`20% sobre exceso de ${fmt(limites[2])} (hasta ${fmt(limites[3])}): ${fmt(b4)} gravados ➔ ${fmt(b4 * tasas[2])}`);
+      }
+      if (utilidad > limites[3]) {
+        const b5 = utilidad - limites[3];
+        total += b5 * tasas[3];
+        tramos.push(`25% sobre exceso de ${fmt(limites[3])}: ${fmt(b5)} gravados ➔ ${fmt(b5 * tasas[3])}`);
+      }
+    }
+  } else {
+    const limites = [5713000, 8570000, 11428000];
+    const tasas = [0.05, 0.10, 0.15, 0.20];
+    const b1 = Math.min(utilidad, limites[0]);
+    total += b1 * tasas[0];
+    tramos.push(`5% sobre renta neta inicial (hasta ${fmt(limites[0])}): ${fmt(b1)} gravados ➔ ${fmt(b1 * tasas[0])}`);
+    if (utilidad > limites[0]) {
+      const b2 = Math.min(utilidad, limites[1]) - limites[0];
+      total += b2 * tasas[1];
+      tramos.push(`10% sobre exceso de ${fmt(limites[0])} (hasta ${fmt(limites[1])}): ${fmt(b2)} gravados ➔ ${fmt(b2 * tasas[1])}`);
+    }
+    if (utilidad > limites[1]) {
+      const b3 = Math.min(utilidad, limites[2]) - limites[1];
+      total += b3 * tasas[2];
+      tramos.push(`15% sobre exceso de ${fmt(limites[1])} (hasta ${fmt(limites[2])}): ${fmt(b3)} gravados ➔ ${fmt(b3 * tasas[2])}`);
+    }
+    if (utilidad > limites[2]) {
+      const b4 = utilidad - limites[2];
+      total += b4 * tasas[3];
+      tramos.push(`20% sobre exceso de ${fmt(limites[2])}: ${fmt(b4)} gravados ➔ ${fmt(b4 * tasas[3])}`);
+    }
+  }
+
+  return { total: Math.round(total * 100) / 100, tramos };
+}
+
+function construirReporteD101(anio: number, company: Company, facturasAnio: any[], comprasCxPAnio: number, gastosManuales: GastosManualesAnuales, yaCerrado: boolean, fechaCierre: string | null): ReporteD101 {
+  const ventasNetas = facturasAnio.reduce((s, f) => s + (Number(f.subtotal) || 0), 0);
+  const ivaAnual = facturasAnio.reduce((s, f) => s + (Number(f.totalIva) || 0), 0);
+  const totalGastosDeducibles = comprasCxPAnio + gastosManuales.alquileres + gastosManuales.servicios + gastosManuales.planilla + gastosManuales.otros;
+  const utilidadNeta = Math.max(0, ventasNetas - totalGastosDeducibles);
+  const tipoContribuyente: "fisica" | "juridica" = company.tipoIdentificacion === "01" ? "fisica" : "juridica";
+  const { total: impuestoRenta, tramos } = calcularImpuestoRenta(utilidadNeta, tipoContribuyente);
+  const redondear2 = (n: number) => Math.round(n * 100) / 100;
+
+  return {
+    anio,
+    regimenSimplificado: !!company.regimenSimplificado,
+    tipoContribuyente,
+    ventasNetas: redondear2(ventasNetas),
+    ivaAnual: redondear2(ivaAnual),
+    comprasCxP: redondear2(comprasCxPAnio),
+    gastosManuales,
+    totalGastosDeducibles: redondear2(totalGastosDeducibles),
+    utilidadNeta: redondear2(utilidadNeta),
+    impuestoRenta,
+    tramos,
+    cantidadFacturas: facturasAnio.length,
+    yaCerrado,
+    fechaCierre
+  };
 }
 
 // Ensure database setup starts asynchronously
@@ -846,11 +1269,11 @@ async function startServer() {
           const [exists] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [c.id, c.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, horarioAtencion = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id = ? OR id_compania = ?",
+              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, horarioAtencion = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, regimenSimplificado = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id = ? OR id_compania = ?",
               [
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
                 c.estadoSaas, c.maxUsuarios, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, JSON.stringify(c.horarioAtencion || null), c.requiereConfirmacionCitas ? 1 : 0,
-                c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null,
+                c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0,
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl,
                 c.id, c.id
               ]
@@ -859,11 +1282,11 @@ async function startServer() {
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, horarioAtencion, requiereConfirmacionCitas, provincia, canton, distrito, otrasSenas, nombre_comercial, razon_social, tipo_identificacion, correo_emisor, iva_por_defecto, color_primario, color_sidebar, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, horarioAtencion, requiereConfirmacionCitas, provincia, canton, distrito, otrasSenas, regimenSimplificado, nombre_comercial, razon_social, tipo_identificacion, correo_emisor, iva_por_defecto, color_primario, color_sidebar, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
             c.estadoSaas || 'PENDIENTE', c.maxUsuarios || 5, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, JSON.stringify(c.horarioAtencion || null), c.requiereConfirmacionCitas ? 1 : 0,
-            c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null,
+            c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0,
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl
           ]
         );
@@ -1453,32 +1876,135 @@ async function startServer() {
     try {
       const s = req.body;
       s.idCompania = sessionOf(req).idCompania;
+      const tipo = s.tipo === 'ARTICULO' ? 'ARTICULO' : 'SERVICIO';
+      const stockMinimo = tipo === 'ARTICULO' && s.stockMinimo != null && String(s.stockMinimo).trim() !== '' ? parseInt(s.stockMinimo) : null;
+      const costoUnitario = tipo === 'ARTICULO' && s.costoUnitario != null && String(s.costoUnitario).trim() !== '' ? parseFloat(s.costoUnitario) : null;
+      const codigoBarras = tipo === 'ARTICULO' ? (s.codigoBarras || null) : null;
+
       if (dbConnected && pool) {
         if (s.id) {
           // Scoped by idCompania too — see comment on the equivalent usuarios check above.
+          // `stock` NUNCA se toca aquí — solo POST /api/servicios/:id/ajustar-stock puede
+          // cambiarlo, para que cada cambio de existencias quede en movimientos_inventario en
+          // vez de poder sobreescribirse en silencio desde este formulario genérico.
           const [exists] = await pool.query("SELECT id FROM servicios WHERE (id = ? OR id_servicio = ?) AND (idCompania = ? OR id_compania = ?)", [s.id, s.id, parseInt(s.idCompania), parseInt(s.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE servicios SET idCompania = ?, id_compania = ?, nombre = ?, precio = ?, porcentajeIva = ?, duracionMinutos = ?, codigoCabys = ?, unidadMedida = ?, activo = ? WHERE id = ? OR id_servicio = ?",
-              [parseInt(s.idCompania), parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 30, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo ? 1 : 0, s.id, s.id]
+              "UPDATE servicios SET idCompania = ?, id_compania = ?, nombre = ?, precio = ?, porcentajeIva = ?, duracionMinutos = ?, codigoCabys = ?, unidadMedida = ?, activo = ?, tipo = ?, stockMinimo = ?, costoUnitario = ?, codigoBarras = ? WHERE id = ? OR id_servicio = ?",
+              [parseInt(s.idCompania), parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 0, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo ? 1 : 0, tipo, stockMinimo, costoUnitario, codigoBarras, s.id, s.id]
             );
-            return res.json(s);
+            const [refreshed] = await pool.query("SELECT * FROM servicios WHERE id = ? OR id_servicio = ?", [s.id, s.id]);
+            return res.json(normalizeRow((refreshed as any[])[0]));
           }
         }
+
+        const stockInicial = tipo === 'ARTICULO' ? (parseInt(s.stock) || 0) : null;
         const [result] = await pool.query(
-          "INSERT INTO servicios (idCompania, id_compania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(s.idCompania), parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 30, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo === false ? 0 : 1]
+          "INSERT INTO servicios (idCompania, id_compania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo, tipo, stock, stockMinimo, costoUnitario, codigoBarras) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [parseInt(s.idCompania), parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 0, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo === false ? 0 : 1, tipo, stockInicial, stockMinimo, costoUnitario, codigoBarras]
         );
         s.id = (result as any).insertId;
-        res.json(s);
+
+        if (tipo === 'ARTICULO' && stockInicial) {
+          await pool.query(
+            "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'AJUSTE', ?, ?, ?, ?, ?, ?)",
+            [s.idCompania, s.id, stockInicial, stockInicial, null, 'Existencia inicial', null, new Date().toISOString()]
+          );
+        }
+
+        const [created] = await pool.query("SELECT * FROM servicios WHERE id = ? OR id_servicio = ?", [s.id, s.id]);
+        res.json(normalizeRow((created as any[])[0]));
       } else {
+        s.tipo = tipo;
+        s.stockMinimo = stockMinimo;
+        s.costoUnitario = costoUnitario;
+        s.codigoBarras = codigoBarras;
         if (s.id && localServicios.some(item => item.id === s.id)) {
+          const existente = localServicios.find(item => item.id === s.id)!;
+          s.stock = existente.stock; // igual que en modo MySQL: el stock no se toca aquí
           localServicios = localServicios.map(item => item.id === s.id ? s : item);
         } else {
           s.id = Math.max(0, ...localServicios.map(item => item.id)) + 1;
+          s.stock = tipo === 'ARTICULO' ? (parseInt(s.stock) || 0) : null;
           localServicios.push(s);
         }
         res.json(s);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Ajuste manual de existencias (conteo físico, merma, corrección) — el único camino para
+  // cambiar `stock` en un ARTICULO ya creado, así que cada cambio queda en
+  // movimientos_inventario con motivo y usuario. `nuevoStock` es el valor absoluto resultante
+  // (no un delta), para que la UI muestre "existencias actuales" y no tenga que rastrear el
+  // último valor conocido.
+  app.post("/api/servicios/:id/ajustar-stock", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const session = sessionOf(req);
+      const nuevoStock = parseInt(req.body.nuevoStock);
+      const notas = req.body.notas ? String(req.body.notas).slice(0, 255) : null;
+      if (!Number.isFinite(nuevoStock) || nuevoStock < 0) {
+        return res.status(400).json({ error: "La nueva existencia debe ser un número entero mayor o igual a cero." });
+      }
+
+      if (dbConnected && pool) {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          const [rows] = await connection.query("SELECT * FROM servicios WHERE (id = ? OR id_servicio = ?) AND (idCompania = ? OR id_compania = ?) FOR UPDATE", [id, id, session.idCompania, session.idCompania]);
+          const servicio = (rows as any[]).map(normalizeRow)[0];
+          if (!servicio) {
+            await connection.rollback();
+            return res.status(404).json({ error: "Artículo no encontrado." });
+          }
+          if (servicio.tipo !== 'ARTICULO') {
+            await connection.rollback();
+            return res.status(400).json({ error: "Solo los artículos (no los servicios) tienen existencias." });
+          }
+          const stockAnterior = servicio.stock || 0;
+          const delta = nuevoStock - stockAnterior;
+
+          await connection.query("UPDATE servicios SET stock = ? WHERE id = ? OR id_servicio = ?", [nuevoStock, id, id]);
+          if (delta !== 0) {
+            await connection.query(
+              "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'AJUSTE', ?, ?, ?, ?, ?, ?)",
+              [session.idCompania, id, delta, nuevoStock, null, notas, null, new Date().toISOString()]
+            );
+          }
+          await connection.commit();
+          res.json({ id, stock: nuevoStock });
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
+        }
+      } else {
+        const servicio = localServicios.find(s => s.id === id && s.idCompania === session.idCompania);
+        if (!servicio) return res.status(404).json({ error: "Artículo no encontrado." });
+        if (servicio.tipo !== 'ARTICULO') return res.status(400).json({ error: "Solo los artículos (no los servicios) tienen existencias." });
+        servicio.stock = nuevoStock;
+        res.json({ id, stock: nuevoStock });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/movimientos-inventario", requireAuth, async (req, res) => {
+    try {
+      const session = sessionOf(req);
+      const idServicio = req.query.idServicio ? parseInt(req.query.idServicio as string) : null;
+      if (dbConnected && pool) {
+        const [rows] = idServicio
+          ? await pool.query("SELECT * FROM movimientos_inventario WHERE idCompania = ? AND idServicio = ? ORDER BY id DESC LIMIT 200", [session.idCompania, idServicio])
+          : await pool.query("SELECT * FROM movimientos_inventario WHERE idCompania = ? ORDER BY id DESC LIMIT 200", [session.idCompania]);
+        res.json(rows);
+      } else {
+        res.json([]);
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1659,7 +2185,8 @@ async function startServer() {
           idCompania, ambiente: b.ambiente, usuarioAtv: b.usuarioAtv || '',
           passwordAtvCifrado, certificadoP12Cifrado, certificadoPinCifrado,
           certificadoNombreArchivo, certificadoVenceEn,
-          ultimoConsecutivo: index !== -1 ? localHaciendaConfigs[index].ultimoConsecutivo : 0
+          ultimoConsecutivo: index !== -1 ? localHaciendaConfigs[index].ultimoConsecutivo : 0,
+          ultimoConsecutivoNc: index !== -1 ? localHaciendaConfigs[index].ultimoConsecutivoNc : 0
         };
         if (index !== -1) {
           localHaciendaConfigs[index] = stored;
@@ -1781,7 +2308,7 @@ async function startServer() {
       const idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         const [rows] = await pool.query("SELECT * FROM facturas WHERE idCompania = ?", [idCompania]);
-        res.json((rows as any[]).map(r => ({ ...r, lineas: typeof r.lineas === 'string' ? JSON.parse(r.lineas) : r.lineas })));
+        res.json((rows as any[]).map(normalizeRow).map(r => ({ ...r, lineas: typeof r.lineas === 'string' ? JSON.parse(r.lineas) : r.lineas })));
       } else {
         res.json(localFacturas.filter(f => f.idCompania === idCompania));
       }
@@ -1840,31 +2367,58 @@ async function startServer() {
         const servicio = serviciosDisponibles.find(s => s.id === parseInt(l.idServicio as any));
         if (!servicio) return res.status(400).json({ error: `Servicio ${l.idServicio} no encontrado.` });
         if (!servicio.codigoCabys) return res.status(400).json({ error: `El servicio "${servicio.nombre}" no tiene un código CABYS configurado — asígnelo en Configuración de Empresa antes de facturar.` });
+        const cantidad = parseFloat((l.cantidad as any) || 1);
+        if (servicio.tipo === 'ARTICULO' && (servicio.stock || 0) < cantidad) {
+          return res.status(400).json({ error: `Existencias insuficientes de "${servicio.nombre}" (disponible: ${servicio.stock || 0}, solicitado: ${cantidad}).` });
+        }
         lineasInput.push({
           codigoCabys: servicio.codigoCabys,
           detalle: servicio.nombre,
           unidadMedida: servicio.unidadMedida || 'Sp',
-          cantidad: parseFloat((l.cantidad as any) || 1),
+          cantidad,
           precioUnitario: servicio.precio,
           porcentajeIva: servicio.porcentajeIva != null ? servicio.porcentajeIva : company.ivaPorDefecto,
-          idServicio: servicio.id
+          idServicio: servicio.id,
+          tipo: servicio.tipo || 'SERVICIO'
         });
       }
 
-      const lineasCalculadas = calcularLineas(lineasInput).map((l, i) => ({ ...l, idServicio: lineasInput[i].idServicio }));
+      const lineasCalculadas = calcularLineas(lineasInput).map((l, i) => ({ ...l, idServicio: lineasInput[i].idServicio, tipo: lineasInput[i].tipo }));
       const resumen = calcularResumen(lineasCalculadas);
 
-      // Numeración consecutiva — se incrementa dentro de una transacción para no repetir
-      // números si dos facturas se emiten al mismo tiempo para la misma empresa.
+      // Numeración consecutiva y descuento de existencias — ambos dentro de la misma transacción
+      // (con FOR UPDATE) para que dos facturas simultáneas de la misma empresa no repitan
+      // consecutivo NI sobrevendan el mismo artículo. Si el stock ya no alcanza para cuando esta
+      // transacción toma el lock (carrera con otra factura concurrente), se revierte todo —
+      // incluyendo el consecutivo, para no dejar un hueco en la numeración por un fallo local.
       let siguienteSecuencial: number;
       if (dbConnected && pool) {
         const connection = await pool.getConnection();
         try {
           await connection.beginTransaction();
+
           const [rows] = await connection.query("SELECT ultimo_consecutivo FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE", [idCompania]);
           const actual = (rows as any[])[0]?.ultimo_consecutivo || 0;
           siguienteSecuencial = actual + 1;
+          const consecutivoParaMovimiento = generarConsecutivo(siguienteSecuencial);
           await connection.query("UPDATE compania_hacienda_config SET ultimo_consecutivo = ? WHERE id_compania = ?", [siguienteSecuencial, idCompania]);
+
+          for (const l of lineasCalculadas) {
+            if (l.tipo !== 'ARTICULO' || !l.idServicio) continue;
+            const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE (id = ? OR id_servicio = ?) FOR UPDATE", [l.idServicio, l.idServicio]);
+            const stockActual = (servicioRows as any[])[0]?.stock || 0;
+            if (stockActual < l.cantidad) {
+              await connection.rollback();
+              return res.status(409).json({ error: `Existencias insuficientes de "${l.detalle}" (disponible: ${stockActual}, solicitado: ${l.cantidad}).` });
+            }
+            const stockResultante = stockActual - l.cantidad;
+            await connection.query("UPDATE servicios SET stock = ? WHERE id = ? OR id_servicio = ?", [stockResultante, l.idServicio, l.idServicio]);
+            await connection.query(
+              "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'VENTA', ?, ?, ?, ?, ?, ?)",
+              [idCompania, l.idServicio, -l.cantidad, stockResultante, `Factura ${consecutivoParaMovimiento}`, null, null, new Date().toISOString()]
+            );
+          }
+
           await connection.commit();
         } catch (err) {
           await connection.rollback();
@@ -1927,7 +2481,11 @@ async function startServer() {
         total: resumen.totalComprobante,
         estado: "FIRMADA",
         mensajeError: null,
-        creadaEn: new Date().toISOString()
+        creadaEn: new Date().toISOString(),
+        condicionVenta,
+        tipoDocumento: "01",
+        idFacturaReferencia: null,
+        motivoAnulacion: null
       };
 
       // Envío a Hacienda — best-effort: si Hacienda no responde o rechaza, la factura queda
@@ -1955,13 +2513,45 @@ async function startServer() {
 
       if (dbConnected && pool) {
         const [result] = await pool.query(
-          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, lineas, subtotal, totalIva, total, estado, mensajeError, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, JSON.stringify(nuevaFactura.lineas), nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn]
+          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, lineas, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, JSON.stringify(nuevaFactura.lineas), nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion]
         );
         nuevaFactura.id = (result as any).insertId;
       } else {
         nuevaFactura.id = Math.max(0, ...localFacturas.map(f => f.id)) + 1;
         localFacturas.push(nuevaFactura);
+      }
+
+      // CXC automática: toda venta a crédito ('02') genera una cuenta por cobrar por el total —
+      // independiente de si Hacienda ya aceptó el comprobante o no, porque la obligación de pago
+      // del paciente es un hecho de negocio, no algo condicionado al trámite fiscal.
+      if (condicionVenta === "02") {
+        const fechaEmisionSolo = nuevaFactura.fechaEmision.split("T")[0];
+        const vencimiento = new Date(fechaEmision);
+        vencimiento.setDate(vencimiento.getDate() + 30);
+        const fechaVencimiento = vencimiento.toISOString().split("T")[0];
+
+        if (dbConnected && pool) {
+          await pool.query(
+            "INSERT INTO cuentas_cobrar (idCompania, idFactura, facturaConsecutivo, idPaciente, fechaEmision, fechaVencimiento, plazoDias, montoTotal, saldoPendiente, estado, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?)",
+            [idCompania, nuevaFactura.id, consecutivo, idPaciente, fechaEmisionSolo, fechaVencimiento, 30, resumen.totalComprobante, resumen.totalComprobante, new Date().toISOString()]
+          );
+        } else {
+          localCuentasCobrar.push({
+            id: Math.max(0, ...localCuentasCobrar.map(c => c.id), 0) + 1,
+            idCompania,
+            idFactura: nuevaFactura.id,
+            facturaConsecutivo: consecutivo,
+            idPaciente,
+            fechaEmision: fechaEmisionSolo,
+            fechaVencimiento,
+            plazoDias: 30,
+            montoTotal: resumen.totalComprobante,
+            saldoPendiente: resumen.totalComprobante,
+            estado: "PENDIENTE",
+            creadaEn: new Date().toISOString()
+          });
+        }
       }
 
       res.json(nuevaFactura);
@@ -1971,13 +2561,226 @@ async function startServer() {
     }
   });
 
+  // Anula una Factura Electrónica ya emitida emitiendo y firmando una Nota de Crédito
+  // Electrónica que la referencia (único motivo soportado: anulación total, código '01').
+  app.post("/api/facturas/:id/anular", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const session = sessionOf(req);
+      const motivo = String(req.body.motivo || "").trim();
+      if (!motivo) {
+        return res.status(400).json({ error: "Indique el motivo de la anulación." });
+      }
+
+      let factura: any;
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM facturas WHERE id = ? OR id_factura = ?", [id, id]);
+        factura = (rows as any[]).map(normalizeRow)[0];
+      } else {
+        factura = localFacturas.find(f => f.id === id);
+      }
+      if (!factura) return res.status(404).json({ error: "Factura no encontrada." });
+      if (!canAccessCompany(session, factura.idCompania)) {
+        return res.status(403).json({ error: "No autorizado." });
+      }
+      if (factura.tipoDocumento && factura.tipoDocumento !== "01") {
+        return res.status(400).json({ error: "Solo se pueden anular Facturas Electrónicas (no Notas de Crédito)." });
+      }
+      if (factura.estado === "ANULADA") {
+        return res.status(400).json({ error: "Esta factura ya fue anulada." });
+      }
+      if (factura.estado !== "ENVIADA" && factura.estado !== "ACEPTADA") {
+        return res.status(400).json({ error: "Solo se pueden anular facturas que fueron enviadas a Hacienda (estado ENVIADA o ACEPTADA)." });
+      }
+
+      const idCompania = factura.idCompania;
+      let company: Company | undefined;
+      let paciente: Patient | undefined;
+      if (dbConnected && pool) {
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        company = (companyRows as any[]).map(normalizeRow)[0];
+        const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [factura.idPaciente, factura.idPaciente]);
+        paciente = (pacienteRows as any[]).map(normalizeRow)[0];
+      } else {
+        company = localCompanies.find(c => c.id === idCompania);
+        paciente = localPatients.find(p => p.id === factura.idPaciente);
+      }
+      if (!company) return res.status(404).json({ error: "Empresa no encontrada." });
+      if (!paciente) return res.status(404).json({ error: "Paciente no encontrado." });
+
+      const cert = await cargarCertificadoEmpresa(idCompania);
+      if (!cert) return res.status(400).json({ error: "Configure primero la Firma Digital de Hacienda (certificado .p12) en Configuración de Empresa." });
+      const credenciales = await cargarCredencialesAtv(idCompania);
+      if (!credenciales) return res.status(400).json({ error: "Configure primero el usuario y contraseña ATV de Hacienda en Configuración de Empresa." });
+
+      const lineasOriginales = typeof factura.lineas === "string" ? JSON.parse(factura.lineas) : factura.lineas;
+      const resumen = calcularResumen(lineasOriginales);
+
+      // Numeración de la Nota de Crédito (contador independiente de la Factura) + reversa de
+      // stock de artículos — misma transacción con FOR UPDATE que en POST /api/facturas, y por
+      // la misma razón: no repetir consecutivo NI desincronizar el stock si dos anulaciones
+      // concurrentes tocan el mismo artículo.
+      let siguienteSecuencialNc: number;
+      if (dbConnected && pool) {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          const [rows] = await connection.query("SELECT ultimo_consecutivo_nc FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE", [idCompania]);
+          const actual = (rows as any[])[0]?.ultimo_consecutivo_nc || 0;
+          siguienteSecuencialNc = actual + 1;
+          await connection.query("UPDATE compania_hacienda_config SET ultimo_consecutivo_nc = ? WHERE id_compania = ?", [siguienteSecuencialNc, idCompania]);
+
+          for (const l of lineasOriginales) {
+            if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
+            const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE (id = ? OR id_servicio = ?) FOR UPDATE", [l.idServicio, l.idServicio]);
+            const stockActual = (servicioRows as any[])[0]?.stock || 0;
+            const stockResultante = stockActual + l.cantidad;
+            await connection.query("UPDATE servicios SET stock = ? WHERE id = ? OR id_servicio = ?", [stockResultante, l.idServicio, l.idServicio]);
+            await connection.query(
+              "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'DEVOLUCION_VENTA', ?, ?, ?, ?, ?, ?)",
+              [idCompania, l.idServicio, l.cantidad, stockResultante, `Anulación factura ${factura.consecutivo}`, motivo, null, new Date().toISOString()]
+            );
+          }
+
+          await connection.commit();
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
+        }
+      } else {
+        const cfg = localHaciendaConfigs.find(c => c.idCompania === idCompania)!;
+        siguienteSecuencialNc = cfg.ultimoConsecutivoNc + 1;
+        cfg.ultimoConsecutivoNc = siguienteSecuencialNc;
+        for (const l of lineasOriginales) {
+          if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
+          const servicio = localServicios.find(s => s.id === l.idServicio);
+          if (servicio) servicio.stock = (servicio.stock || 0) + l.cantidad;
+        }
+      }
+
+      const consecutivoNc = generarConsecutivo(siguienteSecuencialNc, "001", "00001", "03");
+      const fechaEmisionNc = new Date();
+      const claveNc = generarClaveNumerica(company.identificacion, consecutivoNc, fechaEmisionNc);
+      const tipoIdReceptor = paciente.tipoIdentificacion === "EXT" ? "03" : paciente.tipoIdentificacion;
+
+      const xml = construirXmlNotaCredito({
+        clave: claveNc,
+        consecutivo: consecutivoNc,
+        fechaEmision: fechaEmisionNc,
+        emisor: {
+          nombre: company.razonSocial,
+          nombreComercial: company.nombreComercial,
+          tipoIdentificacion: company.tipoIdentificacion,
+          identificacion: company.identificacion,
+          correoElectronico: company.correoEmisor,
+          provincia: company.provincia,
+          canton: company.canton,
+          distrito: company.distrito,
+          otrasSenas: company.otrasSenas,
+          codigoActividad: limpiarCodigoActividad(company.actividadEconomica)
+        },
+        receptor: {
+          nombre: paciente.nombreCompleto,
+          tipoIdentificacion: tipoIdReceptor,
+          identificacion: paciente.identificacion,
+          correoElectronico: paciente.correoElectronico || undefined
+        },
+        condicionVenta: factura.condicionVenta || "01",
+        medioPago: "01",
+        lineas: lineasOriginales,
+        resumen,
+        referencia: {
+          tipoDocumento: "01",
+          numero: factura.clave,
+          fechaEmision: new Date(factura.fechaEmision),
+          codigo: "01",
+          razon: motivo
+        }
+      });
+
+      const xmlFirmado = await firmarXadesEpes(xml, cert.p12Base64, cert.pin);
+
+      const notaCredito: any = {
+        idCompania,
+        idCita: null,
+        idPaciente: factura.idPaciente,
+        clave: claveNc,
+        consecutivo: consecutivoNc,
+        fechaEmision: fechaEmisionCR(fechaEmisionNc),
+        ambiente: credenciales.ambiente,
+        lineas: lineasOriginales,
+        subtotal: resumen.totalVenta,
+        totalIva: resumen.totalImpuesto,
+        total: resumen.totalComprobante,
+        estado: "FIRMADA",
+        mensajeError: null,
+        creadaEn: new Date().toISOString(),
+        condicionVenta: factura.condicionVenta || "01",
+        tipoDocumento: "03",
+        idFacturaReferencia: factura.id,
+        motivoAnulacion: motivo
+      };
+
+      // Envío a Hacienda — best-effort, igual que en POST /api/facturas: si Hacienda no
+      // responde o rechaza, la Nota de Crédito queda guardada como FIRMADA/ERROR y se puede
+      // reintentar el envío después mediante POST /api/facturas/:id/estado.
+      try {
+        const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
+        const envio = await enviarFacturaHacienda({
+          ambiente: credenciales.ambiente,
+          token,
+          clave: claveNc,
+          fechaEmisionIso: fechaEmisionCR(fechaEmisionNc),
+          tipoIdentificacionEmisor: company.tipoIdentificacion,
+          cedulaEmisor: limpiarIdentificacion(company.identificacion),
+          tipoIdentificacionReceptor: tipoIdReceptor,
+          cedulaReceptor: limpiarIdentificacion(paciente.identificacion),
+          xmlFirmado
+        });
+        notaCredito.estado = envio.aceptadoParaProcesar ? "ENVIADA" : "ERROR";
+        notaCredito.mensajeError = envio.mensaje;
+      } catch (err: any) {
+        notaCredito.estado = "ERROR";
+        notaCredito.mensajeError = err.message;
+        console.error("[Hacienda] Error enviando nota de crédito:", err.message || err);
+      }
+
+      if (dbConnected && pool) {
+        const [result] = await pool.query(
+          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, lineas, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [notaCredito.idCompania, notaCredito.idCita, notaCredito.idPaciente, notaCredito.clave, notaCredito.consecutivo, notaCredito.fechaEmision, notaCredito.ambiente, JSON.stringify(notaCredito.lineas), notaCredito.subtotal, notaCredito.totalIva, notaCredito.total, notaCredito.estado, notaCredito.mensajeError, notaCredito.creadaEn, notaCredito.condicionVenta, notaCredito.tipoDocumento, notaCredito.idFacturaReferencia, notaCredito.motivoAnulacion]
+        );
+        notaCredito.id = (result as any).insertId;
+        await pool.query("UPDATE facturas SET estado = 'ANULADA' WHERE id = ? OR id_factura = ?", [factura.id, factura.id]);
+        // Si esta factura había generado una CXC que aún no está pagada, se anula también — ya
+        // no hay una deuda real que cobrar sobre un comprobante que Hacienda considera anulado.
+        // Si ya estaba PAGADA se deja intacta (el cobro ya ocurrió, es un hecho histórico).
+        await pool.query("UPDATE cuentas_cobrar SET estado = 'ANULADA' WHERE idFactura = ? AND estado = 'PENDIENTE'", [factura.id]);
+      } else {
+        notaCredito.id = Math.max(0, ...localFacturas.map(f => f.id)) + 1;
+        localFacturas.push(notaCredito);
+        const idx = localFacturas.findIndex(f => f.id === factura.id);
+        if (idx !== -1) localFacturas[idx].estado = "ANULADA";
+        const cxcIdx = localCuentasCobrar.findIndex(c => c.idFactura === factura.id && c.estado === "PENDIENTE");
+        if (cxcIdx !== -1) localCuentasCobrar[cxcIdx].estado = "ANULADA";
+      }
+
+      res.json(notaCredito);
+    } catch (err: any) {
+      console.error("[Hacienda] Error anulando factura:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/facturas/:id/estado", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       let factura: any;
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM facturas WHERE id = ?", [id]);
-        factura = (rows as any[])[0];
+        const [rows] = await pool.query("SELECT * FROM facturas WHERE id = ? OR id_factura = ?", [id, id]);
+        factura = (rows as any[]).map(normalizeRow)[0];
       } else {
         factura = localFacturas.find(f => f.id === id);
       }
@@ -1996,13 +2799,642 @@ async function startServer() {
       const nuevoEstado = mapaEstado[estadoHacienda.estado] || factura.estado;
 
       if (dbConnected && pool) {
-        await pool.query("UPDATE facturas SET estado = ? WHERE id = ?", [nuevoEstado, id]);
+        await pool.query("UPDATE facturas SET estado = ? WHERE id = ? OR id_factura = ?", [nuevoEstado, id, id]);
       } else {
         const idx = localFacturas.findIndex(f => f.id === id);
         if (idx !== -1) localFacturas[idx].estado = nuevoEstado as any;
       }
 
       res.json({ id, estado: nuevoEstado, estadoHacienda: estadoHacienda.estado });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // CXC (Cuentas por Cobrar) — se crean automáticamente al facturar a crédito (ver
+  // POST /api/facturas) y se revierten al anular esa factura (ver POST /api/facturas/:id/anular).
+  // Esta ruta solo lista + aplica abonos; no hay creación manual porque en esta app una cuenta
+  // por cobrar siempre nace de una factura real, nunca de un monto suelto.
+  app.get("/api/cxc", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      if (dbConnected && pool) {
+        const [cuentas] = await pool.query("SELECT * FROM cuentas_cobrar WHERE idCompania = ? ORDER BY fechaEmision DESC", [idCompania]);
+        const [pagos] = await pool.query("SELECT * FROM cxc_pagos WHERE idCompania = ? ORDER BY fecha ASC", [idCompania]);
+        const pagosPorCuenta = new Map<number, any[]>();
+        for (const p of pagos as any[]) {
+          if (!pagosPorCuenta.has(p.idCuentaCobrar)) pagosPorCuenta.set(p.idCuentaCobrar, []);
+          pagosPorCuenta.get(p.idCuentaCobrar)!.push(p);
+        }
+        res.json((cuentas as any[]).map(c => ({ ...c, pagos: pagosPorCuenta.get(c.id) || [] })));
+      } else {
+        res.json(localCuentasCobrar
+          .filter(c => c.idCompania === idCompania)
+          .map(c => ({ ...c, pagos: localCxcPagos.filter(p => p.idCuentaCobrar === c.id) })));
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/cxc/:id/pagos", requireAuth, async (req, res) => {
+    try {
+      const idCuentaCobrar = parseInt(req.params.id);
+      const session = sessionOf(req);
+      const monto = parseFloat(req.body.monto);
+      const medioPago = String(req.body.medioPago || "01");
+      const referencia = req.body.referencia ? String(req.body.referencia).slice(0, 150) : null;
+      if (!Number.isFinite(monto) || monto <= 0) {
+        return res.status(400).json({ error: "El monto del abono debe ser mayor a cero." });
+      }
+
+      if (dbConnected && pool) {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          const [rows] = await connection.query("SELECT * FROM cuentas_cobrar WHERE id = ? AND idCompania = ? FOR UPDATE", [idCuentaCobrar, session.idCompania]);
+          const cuenta = (rows as any[])[0];
+          if (!cuenta) {
+            await connection.rollback();
+            return res.status(404).json({ error: "Cuenta por cobrar no encontrada." });
+          }
+          if (cuenta.estado !== "PENDIENTE") {
+            await connection.rollback();
+            return res.status(400).json({ error: `Esta cuenta ya está ${cuenta.estado === "PAGADA" ? "pagada" : "anulada"}.` });
+          }
+          if (monto > parseFloat(cuenta.saldoPendiente)) {
+            await connection.rollback();
+            return res.status(400).json({ error: `El abono (₡${monto}) no puede superar el saldo pendiente (₡${cuenta.saldoPendiente}).` });
+          }
+
+          const nuevoSaldo = Math.round((parseFloat(cuenta.saldoPendiente) - monto) * 100000) / 100000;
+          const nuevoEstado = nuevoSaldo <= 0 ? "PAGADA" : "PENDIENTE";
+          const fecha = new Date().toISOString().split("T")[0];
+
+          await connection.query("UPDATE cuentas_cobrar SET saldoPendiente = ?, estado = ? WHERE id = ?", [nuevoSaldo, nuevoEstado, idCuentaCobrar]);
+          const [result] = await connection.query(
+            "INSERT INTO cxc_pagos (idCompania, idCuentaCobrar, fecha, monto, medioPago, referencia, registradoPor, creadoEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [session.idCompania, idCuentaCobrar, fecha, monto, medioPago, referencia, null, new Date().toISOString()]
+          );
+
+          await connection.commit();
+          res.json({ id: idCuentaCobrar, saldoPendiente: nuevoSaldo, estado: nuevoEstado, pago: { id: (result as any).insertId, fecha, monto, medioPago, referencia } });
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
+        }
+      } else {
+        const cuenta = localCuentasCobrar.find(c => c.id === idCuentaCobrar && c.idCompania === session.idCompania);
+        if (!cuenta) return res.status(404).json({ error: "Cuenta por cobrar no encontrada." });
+        if (cuenta.estado !== "PENDIENTE") {
+          return res.status(400).json({ error: `Esta cuenta ya está ${cuenta.estado === "PAGADA" ? "pagada" : "anulada"}.` });
+        }
+        if (monto > cuenta.saldoPendiente) {
+          return res.status(400).json({ error: `El abono (₡${monto}) no puede superar el saldo pendiente (₡${cuenta.saldoPendiente}).` });
+        }
+        cuenta.saldoPendiente = Math.round((cuenta.saldoPendiente - monto) * 100000) / 100000;
+        cuenta.estado = cuenta.saldoPendiente <= 0 ? "PAGADA" : "PENDIENTE";
+        const fecha = new Date().toISOString().split("T")[0];
+        const pago: PagoCuentaCobrar = {
+          id: Math.max(0, ...localCxcPagos.map(p => p.id)) + 1,
+          idCompania: session.idCompania,
+          idCuentaCobrar,
+          fecha,
+          monto,
+          medioPago,
+          referencia,
+          registradoPor: null,
+          creadoEn: new Date().toISOString()
+        };
+        localCxcPagos.push(pago);
+        res.json({ id: idCuentaCobrar, saldoPendiente: cuenta.saldoPendiente, estado: cuenta.estado, pago });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- CXP (Cuentas por Pagar) ---
+
+  app.get("/api/proveedores", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM proveedores WHERE idCompania = ? ORDER BY nombre ASC", [idCompania]);
+        res.json(rows);
+      } else {
+        res.json(localProveedores.filter(p => p.idCompania === idCompania));
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/proveedores", requireAuth, async (req, res) => {
+    try {
+      const p = req.body;
+      const idCompania = sessionOf(req).idCompania;
+      if (!p.identificacion || !p.nombre) {
+        return res.status(400).json({ error: "Indique identificación y nombre del proveedor." });
+      }
+
+      if (dbConnected && pool) {
+        if (p.id) {
+          const [exists] = await pool.query("SELECT id FROM proveedores WHERE id = ? AND idCompania = ?", [p.id, idCompania]);
+          if ((exists as any).length > 0) {
+            await pool.query(
+              "UPDATE proveedores SET tipoIdentificacion = ?, identificacion = ?, nombre = ?, correo = ?, telefono = ?, direccion = ?, activo = ? WHERE id = ? AND idCompania = ?",
+              [p.tipoIdentificacion || "02", p.identificacion, p.nombre, p.correo || null, p.telefono || null, p.direccion || null, p.activo === false ? 0 : 1, p.id, idCompania]
+            );
+            return res.json({ ...p, idCompania });
+          }
+        }
+        const [result] = await pool.query(
+          "INSERT INTO proveedores (idCompania, tipoIdentificacion, identificacion, nombre, correo, telefono, direccion, activo, creadoEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [idCompania, p.tipoIdentificacion || "02", p.identificacion, p.nombre, p.correo || null, p.telefono || null, p.direccion || null, p.activo === false ? 0 : 1, new Date().toISOString()]
+        );
+        res.json({ ...p, id: (result as any).insertId, idCompania });
+      } else {
+        if (p.id && localProveedores.some(item => item.id === p.id)) {
+          localProveedores = localProveedores.map(item => item.id === p.id ? { ...p, idCompania } : item);
+        } else {
+          p.id = Math.max(0, ...localProveedores.map(item => item.id), 0) + 1;
+          p.idCompania = idCompania;
+          p.creadoEn = new Date().toISOString();
+          localProveedores.push(p);
+        }
+        res.json(p);
+      }
+    } catch (err: any) {
+      if (err.code === "ER_DUP_ENTRY") {
+        return res.status(400).json({ error: "Ya existe un proveedor con esa identificación." });
+      }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/cxp", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      if (dbConnected && pool) {
+        const [cuentas] = await pool.query("SELECT * FROM cuentas_pagar WHERE idCompania = ? ORDER BY fechaRegistro DESC", [idCompania]);
+        const [pagos] = await pool.query("SELECT * FROM cxp_pagos WHERE idCompania = ? ORDER BY fecha ASC", [idCompania]);
+        const pagosPorCuenta = new Map<number, any[]>();
+        for (const p of pagos as any[]) {
+          if (!pagosPorCuenta.has(p.idCuentaPagar)) pagosPorCuenta.set(p.idCuentaPagar, []);
+          pagosPorCuenta.get(p.idCuentaPagar)!.push(p);
+        }
+        res.json((cuentas as any[]).map(c => ({
+          ...c,
+          lineas: typeof c.lineas === "string" ? JSON.parse(c.lineas) : (c.lineas || []),
+          pagos: pagosPorCuenta.get(c.id) || []
+        })));
+      } else {
+        res.json(localCuentasPagar
+          .filter(c => c.idCompania === idCompania)
+          .map(c => ({ ...c, pagos: localCxpPagos.filter(p => p.idCuentaPagar === c.id) })));
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Registra una cuenta por pagar. Dos modos: "monto global" (esServicio=true, un gasto sin
+  // renglones — alquiler, planilla, honorarios) o "detallado" (esServicio=false, líneas de
+  // artículos que SÍ alimentan inventario: incrementa stock, actualiza costoUnitario al costo de
+  // esta compra, y registra el movimiento — misma transacción atómica que el descuento de stock
+  // en POST /api/facturas, para no desincronizar inventario si dos compras concurrentes tocan el
+  // mismo artículo).
+  app.post("/api/cxp", requireAuth, async (req, res) => {
+    try {
+      const body = req.body;
+      const idCompania = sessionOf(req).idCompania;
+      const idProveedor = parseInt(body.idProveedor);
+      const esServicio = !!body.esServicio;
+      const plazoDias = parseInt(body.plazoDias) || 30;
+      const numeroFacturaProveedor = body.numeroFacturaProveedor ? String(body.numeroFacturaProveedor).slice(0, 100) : null;
+      const notas = body.notas ? String(body.notas).slice(0, 255) : null;
+      const ivaAcreditable = body.ivaAcreditable != null ? parseFloat(body.ivaAcreditable) : 0;
+      if (!Number.isFinite(ivaAcreditable) || ivaAcreditable < 0) {
+        return res.status(400).json({ error: "El IVA acreditable debe ser un monto válido (0 o mayor)." });
+      }
+
+      let proveedor: Proveedor | undefined;
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM proveedores WHERE id = ? AND idCompania = ?", [idProveedor, idCompania]);
+        proveedor = (rows as any[])[0];
+      } else {
+        proveedor = localProveedores.find(p => p.id === idProveedor && p.idCompania === idCompania);
+      }
+      if (!proveedor) return res.status(404).json({ error: "Proveedor no encontrado." });
+
+      const fechaRegistro = new Date().toISOString().split("T")[0];
+      const vencimiento = new Date();
+      vencimiento.setDate(vencimiento.getDate() + plazoDias);
+      const fechaVencimiento = vencimiento.toISOString().split("T")[0];
+
+      let lineasFinal: Array<{ idServicio: number; nombre: string; cantidad: number; costoUnitario: number }> = [];
+      let montoTotal: number;
+
+      if (esServicio) {
+        montoTotal = parseFloat(body.montoTotal);
+        if (!Number.isFinite(montoTotal) || montoTotal <= 0) {
+          return res.status(400).json({ error: "Indique un monto total válido." });
+        }
+      } else {
+        const lineasBody: Array<{ idServicio: number; cantidad: number; costoUnitario: number }> = body.lineas || [];
+        if (lineasBody.length === 0) {
+          return res.status(400).json({ error: "Agregue al menos un artículo, o marque esta compra como un gasto sin inventario." });
+        }
+        montoTotal = 0;
+        for (const l of lineasBody) {
+          const cantidad = parseFloat(l.cantidad as any);
+          const costoUnitario = parseFloat(l.costoUnitario as any);
+          if (!Number.isFinite(cantidad) || cantidad <= 0 || !Number.isFinite(costoUnitario) || costoUnitario < 0) {
+            return res.status(400).json({ error: "Cada línea necesita una cantidad y un costo unitario válidos." });
+          }
+          montoTotal += cantidad * costoUnitario;
+        }
+        montoTotal = Math.round(montoTotal * 100000) / 100000;
+
+        if (dbConnected && pool) {
+          const connection = await pool.getConnection();
+          try {
+            await connection.beginTransaction();
+            for (const l of lineasBody) {
+              const idServicio = parseInt(l.idServicio as any);
+              const cantidad = parseFloat(l.cantidad as any);
+              const costoUnitario = parseFloat(l.costoUnitario as any);
+              const [rows] = await connection.query("SELECT * FROM servicios WHERE (id = ? OR id_servicio = ?) AND (idCompania = ? OR id_compania = ?) FOR UPDATE", [idServicio, idServicio, idCompania, idCompania]);
+              const servicio = (rows as any[]).map(normalizeRow)[0];
+              if (!servicio) {
+                await connection.rollback();
+                return res.status(400).json({ error: `Artículo ${idServicio} no encontrado.` });
+              }
+              if (servicio.tipo !== "ARTICULO") {
+                await connection.rollback();
+                return res.status(400).json({ error: `"${servicio.nombre}" es un servicio, no un artículo — no tiene existencias que alimentar.` });
+              }
+              const stockResultante = (servicio.stock || 0) + cantidad;
+              await connection.query("UPDATE servicios SET stock = ?, costoUnitario = ? WHERE id = ? OR id_servicio = ?", [stockResultante, costoUnitario, idServicio, idServicio]);
+              await connection.query(
+                "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'COMPRA', ?, ?, ?, ?, ?, ?)",
+                [idCompania, idServicio, cantidad, stockResultante, `Compra a ${proveedor.nombre}${numeroFacturaProveedor ? ` (${numeroFacturaProveedor})` : ""}`, notas, null, new Date().toISOString()]
+              );
+              lineasFinal.push({ idServicio, nombre: servicio.nombre, cantidad, costoUnitario });
+            }
+            await connection.commit();
+          } catch (err) {
+            await connection.rollback();
+            throw err;
+          } finally {
+            connection.release();
+          }
+        } else {
+          for (const l of lineasBody) {
+            const idServicio = parseInt(l.idServicio as any);
+            const cantidad = parseFloat(l.cantidad as any);
+            const costoUnitario = parseFloat(l.costoUnitario as any);
+            const servicio = localServicios.find(s => s.id === idServicio && s.idCompania === idCompania);
+            if (!servicio) return res.status(400).json({ error: `Artículo ${idServicio} no encontrado.` });
+            if (servicio.tipo !== "ARTICULO") return res.status(400).json({ error: `"${servicio.nombre}" es un servicio, no un artículo.` });
+            servicio.stock = (servicio.stock || 0) + cantidad;
+            servicio.costoUnitario = costoUnitario;
+            lineasFinal.push({ idServicio, nombre: servicio.nombre, cantidad, costoUnitario });
+          }
+        }
+      }
+
+      if (dbConnected && pool) {
+        const [result] = await pool.query(
+          "INSERT INTO cuentas_pagar (idCompania, idProveedor, numeroFacturaProveedor, esServicio, lineas, fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente, estado, ivaAcreditable, notas, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?, ?, ?)",
+          [idCompania, idProveedor, numeroFacturaProveedor, esServicio ? 1 : 0, JSON.stringify(lineasFinal), fechaRegistro, fechaVencimiento, plazoDias, montoTotal, montoTotal, ivaAcreditable, notas, new Date().toISOString()]
+        );
+        res.json({
+          id: (result as any).insertId, idCompania, idProveedor, numeroFacturaProveedor, esServicio, lineas: lineasFinal,
+          fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente: montoTotal, estado: "PENDIENTE", ivaAcreditable, notas,
+          creadaEn: new Date().toISOString(), pagos: []
+        });
+      } else {
+        const nueva: any = {
+          id: Math.max(0, ...localCuentasPagar.map(c => c.id), 0) + 1,
+          idCompania, idProveedor, numeroFacturaProveedor, esServicio, lineas: lineasFinal,
+          fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente: montoTotal, estado: "PENDIENTE", ivaAcreditable, notas,
+          creadaEn: new Date().toISOString()
+        };
+        localCuentasPagar.push(nueva);
+        res.json({ ...nueva, pagos: [] });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/cxp/:id/pagos", requireAuth, async (req, res) => {
+    try {
+      const idCuentaPagar = parseInt(req.params.id);
+      const session = sessionOf(req);
+      const monto = parseFloat(req.body.monto);
+      const medioPago = String(req.body.medioPago || "03");
+      const referencia = req.body.referencia ? String(req.body.referencia).slice(0, 150) : null;
+      if (!Number.isFinite(monto) || monto <= 0) {
+        return res.status(400).json({ error: "El monto del abono debe ser mayor a cero." });
+      }
+
+      if (dbConnected && pool) {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          const [rows] = await connection.query("SELECT * FROM cuentas_pagar WHERE id = ? AND idCompania = ? FOR UPDATE", [idCuentaPagar, session.idCompania]);
+          const cuenta = (rows as any[])[0];
+          if (!cuenta) {
+            await connection.rollback();
+            return res.status(404).json({ error: "Cuenta por pagar no encontrada." });
+          }
+          if (cuenta.estado !== "PENDIENTE") {
+            await connection.rollback();
+            return res.status(400).json({ error: `Esta cuenta ya está ${cuenta.estado === "PAGADA" ? "pagada" : "anulada"}.` });
+          }
+          if (monto > parseFloat(cuenta.saldoPendiente)) {
+            await connection.rollback();
+            return res.status(400).json({ error: `El abono (₡${monto}) no puede superar el saldo pendiente (₡${cuenta.saldoPendiente}).` });
+          }
+
+          const nuevoSaldo = Math.round((parseFloat(cuenta.saldoPendiente) - monto) * 100000) / 100000;
+          const nuevoEstado = nuevoSaldo <= 0 ? "PAGADA" : "PENDIENTE";
+          const fecha = new Date().toISOString().split("T")[0];
+
+          await connection.query("UPDATE cuentas_pagar SET saldoPendiente = ?, estado = ? WHERE id = ?", [nuevoSaldo, nuevoEstado, idCuentaPagar]);
+          const [result] = await connection.query(
+            "INSERT INTO cxp_pagos (idCompania, idCuentaPagar, fecha, monto, medioPago, referencia, registradoPor, creadoEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [session.idCompania, idCuentaPagar, fecha, monto, medioPago, referencia, null, new Date().toISOString()]
+          );
+
+          await connection.commit();
+          res.json({ id: idCuentaPagar, saldoPendiente: nuevoSaldo, estado: nuevoEstado, pago: { id: (result as any).insertId, fecha, monto, medioPago, referencia } });
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
+        }
+      } else {
+        const cuenta = localCuentasPagar.find(c => c.id === idCuentaPagar && c.idCompania === session.idCompania);
+        if (!cuenta) return res.status(404).json({ error: "Cuenta por pagar no encontrada." });
+        if (cuenta.estado !== "PENDIENTE") {
+          return res.status(400).json({ error: `Esta cuenta ya está ${cuenta.estado === "PAGADA" ? "pagada" : "anulada"}.` });
+        }
+        if (monto > cuenta.saldoPendiente) {
+          return res.status(400).json({ error: `El abono (₡${monto}) no puede superar el saldo pendiente (₡${cuenta.saldoPendiente}).` });
+        }
+        cuenta.saldoPendiente = Math.round((cuenta.saldoPendiente - monto) * 100000) / 100000;
+        cuenta.estado = cuenta.saldoPendiente <= 0 ? "PAGADA" : "PENDIENTE";
+        const fecha = new Date().toISOString().split("T")[0];
+        const pago: PagoCuentaPagar = {
+          id: Math.max(0, ...localCxpPagos.map(p => p.id), 0) + 1,
+          idCompania: session.idCompania,
+          idCuentaPagar,
+          fecha,
+          monto,
+          medioPago,
+          referencia,
+          registradoPor: null,
+          creadoEn: new Date().toISOString()
+        };
+        localCxpPagos.push(pago);
+        res.json({ id: idCuentaPagar, saldoPendiente: cuenta.saldoPendiente, estado: cuenta.estado, pago });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 5b. Reportes Fiscales D-104 (IVA mensual) / D-101 (Renta anual)
+
+  async function obtenerDatosD104(idCompania: number, periodo: string) {
+    if (dbConnected && pool) {
+      const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+      const company: Company | undefined = (companyRows as any[]).map(normalizeRow)[0];
+      if (!company) return null;
+
+      const [facturaRows] = await pool.query(
+        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '01' AND fechaEmision LIKE ? AND estado NOT IN ('RECHAZADA','ERROR')",
+        [idCompania, `${periodo}%`]
+      );
+      const facturasMes = (facturaRows as any[]).map(r => ({ ...r, lineas: typeof r.lineas === "string" ? JSON.parse(r.lineas) : r.lineas }));
+
+      const [ncRows] = await pool.query(
+        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '03' AND fechaEmision LIKE ? AND estado NOT IN ('RECHAZADA','ERROR')",
+        [idCompania, `${periodo}%`]
+      );
+      const notasCreditoMes = (ncRows as any[]).map(r => ({ ...r, lineas: typeof r.lineas === "string" ? JSON.parse(r.lineas) : r.lineas }));
+
+      const [cxpRows] = await pool.query(
+        "SELECT COALESCE(SUM(ivaAcreditable), 0) AS total FROM cuentas_pagar WHERE idCompania = ? AND fechaRegistro LIKE ? AND estado != 'ANULADA'",
+        [idCompania, `${periodo}%`]
+      );
+      const creditoFiscal = Number((cxpRows as any[])[0]?.total) || 0;
+
+      const [cierreRows] = await pool.query("SELECT * FROM cierres_fiscales WHERE idCompania = ? AND tipo = 'D104' AND periodo = ?", [idCompania, periodo]);
+      const cierre = (cierreRows as any[])[0];
+
+      return { company, facturasMes, notasCreditoMes, creditoFiscal, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
+    } else {
+      const company = localCompanies.find(c => c.id === idCompania);
+      if (!company) return null;
+      const facturasMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(periodo) && f.estado !== "RECHAZADA" && f.estado !== "ERROR");
+      const notasCreditoMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "03" && f.fechaEmision.startsWith(periodo) && f.estado !== "RECHAZADA" && f.estado !== "ERROR");
+      const creditoFiscal = localCuentasPagar.filter(c => c.idCompania === idCompania && c.fechaRegistro.startsWith(periodo) && c.estado !== "ANULADA").reduce((s, c) => s + (c.ivaAcreditable || 0), 0);
+      const cierre = localCierresFiscales.find(c => c.idCompania === idCompania && c.tipo === "D104" && c.periodo === periodo);
+      return { company, facturasMes, notasCreditoMes, creditoFiscal, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
+    }
+  }
+
+  app.get("/api/reportes/d104", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      const periodo = String(req.query.periodo || "");
+      if (!/^\d{4}-\d{2}$/.test(periodo)) return res.status(400).json({ error: "Periodo inválido. Use el formato YYYY-MM." });
+      const datos = await obtenerDatosD104(idCompania, periodo);
+      if (!datos) return res.status(404).json({ error: "Empresa no encontrada." });
+      res.json(construirReporteD104(periodo, datos.company, datos.facturasMes, datos.notasCreditoMes, datos.creditoFiscal, datos.yaCerrado, datos.fechaCierre));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/reportes/d104/cerrar", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      const periodo = String(req.body.periodo || "");
+      if (!/^\d{4}-\d{2}$/.test(periodo)) return res.status(400).json({ error: "Periodo inválido. Use el formato YYYY-MM." });
+      const datos = await obtenerDatosD104(idCompania, periodo);
+      if (!datos) return res.status(404).json({ error: "Empresa no encontrada." });
+      if (datos.yaCerrado) return res.status(409).json({ error: `Ya existe un cierre D-104 para el período ${periodo}.` });
+
+      const creadoEn = new Date().toISOString();
+      const reporte = { ...construirReporteD104(periodo, datos.company, datos.facturasMes, datos.notasCreditoMes, datos.creditoFiscal, true, creadoEn) };
+
+      if (dbConnected && pool) {
+        try {
+          await pool.query(
+            "INSERT INTO cierres_fiscales (idCompania, tipo, periodo, datos, creadoPor, creadoEn) VALUES (?, 'D104', ?, ?, NULL, ?)",
+            [idCompania, periodo, JSON.stringify(reporte), creadoEn]
+          );
+        } catch (err: any) {
+          if (err.code === "ER_DUP_ENTRY") return res.status(409).json({ error: `Ya existe un cierre D-104 para el período ${periodo}.` });
+          throw err;
+        }
+      } else {
+        if (localCierresFiscales.some(c => c.idCompania === idCompania && c.tipo === "D104" && c.periodo === periodo)) {
+          return res.status(409).json({ error: `Ya existe un cierre D-104 para el período ${periodo}.` });
+        }
+        localCierresFiscales.push({ id: Math.max(0, ...localCierresFiscales.map(c => c.id), 0) + 1, idCompania, tipo: "D104", periodo, datos: reporte, creadoPor: null, creadoEn });
+      }
+
+      res.json(reporte);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  async function obtenerDatosD101(idCompania: number, anio: number) {
+    const anioStr = String(anio);
+    if (dbConnected && pool) {
+      const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+      const company: Company | undefined = (companyRows as any[]).map(normalizeRow)[0];
+      if (!company) return null;
+
+      const [facturaRows] = await pool.query(
+        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '01' AND fechaEmision LIKE ? AND estado NOT IN ('ANULADA','RECHAZADA','ERROR')",
+        [idCompania, `${anioStr}%`]
+      );
+      const facturasAnio = facturaRows as any[];
+
+      const [cxpRows] = await pool.query(
+        "SELECT COALESCE(SUM(montoTotal), 0) AS total FROM cuentas_pagar WHERE idCompania = ? AND fechaRegistro LIKE ? AND estado != 'ANULADA'",
+        [idCompania, `${anioStr}%`]
+      );
+      const comprasCxPAnio = Number((cxpRows as any[])[0]?.total) || 0;
+
+      const [gmRows] = await pool.query("SELECT * FROM d101_gastos_manuales WHERE idCompania = ? AND anio = ?", [idCompania, anio]);
+      const gm = (gmRows as any[])[0];
+      const gastosManuales: GastosManualesAnuales = gm
+        ? { alquileres: Number(gm.alquileres), servicios: Number(gm.servicios), planilla: Number(gm.planilla), otros: Number(gm.otros) }
+        : { alquileres: 0, servicios: 0, planilla: 0, otros: 0 };
+
+      const [cierreRows] = await pool.query("SELECT * FROM cierres_fiscales WHERE idCompania = ? AND tipo = 'D101' AND periodo = ?", [idCompania, anioStr]);
+      const cierre = (cierreRows as any[])[0];
+
+      return { company, facturasAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
+    } else {
+      const company = localCompanies.find(c => c.id === idCompania);
+      if (!company) return null;
+      const facturasAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(anioStr) && f.estado !== "ANULADA" && f.estado !== "RECHAZADA" && f.estado !== "ERROR");
+      const comprasCxPAnio = localCuentasPagar.filter(c => c.idCompania === idCompania && c.fechaRegistro.startsWith(anioStr) && c.estado !== "ANULADA").reduce((s, c) => s + c.montoTotal, 0);
+      const gm = localGastosManuales.find(g => g.idCompania === idCompania && g.anio === anio);
+      const gastosManuales: GastosManualesAnuales = gm
+        ? { alquileres: gm.alquileres, servicios: gm.servicios, planilla: gm.planilla, otros: gm.otros }
+        : { alquileres: 0, servicios: 0, planilla: 0, otros: 0 };
+      const cierre = localCierresFiscales.find(c => c.idCompania === idCompania && c.tipo === "D101" && c.periodo === anioStr);
+      return { company, facturasAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
+    }
+  }
+
+  app.get("/api/reportes/d101", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      const anio = parseInt(String(req.query.anio || ""));
+      if (!Number.isFinite(anio) || anio < 2000 || anio > 2100) return res.status(400).json({ error: "Año inválido." });
+      const datos = await obtenerDatosD101(idCompania, anio);
+      if (!datos) return res.status(404).json({ error: "Empresa no encontrada." });
+      res.json(construirReporteD101(anio, datos.company, datos.facturasAnio, datos.comprasCxPAnio, datos.gastosManuales, datos.yaCerrado, datos.fechaCierre));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put("/api/reportes/d101-gastos-manuales", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      const anio = parseInt(req.body.anio);
+      if (!Number.isFinite(anio) || anio < 2000 || anio > 2100) return res.status(400).json({ error: "Año inválido." });
+      const gastos: GastosManualesAnuales = {
+        alquileres: Math.max(0, parseFloat(req.body.alquileres) || 0),
+        servicios: Math.max(0, parseFloat(req.body.servicios) || 0),
+        planilla: Math.max(0, parseFloat(req.body.planilla) || 0),
+        otros: Math.max(0, parseFloat(req.body.otros) || 0)
+      };
+
+      const yaCerrado = dbConnected && pool
+        ? ((await pool.query("SELECT id FROM cierres_fiscales WHERE idCompania = ? AND tipo = 'D101' AND periodo = ?", [idCompania, String(anio)]))[0] as any[]).length > 0
+        : localCierresFiscales.some(c => c.idCompania === idCompania && c.tipo === "D101" && c.periodo === String(anio));
+      if (yaCerrado) return res.status(400).json({ error: `El año ${anio} ya tiene una liquidación de Renta presentada — sus gastos ya no se pueden editar.` });
+
+      if (dbConnected && pool) {
+        await pool.query(
+          "INSERT INTO d101_gastos_manuales (idCompania, anio, alquileres, servicios, planilla, otros, actualizadoEn) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE alquileres = VALUES(alquileres), servicios = VALUES(servicios), planilla = VALUES(planilla), otros = VALUES(otros), actualizadoEn = VALUES(actualizadoEn)",
+          [idCompania, anio, gastos.alquileres, gastos.servicios, gastos.planilla, gastos.otros, new Date().toISOString()]
+        );
+      } else {
+        const existing = localGastosManuales.find(g => g.idCompania === idCompania && g.anio === anio);
+        if (existing) Object.assign(existing, gastos);
+        else localGastosManuales.push({ idCompania, anio, ...gastos });
+      }
+
+      res.json(gastos);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/reportes/d101/cerrar", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      const anio = parseInt(req.body.anio);
+      if (!Number.isFinite(anio) || anio < 2000 || anio > 2100) return res.status(400).json({ error: "Año inválido." });
+      const datos = await obtenerDatosD101(idCompania, anio);
+      if (!datos) return res.status(404).json({ error: "Empresa no encontrada." });
+      if (datos.yaCerrado) return res.status(409).json({ error: `Ya existe una liquidación de Renta para el año ${anio}.` });
+
+      const creadoEn = new Date().toISOString();
+      const reporte = construirReporteD101(anio, datos.company, datos.facturasAnio, datos.comprasCxPAnio, datos.gastosManuales, true, creadoEn);
+
+      if (dbConnected && pool) {
+        try {
+          await pool.query(
+            "INSERT INTO cierres_fiscales (idCompania, tipo, periodo, datos, creadoPor, creadoEn) VALUES (?, 'D101', ?, ?, NULL, ?)",
+            [idCompania, String(anio), JSON.stringify(reporte), creadoEn]
+          );
+        } catch (err: any) {
+          if (err.code === "ER_DUP_ENTRY") return res.status(409).json({ error: `Ya existe una liquidación de Renta para el año ${anio}.` });
+          throw err;
+        }
+      } else {
+        if (localCierresFiscales.some(c => c.idCompania === idCompania && c.tipo === "D101" && c.periodo === String(anio))) {
+          return res.status(409).json({ error: `Ya existe una liquidación de Renta para el año ${anio}.` });
+        }
+        localCierresFiscales.push({ id: Math.max(0, ...localCierresFiscales.map(c => c.id), 0) + 1, idCompania, tipo: "D101", periodo: String(anio), datos: reporte, creadoPor: null, creadoEn });
+      }
+
+      res.json(reporte);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/reportes/cierres", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      const tipo = req.query.tipo === "D101" ? "D101" : "D104";
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM cierres_fiscales WHERE idCompania = ? AND tipo = ? ORDER BY periodo DESC", [idCompania, tipo]);
+        res.json((rows as any[]).map(r => ({ ...r, datos: typeof r.datos === "string" ? JSON.parse(r.datos) : r.datos })));
+      } else {
+        res.json(localCierresFiscales.filter(c => c.idCompania === idCompania && c.tipo === tipo).sort((a, b) => b.periodo.localeCompare(a.periodo)));
+      }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

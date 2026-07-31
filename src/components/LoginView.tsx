@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Company, User, DEFAULT_HORARIO_ATENCION } from '../data/mockData';
-import { Building, Key, User as UserIcon, Briefcase, Shield, Sparkles, AlertCircle, ArrowRight, Clipboard, CheckCircle2 } from 'lucide-react';
+import { Building, Key, User as UserIcon, Shield, Sparkles, AlertCircle, ArrowRight, Clipboard, CheckCircle2 } from 'lucide-react';
 
 interface LoginViewProps {
   onLoginSuccess: (user: User, company: Company | undefined) => void;
@@ -122,6 +122,7 @@ export default function LoginView({
         proximoVencimiento: null,
         horarioAtencion: DEFAULT_HORARIO_ATENCION,
         requiereConfirmacionCitas: compPerfil === 'Spa',
+        regimenSimplificado: false,
         provincia: '',
         canton: '',
         distrito: '',
@@ -167,12 +168,10 @@ export default function LoginView({
 
         {/* Logo and header */}
         <div className="text-center mb-6">
-          <div className="inline-flex p-3.5 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-400 mb-3">
-            <Briefcase className="w-8 h-8" />
-          </div>
-          <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">FisioNutri CR</h2>
+          <img src="/logo_tuanisBooking.png" alt="TuanisBooking" className="w-20 h-20 mx-auto mb-3 drop-shadow-lg" />
+          <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">TuanisBooking</h2>
           <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-            Plataforma costarricense multiempresa para clínicas de Terapia Física y Nutrición
+            Plataforma costarricense multiempresa para atencion de Clientes y Pacientes, con agenda de citas, recordatorios automáticos, facturación electrónica y reportes de gestión.
           </p>
         </div>
 

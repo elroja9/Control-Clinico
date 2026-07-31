@@ -22,7 +22,10 @@ import {
   Menu,
   X,
   MapPin,
-  Share2
+  Share2,
+  Receipt,
+  Landmark,
+  FileSpreadsheet
 } from 'lucide-react';
 import {
   LineChart,
@@ -58,7 +61,10 @@ import {
   CalendarBlock,
   CompanyPayment,
   Servicio,
-  Factura
+  Factura,
+  CuentaCobrar,
+  Proveedor,
+  CuentaPagar
 } from './data/mockData';
 
 import CompanySettings from './components/CompanySettings';
@@ -70,6 +76,11 @@ import AgendaCalendar from './components/AgendaCalendar';
 import SaasAdminPanel from './components/SaasAdminPanel';
 import MyProfile from './components/MyProfile';
 import OnlineBookingShare from './components/OnlineBookingShare';
+import FacturacionManager from './components/FacturacionManager';
+import CxCManager from './components/CxCManager';
+import ProveedorManager from './components/ProveedorManager';
+import CxPManager from './components/CxPManager';
+import ReportesFiscales from './components/ReportesFiscales';
 
 export default function App() {
   // --- Persistent Storage Core (Synced with MySQL Backend) ---
@@ -133,6 +144,9 @@ export default function App() {
 
   const [companyPayments, setCompanyPayments] = useState<CompanyPayment[]>([]);
   const [facturas, setFacturas] = useState<Factura[]>([]);
+  const [cxc, setCxc] = useState<CuentaCobrar[]>([]);
+  const [proveedores, setProveedores] = useState<Proveedor[]>([]);
+  const [cxp, setCxp] = useState<CuentaPagar[]>([]);
 
   // --- Session bootstrap: restores the login from the httpOnly session cookie, if any ---
   useEffect(() => {
@@ -217,6 +231,21 @@ export default function App() {
       .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
       .then(data => { if (data) setFacturas(data); })
       .catch(err => console.log("MySQL offline, no factura history available"));
+
+    fetch('/api/cxc')
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data) setCxc(data); })
+      .catch(err => console.log("MySQL offline, no CxC history available"));
+
+    fetch('/api/proveedores')
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data) setProveedores(data); })
+      .catch(err => console.log("MySQL offline, no proveedores available"));
+
+    fetch('/api/cxp')
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data) setCxp(data); })
+      .catch(err => console.log("MySQL offline, no CxP history available"));
   }, [currentUser?.id]);
 
   // Save state updates to LocalStorage as secondary local cache / fallback
@@ -271,7 +300,7 @@ export default function App() {
   const activeCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
   // App Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // --- Login and Company Registration Handlers ---
@@ -512,6 +541,17 @@ export default function App() {
     });
   };
 
+  const handleAjustarStock = async (idServicio: number, nuevoStock: number, notas: string): Promise<void> => {
+    const res = await fetch(`/api/servicios/${idServicio}/ajustar-stock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nuevoStock, notas })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo ajustar la existencia.');
+    setServicios(prev => prev.map(s => s.id === idServicio ? { ...s, stock: data.stock } : s));
+  };
+
   // A diferencia de otros handlers, no hay fallback local optimista: una factura
   // fallida debe mostrarse como error real, no simularse como si se hubiera creado.
   const handleCrearFactura = async (payload: {
@@ -531,6 +571,86 @@ export default function App() {
     if (!res.ok) throw new Error(data.error || 'No se pudo generar la factura.');
     setFacturas(prev => [...prev, data]);
     return data;
+  };
+
+  const handleAnularFactura = async (idFactura: number, motivo: string): Promise<Factura> => {
+    const res = await fetch(`/api/facturas/${idFactura}/anular`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ motivo })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo anular la factura.');
+    setFacturas(prev => [...prev.map(f => f.id === idFactura ? { ...f, estado: 'ANULADA' as const } : f), data]);
+    setCxc(prev => prev.map(c => c.idFactura === idFactura && c.estado === 'PENDIENTE' ? { ...c, estado: 'ANULADA' as const } : c));
+    return data;
+  };
+
+  const handleRegistrarPagoCxc = async (idCuentaCobrar: number, monto: number, medioPago: string, referencia: string): Promise<void> => {
+    const res = await fetch(`/api/cxc/${idCuentaCobrar}/pagos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ monto, medioPago, referencia })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo registrar el abono.');
+    setCxc(prev => prev.map(c => c.id === idCuentaCobrar
+      ? { ...c, saldoPendiente: data.saldoPendiente, estado: data.estado, pagos: [...c.pagos, data.pago] }
+      : c));
+  };
+
+  const handleSaveProveedor = async (proveedor: Partial<Proveedor>): Promise<void> => {
+    const res = await fetch('/api/proveedores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(proveedor)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo guardar el proveedor.');
+    setProveedores(prev => {
+      const exists = prev.some(p => p.id === data.id);
+      return exists ? prev.map(p => p.id === data.id ? data : p) : [...prev, data];
+    });
+  };
+
+  const handleCrearCxp = async (payload: {
+    idProveedor: number;
+    numeroFacturaProveedor: string;
+    esServicio: boolean;
+    montoTotal?: number;
+    plazoDias: number;
+    notas: string;
+    ivaAcreditable: number;
+    lineas?: Array<{ idServicio: number; cantidad: number; costoUnitario: number }>;
+  }): Promise<void> => {
+    const res = await fetch('/api/cxp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo registrar la cuenta por pagar.');
+    setCxp(prev => [data, ...prev]);
+    if (!payload.esServicio) {
+      const res2 = await fetch('/api/servicios');
+      if (res2.ok) {
+        const serviciosData = await res2.json();
+        if (serviciosData && serviciosData.length > 0) setServicios(serviciosData);
+      }
+    }
+  };
+
+  const handleRegistrarPagoCxp = async (idCuentaPagar: number, monto: number, medioPago: string, referencia: string): Promise<void> => {
+    const res = await fetch(`/api/cxp/${idCuentaPagar}/pagos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ monto, medioPago, referencia })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo registrar el abono.');
+    setCxp(prev => prev.map(c => c.id === idCuentaPagar
+      ? { ...c, saldoPendiente: data.saldoPendiente, estado: data.estado, pagos: [...c.pagos, data.pago] }
+      : c));
   };
 
   const handleCargarServiciosDefecto = async (idCompania: number): Promise<Servicio[]> => {
@@ -875,6 +995,54 @@ export default function App() {
             </button>
 
             <button
+              onClick={() => { setActiveTab('facturacion'); setIsMobileMenuOpen(false); }}
+              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
+                activeTab === 'facturacion'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Receipt className="w-4 h-4" />
+                <span>Facturación</span>
+              </div>
+              <span className="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
+                {facturas.filter(f => f.idCompania === selectedCompanyId).length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => { setActiveTab('cxp'); setIsMobileMenuOpen(false); }}
+              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
+                activeTab === 'cxp'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Landmark className="w-4 h-4" />
+                <span>Cuentas por Pagar</span>
+              </div>
+              <span className="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
+                {cxp.filter(c => c.idCompania === selectedCompanyId && c.estado === 'PENDIENTE').length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => { setActiveTab('reportes-fiscales'); setIsMobileMenuOpen(false); }}
+              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
+                activeTab === 'reportes-fiscales'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-4 h-4" />
+                <span>Reportes Fiscales</span>
+              </div>
+            </button>
+
+            <button
               onClick={() => { setActiveTab('branding'); setIsMobileMenuOpen(false); }}
               className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
                 activeTab === 'branding'
@@ -1042,6 +1210,54 @@ export default function App() {
                 <span className="bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
                   {filteredConsultationsByCompany.length}
                 </span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('facturacion')}
+                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
+                  activeTab === 'facturacion'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Receipt className="w-4 h-4" />
+                  <span>Facturación</span>
+                </div>
+                <span className="bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
+                  {facturas.filter(f => f.idCompania === selectedCompanyId).length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('cxp')}
+                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
+                  activeTab === 'cxp'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Landmark className="w-4 h-4" />
+                  <span>Cuentas por Pagar</span>
+                </div>
+                <span className="bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
+                  {cxp.filter(c => c.idCompania === selectedCompanyId && c.estado === 'PENDIENTE').length}
+                </span>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('reportes-fiscales')}
+                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
+                  activeTab === 'reportes-fiscales'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Reportes Fiscales</span>
+                </div>
               </button>
 
               <button
@@ -1513,6 +1729,44 @@ export default function App() {
               </div>
             )}
 
+            {/* ================= FACTURACIÓN ELECTRÓNICA + CXC ================= */}
+            {activeTab === 'facturacion' && (
+              <div className="space-y-5">
+                <FacturacionManager
+                  facturas={facturas.filter(f => f.idCompania === selectedCompanyId)}
+                  patients={filteredPatientsByCompany}
+                  onAnularFactura={handleAnularFactura}
+                />
+                <CxCManager
+                  cxc={cxc.filter(c => c.idCompania === selectedCompanyId)}
+                  patients={filteredPatientsByCompany}
+                  onRegistrarPago={handleRegistrarPagoCxc}
+                />
+              </div>
+            )}
+
+            {/* ================= CUENTAS POR PAGAR (CXP) + PROVEEDORES ================= */}
+            {activeTab === 'cxp' && (
+              <div className="space-y-5">
+                <ProveedorManager
+                  proveedores={proveedores.filter(p => p.idCompania === selectedCompanyId)}
+                  onSaveProveedor={handleSaveProveedor}
+                />
+                <CxPManager
+                  cxp={cxp.filter(c => c.idCompania === selectedCompanyId)}
+                  proveedores={proveedores.filter(p => p.idCompania === selectedCompanyId)}
+                  articulos={servicios.filter(s => s.idCompania === selectedCompanyId && s.tipo === 'ARTICULO')}
+                  onCrearCxp={handleCrearCxp}
+                  onRegistrarPago={handleRegistrarPagoCxp}
+                />
+              </div>
+            )}
+
+            {/* ================= REPORTES FISCALES D-104 / D-101 ================= */}
+            {activeTab === 'reportes-fiscales' && (
+              <ReportesFiscales company={activeCompany} />
+            )}
+
             {/* ================= 4. CLINIC BRANDING CUSTOMIZATION ================= */}
             {activeTab === 'branding' && (
               <CompanySettings
@@ -1529,6 +1783,7 @@ export default function App() {
                 servicios={servicios}
                 onSaveServicio={handleSaveServicio}
                 onCargarServiciosDefecto={handleCargarServiciosDefecto}
+                onAjustarStock={handleAjustarStock}
               />
             )}
 
@@ -1581,7 +1836,7 @@ export default function App() {
 
       {/* Persistent Page Footer */}
       <footer className="mt-auto py-5 bg-slate-900 text-slate-400 text-xs text-center border-t border-slate-950 shrink-0 print:hidden">
-        <p className="font-semibold text-slate-300">FisioNutri Costa Rica S.A. © {new Date().getFullYear()}</p>
+        <p className="font-semibold text-slate-300">TuanisBooking © {new Date().getFullYear()}</p>
         <p className="text-[10px] text-slate-500 mt-1">Plataforma clínica para el control integral de pacientes con facturación digital autorizada</p>
       </footer>
 

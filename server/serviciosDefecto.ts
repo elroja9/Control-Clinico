@@ -17,17 +17,21 @@ import type { Servicio } from "../src/data/mockData";
 
 type ServicioDefecto = Omit<Servicio, "id" | "idCompania">;
 
+// Campos de inventario que no aplican a estos servicios por defecto (todos tipo SERVICIO, sin
+// existencias) — se comparten por spread en vez de repetirlos en cada literal de abajo.
+const SIN_INVENTARIO = { tipo: "SERVICIO" as const, stock: null, stockMinimo: null, costoUnitario: null, codigoBarras: null };
+
 const SERVICIOS_FISIOTERAPIA: ServicioDefecto[] = [
-  { nombre: "Sesión de Fisioterapia Individual", precio: 15400, porcentajeIva: null, duracionMinutos: 45, codigoCabys: null, unidadMedida: "Sp", activo: true },
-  { nombre: "Sesión de Fisioterapia Individual (plan 3+ veces/semana)", precio: 12320, porcentajeIva: null, duracionMinutos: 45, codigoCabys: null, unidadMedida: "Sp", activo: true },
-  { nombre: "Sesión de Fisioterapia a Domicilio", precio: 18500, porcentajeIva: null, duracionMinutos: 60, codigoCabys: null, unidadMedida: "Sp", activo: true },
-  { nombre: "Sesión de Fisioterapia Grupal (2-5 personas)", precio: 10300, porcentajeIva: null, duracionMinutos: 45, codigoCabys: null, unidadMedida: "Sp", activo: true }
+  { ...SIN_INVENTARIO, nombre: "Sesión de Fisioterapia Individual", precio: 15400, porcentajeIva: null, duracionMinutos: 45, codigoCabys: null, unidadMedida: "Sp", activo: true },
+  { ...SIN_INVENTARIO, nombre: "Sesión de Fisioterapia Individual (plan 3+ veces/semana)", precio: 12320, porcentajeIva: null, duracionMinutos: 45, codigoCabys: null, unidadMedida: "Sp", activo: true },
+  { ...SIN_INVENTARIO, nombre: "Sesión de Fisioterapia a Domicilio", precio: 18500, porcentajeIva: null, duracionMinutos: 60, codigoCabys: null, unidadMedida: "Sp", activo: true },
+  { ...SIN_INVENTARIO, nombre: "Sesión de Fisioterapia Grupal (2-5 personas)", precio: 10300, porcentajeIva: null, duracionMinutos: 45, codigoCabys: null, unidadMedida: "Sp", activo: true }
 ];
 
 const SERVICIOS_NUTRICION: ServicioDefecto[] = [
-  { nombre: "Consulta Nutricional de Primera Vez", precio: 0, porcentajeIva: null, duracionMinutos: 45, codigoCabys: null, unidadMedida: "Sp", activo: true },
-  { nombre: "Consulta Nutricional de Seguimiento", precio: 0, porcentajeIva: null, duracionMinutos: 30, codigoCabys: null, unidadMedida: "Sp", activo: true },
-  { nombre: "Asesoría Nutricional", precio: 0, porcentajeIva: null, duracionMinutos: 30, codigoCabys: null, unidadMedida: "Spe", activo: true }
+  { ...SIN_INVENTARIO, nombre: "Consulta Nutricional de Primera Vez", precio: 0, porcentajeIva: null, duracionMinutos: 45, codigoCabys: null, unidadMedida: "Sp", activo: true },
+  { ...SIN_INVENTARIO, nombre: "Consulta Nutricional de Seguimiento", precio: 0, porcentajeIva: null, duracionMinutos: 30, codigoCabys: null, unidadMedida: "Sp", activo: true },
+  { ...SIN_INVENTARIO, nombre: "Asesoría Nutricional", precio: 0, porcentajeIva: null, duracionMinutos: 30, codigoCabys: null, unidadMedida: "Spe", activo: true }
 ];
 
 /**

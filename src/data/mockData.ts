@@ -44,6 +44,7 @@ export interface Company {
   proximoVencimiento: string | null; // 'YYYY-MM-DD'
   horarioAtencion: HorarioAtencion;
   requiereConfirmacionCitas: boolean; // si es true, las citas creadas por el cliente quedan PROGRAMADA (pendiente de confirmar) en vez de CONFIRMADA
+  regimenSimplificado: boolean; // Régimen de Tributación Simplificada: no declara IVA por D-104 (paga cuota fija) — los reportes fiscales muestran esto solo como referencia informativa
   // Ubicación fiscal (requerida por Hacienda para el bloque Emisor.Ubicacion de la factura electrónica)
   provincia: string; // código INEC, 1 dígito
   canton: string; // código INEC, 2 dígitos
@@ -326,6 +327,7 @@ export const defaultCompanies: Company[] = [
     proximoVencimiento: null,
     horarioAtencion: DEFAULT_HORARIO_ATENCION,
     requiereConfirmacionCitas: false,
+    regimenSimplificado: false,
     provincia: "1",
     canton: "01",
     distrito: "01",
@@ -350,6 +352,7 @@ export const defaultCompanies: Company[] = [
     proximoVencimiento: null,
     horarioAtencion: DEFAULT_HORARIO_ATENCION,
     requiereConfirmacionCitas: false,
+    regimenSimplificado: false,
     provincia: "2",
     canton: "01",
     distrito: "01",
@@ -664,26 +667,55 @@ export interface CompanyPayment {
 
 export const defaultCompanyPayments: CompanyPayment[] = [];
 
-// Códigos de Unidad de Medida de Hacienda relevantes para servicios (no venta de bienes).
-// "Sp" = Servicios Profesionales, "Spe" = Servicios Personales, "St" = Servicios Técnicos.
-export type UnidadMedidaServicio = 'Sp' | 'Spe' | 'St';
+// Códigos de Unidad de Medida de Hacienda. "Sp" = Servicios Profesionales, "Spe" = Servicios
+// Personales, "St" = Servicios Técnicos, "Os" = Otros Servicios, "h" = horas — para SERVICIO.
+// "Unid" = Unidad — para ARTICULO (venta de bienes con existencias).
+export type UnidadMedidaServicio = 'Sp' | 'Spe' | 'St' | 'Os' | 'h' | 'Unid';
+
+// Catálogo único de items facturables: cubre tanto SERVICIO (sesiones/citas, sin existencias)
+// como ARTICULO (bienes físicos con control de stock — suplementos, cremas, equipo de venta).
+// Un mismo negocio (p.ej. una clínica que también vende productos) usa esta única tabla para
+// ambos, distinguidos por `tipo` — los campos de stock solo aplican/se validan para ARTICULO.
+export type TipoServicio = 'SERVICIO' | 'ARTICULO';
 
 export interface Servicio {
   id: number;
   idCompania: number;
+  tipo: TipoServicio;
   nombre: string;
   precio: number;
   porcentajeIva: number | null; // null => usa el ivaPorDefecto de la empresa
-  duracionMinutos: number; // duración de la sesión/cita para este servicio
+  duracionMinutos: number; // duración de la sesión/cita — solo aplica a SERVICIO (0 en ARTICULO)
   codigoCabys: string | null; // código CABYS de 13 dígitos — obligatorio para poder facturar este servicio
   unidadMedida: UnidadMedidaServicio;
   activo: boolean;
+  // Solo ARTICULO:
+  stock: number | null; // existencias actuales; null para SERVICIO (no aplica)
+  stockMinimo: number | null; // punto de reorden — null desactiva la alerta de faltante
+  costoUnitario: number | null; // costo de compra, para margen y valorización de inventario
+  codigoBarras: string | null;
 }
 
 export const defaultServicios: Servicio[] = [];
 
+export type TipoMovimientoInventario = 'VENTA' | 'COMPRA' | 'AJUSTE' | 'DEVOLUCION_VENTA' | 'DEVOLUCION_COMPRA';
+
+export interface MovimientoInventario {
+  id: number;
+  idCompania: number;
+  idServicio: number;
+  tipo: TipoMovimientoInventario;
+  cantidad: number; // delta: negativo resta stock, positivo lo suma
+  stockResultante: number;
+  referencia: string | null; // p.ej. "Factura #123"
+  notas: string | null;
+  creadoPor: string | null;
+  creadoEn: string; // ISO 8601
+}
+
 export interface FacturaLinea {
   idServicio: number | null;
+  tipo: TipoServicio; // copiado del servicio al momento de facturar — el tipo del catálogo puede cambiar después
   codigoCabys: string;
   nombre: string;
   unidadMedida: UnidadMedidaServicio;
@@ -696,7 +728,8 @@ export interface FacturaLinea {
   montoTotalLinea: number; // subTotal + montoIva
 }
 
-export type EstadoFactura = 'FIRMADA' | 'ENVIADA' | 'ACEPTADA' | 'RECHAZADA' | 'ERROR';
+export type EstadoFactura = 'FIRMADA' | 'ENVIADA' | 'ACEPTADA' | 'RECHAZADA' | 'ERROR' | 'ANULADA';
+export type TipoDocumentoFactura = '01' | '03'; // 01 = Factura Electrónica, 03 = Nota de Crédito Electrónica
 
 export interface Factura {
   id: number;
@@ -714,6 +747,160 @@ export interface Factura {
   estado: EstadoFactura;
   mensajeError: string | null;
   creadaEn: string;
+  condicionVenta: string; // '01' contado, '02' crédito, etc. — catálogo de Hacienda
+  tipoDocumento: TipoDocumentoFactura;
+  idFacturaReferencia: number | null; // solo en Notas de Crédito: id de la Factura que anulan
+  motivoAnulacion: string | null; // solo en Notas de Crédito
+}
+
+// CXC — Cuentas por Cobrar. Se crea automáticamente al facturar con condicionVenta='02'
+// (crédito); "VENCIDA" no se guarda como tal, se deriva comparando fechaVencimiento contra hoy
+// (igual que en POS-RESTAURANTE) para no depender de un cron que la actualice.
+export type EstadoCuentaCobrar = 'PENDIENTE' | 'PAGADA' | 'ANULADA';
+
+export interface CuentaCobrar {
+  id: number;
+  idCompania: number;
+  idFactura: number;
+  facturaConsecutivo: string;
+  idPaciente: number;
+  fechaEmision: string; // 'YYYY-MM-DD'
+  fechaVencimiento: string; // 'YYYY-MM-DD'
+  plazoDias: number;
+  montoTotal: number;
+  saldoPendiente: number;
+  estado: EstadoCuentaCobrar;
+  creadaEn: string;
+  pagos: PagoCuentaCobrar[];
+}
+
+export interface PagoCuentaCobrar {
+  id: number;
+  idCompania: number;
+  idCuentaCobrar: number;
+  fecha: string; // 'YYYY-MM-DD'
+  monto: number;
+  medioPago: string; // catálogo Hacienda: '01' Efectivo, '02' Tarjeta, '03' Transferencia/SINPE, '04' Cheque
+  referencia: string | null;
+  registradoPor: string | null;
+  creadoEn: string;
 }
 
 export const defaultFacturas: Factura[] = [];
+
+// CXP — Cuentas por Pagar (proveedores). A diferencia de CXC (que solo nace de una factura de
+// venta), aquí la cuenta por pagar SÍ se crea manualmente — no hay "factura electrónica de
+// compra" en esta app, el usuario registra lo que el proveedor le facturó en papel/PDF.
+export interface Proveedor {
+  id: number;
+  idCompania: number;
+  tipoIdentificacion: '01' | '02' | '03' | '04'; // catálogo Hacienda: Física/Jurídica/DIMEX/NITE
+  identificacion: string;
+  nombre: string;
+  correo: string | null;
+  telefono: string | null;
+  direccion: string | null;
+  activo: boolean;
+  creadoEn: string;
+}
+
+export interface LineaCuentaPagar {
+  idServicio: number;
+  nombre: string; // copiado al momento de la compra — el nombre del artículo puede cambiar después
+  cantidad: number;
+  costoUnitario: number;
+}
+
+export type EstadoCuentaPagar = 'PENDIENTE' | 'PAGADA' | 'ANULADA';
+
+export interface CuentaPagar {
+  id: number;
+  idCompania: number;
+  idProveedor: number;
+  numeroFacturaProveedor: string | null;
+  esServicio: boolean; // true = gasto sin impacto en inventario (alquiler, servicios profesionales...)
+  lineas: LineaCuentaPagar[]; // solo cuando esServicio=false — alimenta el inventario
+  fechaRegistro: string; // 'YYYY-MM-DD'
+  fechaVencimiento: string; // 'YYYY-MM-DD'
+  plazoDias: number;
+  montoTotal: number;
+  saldoPendiente: number;
+  estado: EstadoCuentaPagar;
+  ivaAcreditable: number; // IVA de la factura de compra recibida — crédito fiscal para el D-104, se ingresa a mano
+  notas: string | null;
+  creadaEn: string;
+  pagos: PagoCuentaPagar[];
+}
+
+export interface PagoCuentaPagar {
+  id: number;
+  idCompania: number;
+  idCuentaPagar: number;
+  fecha: string; // 'YYYY-MM-DD'
+  monto: number;
+  medioPago: string; // catálogo Hacienda: '01' Efectivo, '02' Tarjeta, '03' Transferencia/SINPE, '04' Cheque
+  referencia: string | null;
+  registradoPor: string | null;
+  creadoEn: string;
+}
+
+// Reportes fiscales D-104 (IVA mensual) y D-101 (Renta anual). Se calculan siempre en el
+// servidor a partir de facturas/notas de crédito/CXP — nunca se aceptan totales calculados en
+// el cliente, ni siquiera al "cerrar" un período (ver POST /api/reportes/d104/cerrar).
+export interface TarifaIvaDesglose {
+  base: number;
+  iva: number;
+}
+
+export interface ReporteD104 {
+  periodo: string; // 'YYYY-MM'
+  regimenSimplificado: boolean;
+  tarifas: {
+    t13: TarifaIvaDesglose;
+    t4: TarifaIvaDesglose;
+    t2: TarifaIvaDesglose;
+    t1: TarifaIvaDesglose;
+    exento: TarifaIvaDesglose;
+  };
+  debitoFiscal: number; // suma de IVA de todas las tarifas (ventas - notas de crédito del período)
+  creditoFiscal: number; // IVA acreditable de compras (CXP) registradas en el período
+  saldoAPagar: number; // debitoFiscal - creditoFiscal (negativo = saldo a favor)
+  cantidadFacturas: number;
+  cantidadNotasCredito: number;
+  yaCerrado: boolean;
+  fechaCierre: string | null;
+}
+
+export interface GastosManualesAnuales {
+  alquileres: number;
+  servicios: number;
+  planilla: number;
+  otros: number;
+}
+
+export interface ReporteD101 {
+  anio: number;
+  regimenSimplificado: boolean;
+  tipoContribuyente: 'fisica' | 'juridica';
+  ventasNetas: number;
+  ivaAnual: number;
+  comprasCxP: number; // derivado automáticamente de Cuentas por Pagar del año
+  gastosManuales: GastosManualesAnuales;
+  totalGastosDeducibles: number;
+  utilidadNeta: number;
+  impuestoRenta: number;
+  tramos: string[];
+  cantidadFacturas: number;
+  yaCerrado: boolean;
+  fechaCierre: string | null;
+}
+
+export interface CierreFiscal {
+  id: number;
+  idCompania: number;
+  tipo: 'D104' | 'D101';
+  periodo: string;
+  datos: ReporteD104 | ReporteD101;
+  creadoPor: string | null;
+  creadoEn: string;
+}

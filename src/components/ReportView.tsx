@@ -375,7 +375,7 @@ export default function ReportView({ consultation, patient, company, onClose, on
             <span>Firmado Digitalmente conforme a Resolución Hacienda Costa Rica GT-R-48</span>
           </div>
           <div>
-            <span>FisioNutri CR | Eliecer Rojas Informática Médica</span>
+            <span>TuanisBooking | Eliecer Rojas Informática Médica</span>
           </div>
         </div>
       </div>
