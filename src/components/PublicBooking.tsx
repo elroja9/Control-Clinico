@@ -214,8 +214,9 @@ export default function PublicBooking() {
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans">
       <div className="w-full max-w-xl bg-white rounded-3xl border border-slate-200 shadow-xl p-6 sm:p-8">
         <div className="text-center mb-6">
+          <img src="/logo_tuanisBooking.png" alt="TuanisBooking" className="w-14 h-14 mx-auto mb-2" />
           <h1 className="text-xl font-extrabold text-slate-900">Agendar Cita</h1>
-          <p className="text-xs text-slate-500 mt-1">Control-Clínico &middot; Reserva en línea</p>
+          <p className="text-xs text-slate-500 mt-1">TuanisBooking &middot; Reserva en línea</p>
         </div>
 
         {error && (

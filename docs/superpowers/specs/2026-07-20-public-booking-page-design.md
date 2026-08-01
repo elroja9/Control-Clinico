@@ -2,7 +2,7 @@
 
 ## Contexto
 
-Hoy, agendar una cita en Control-Clínico requiere que un miembro del personal
+Hoy, agendar una cita en TuanisBooking requiere que un miembro del personal
 (rol `Administrador` o `Profesional`) inicie sesión y use `AgendaCalendar.tsx`.
 No existe ninguna vía para que un paciente (nuevo o existente) agende su
 propia cita sin pasar por el personal, y no existe ningún concepto de

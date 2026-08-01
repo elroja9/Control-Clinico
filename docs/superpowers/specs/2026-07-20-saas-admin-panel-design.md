@@ -2,7 +2,7 @@
 
 ## Contexto
 
-Control-Clínico es multiempresa: cualquier persona puede registrar una nueva
+TuanisBooking es multiempresa: cualquier persona puede registrar una nueva
 empresa/clínica desde `LoginView.tsx` (pestaña "Registrar Empresa"), y esa
 empresa queda operativa de inmediato (auto-login, sin aprobación de nadie).
 No existe ningún control de pagos, ningún límite de usuarios por empresa, y
@@ -265,7 +265,7 @@ que arma un HTML simple (sin la marca del tenant, ya que es un mensaje de la
 plataforma hacia el tenant) con tres variantes de texto:
 
 - `'ACTIVA'` (tras estar `PENDIENTE`): "¡Tu empresa fue aprobada! Ya puedes
-  iniciar sesión en Control-Clínico."
+  iniciar sesión en TuanisBooking."
 - `'ACTIVA'` (tras estar `SUSPENDIDA`, i.e. reactivación): "Tu cuenta fue
   reactivada. Ya puedes iniciar sesión normalmente."
 - `'SUSPENDIDA'`: "Tu cuenta ha sido suspendida temporalmente. Contacta al

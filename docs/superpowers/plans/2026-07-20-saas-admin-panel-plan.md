@@ -299,7 +299,7 @@ export function renderAccountStatusEmail(params: {
 
   if (nuevoEstado === "ACTIVA" && estadoAnterior === "PENDIENTE") {
     title = "¡Tu empresa fue aprobada!";
-    mensaje = "Tu empresa ya fue revisada y aprobada. Ya puedes iniciar sesión en Control-Clínico con las credenciales que registraste.";
+    mensaje = "Tu empresa ya fue revisada y aprobada. Ya puedes iniciar sesión en TuanisBooking con las credenciales que registraste.";
   } else if (nuevoEstado === "ACTIVA") {
     title = "Tu cuenta fue reactivada";
     mensaje = "Tu cuenta fue reactivada. Ya puedes iniciar sesión normalmente.";
@@ -312,9 +312,9 @@ export function renderAccountStatusEmail(params: {
   const bodyHtml = `
     <p>Estimado(a) equipo de ${escapeHtml(tenantCompany.nombreComercial)},</p>
     <p>${escapeHtml(mensaje)}</p>
-    <p style="margin-top:16px;font-weight:bold;">Control-Clínico</p>
+    <p style="margin-top:16px;font-weight:bold;">TuanisBooking</p>
   `;
-  const text = `${title}\n\n${mensaje}\n\nControl-Clínico`;
+  const text = `${title}\n\n${mensaje}\n\nTuanisBooking`;
 
   return { subject, html: emailShell(platformCompany, title, bodyHtml), text };
 }
