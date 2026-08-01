@@ -67,7 +67,6 @@ export default function CompanySettings({
   const [servicioStockMinimo, setServicioStockMinimo] = useState('');
   const [servicioCostoUnitario, setServicioCostoUnitario] = useState('');
   const [servicioCodigoBarras, setServicioCodigoBarras] = useState('');
-  const [cabysQuery, setCabysQuery] = useState('');
   const [cabysResultados, setCabysResultados] = useState<Array<{ codigo: string; descripcion: string }>>([]);
   const [buscandoCabys, setBuscandoCabys] = useState(false);
   const [cargandoServiciosDefecto, setCargandoServiciosDefecto] = useState(false);
@@ -491,7 +490,6 @@ export default function CompanySettings({
     setServicioStockMinimo('');
     setServicioCostoUnitario('');
     setServicioCodigoBarras('');
-    setCabysQuery('');
     setCabysResultados([]);
     setIsServicioFormOpen(true);
   };
@@ -509,13 +507,11 @@ export default function CompanySettings({
     setServicioStockMinimo(s.stockMinimo != null ? s.stockMinimo.toString() : '');
     setServicioCostoUnitario(s.costoUnitario != null ? s.costoUnitario.toString() : '');
     setServicioCodigoBarras(s.codigoBarras || '');
-    setCabysQuery('');
     setCabysResultados([]);
     setIsServicioFormOpen(true);
   };
 
   const buscarCabys = (q: string) => {
-    setCabysQuery(q);
     if (q.trim().length < 3) {
       setCabysResultados([]);
       return;
@@ -1334,13 +1330,13 @@ export default function CompanySettings({
                   <label className="block text-slate-600 font-medium mb-1">Código CABYS * (obligatorio para facturar)</label>
                   <input
                     type="text"
-                    value={servicioCabys ? `${servicioCabys}` : cabysQuery}
-                    onChange={(e) => { setServicioCabys(''); buscarCabys(e.target.value); }}
-                    placeholder="Buscar por nombre o código de 13 dígitos..."
+                    value={servicioCabys}
+                    onChange={(e) => { setServicioCabys(e.target.value); buscarCabys(e.target.value); }}
+                    placeholder="Digite el código de 13 dígitos o busque por nombre..."
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
                   />
-                  {servicioCabys && (
-                    <p className="text-[10px] text-emerald-600 mt-1">Código seleccionado: {servicioCabys}</p>
+                  {servicioCabys && !/^\d{13}$/.test(servicioCabys.trim()) && (
+                    <p className="text-[10px] text-amber-600 mt-1">El código CABYS debe tener exactamente 13 dígitos.</p>
                   )}
                   {buscandoCabys && <p className="text-[10px] text-slate-400 mt-1">Buscando...</p>}
                   {cabysResultados.length > 0 && (
@@ -1349,7 +1345,7 @@ export default function CompanySettings({
                         <button
                           type="button"
                           key={r.codigo}
-                          onClick={() => { setServicioCabys(r.codigo); setCabysResultados([]); setCabysQuery(''); }}
+                          onClick={() => { setServicioCabys(r.codigo); setCabysResultados([]); }}
                           className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
                         >
                           <span className="font-mono text-[10px] text-slate-500 block">{r.codigo}</span>
