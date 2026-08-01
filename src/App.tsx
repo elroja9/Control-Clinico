@@ -354,13 +354,21 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updated)
     })
-    .then(res => res.json())
-    .then(data => {
+    .then(async res => {
+      const data = await res.json();
+      // Un 500 (p.ej. logo demasiado grande) sigue devolviendo JSON válido — sin este chequeo,
+      // el catch de abajo nunca se dispara y el fallo queda invisible: la empresa se actualiza
+      // "de forma optimista" en el estado local pero nunca se guardó de verdad en la base de
+      // datos, así que el cambio desaparece en el siguiente refresco.
+      if (!res.ok) {
+        alert(data.error || 'No se pudo guardar la empresa.');
+        return;
+      }
       setCompanies(prev => prev.map(c => c.id === data.id ? data : c));
     })
     .catch(err => {
       console.error("Error updating company in MySQL:", err);
-      setCompanies(prev => prev.map(c => c.id === updated.id ? updated : c));
+      alert('Error de conexión al guardar la empresa.');
     });
   };
 
@@ -370,13 +378,17 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newComp)
     })
-    .then(res => res.json())
-    .then(data => {
+    .then(async res => {
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'No se pudo crear la empresa.');
+        return;
+      }
       setCompanies(prev => [...prev, data]);
     })
     .catch(err => {
       console.error("Error adding company to MySQL:", err);
-      setCompanies(prev => [...prev, newComp]);
+      alert('Error de conexión al crear la empresa.');
     });
   };
 

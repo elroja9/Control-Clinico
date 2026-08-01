@@ -122,6 +122,20 @@ async function setupDatabase() {
 
     console.log(`[MySQL] Creando la base de datos '${database}' si no existe...`);
     await initConn.query(`CREATE DATABASE IF NOT EXISTS \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+
+    // El servidor tenía max_allowed_packet en el default de MySQL (1MB) — muy poco para un
+    // UPDATE con el logo de empresa como data URL base64 (ver CompanySettings.tsx), que fallaba
+    // en silencio. SET GLOBAL no sobrevive un reinicio de MySQL (no tenemos acceso al my.cnf del
+    // servidor remoto) y — importante — tampoco actualiza el valor de sesión de conexiones que
+    // ya estaban abiertas al momento de ejecutarlo. Por eso se aplica aquí, en initConn, ANTES de
+    // crear el pool: así toda conexión del pool nace después del cambio y lo hereda de una vez,
+    // sin arriesgarse a que quede una conexión reciclada anclada al límite viejo de 1MB.
+    try {
+      await initConn.query(`SET GLOBAL max_allowed_packet = 16777216`);
+    } catch (err: any) {
+      console.warn(`[MySQL] No se pudo elevar max_allowed_packet (¿faltan privilegios?): ${err.message}`);
+    }
+
     await initConn.end();
 
     // Reconnect to the database itself with multipleStatements enabled
