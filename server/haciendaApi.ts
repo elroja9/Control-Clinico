@@ -5,21 +5,27 @@
 //
 // Import exclusivo del servidor.
 
-export type AmbienteHacienda = "SANDBOX" | "PRODUCCION";
+export type AmbienteHacienda = "SANDBOX" | "PRODUCCION" | "PRUEBAS_LOCAL";
 
+// PRUEBAS_LOCAL nunca llega a usar estas URLs — server.ts salta por completo la llamada a
+// Hacienda para ese ambiente (ver POST /api/facturas). Las entradas existen solo para que
+// estos Record<AmbienteHacienda, string> compilen con el tipo ampliado.
 const IDP_TOKEN_URL: Record<AmbienteHacienda, string> = {
   SANDBOX: "https://idp.comprobanteselectronicos.go.cr/auth/realms/rut-stag/protocol/openid-connect/token",
-  PRODUCCION: "https://idp.comprobanteselectronicos.go.cr/auth/realms/rut/protocol/openid-connect/token"
+  PRODUCCION: "https://idp.comprobanteselectronicos.go.cr/auth/realms/rut/protocol/openid-connect/token",
+  PRUEBAS_LOCAL: ""
 };
 
 const CLIENT_ID: Record<AmbienteHacienda, string> = {
   SANDBOX: "api-stag",
-  PRODUCCION: "api-prod"
+  PRODUCCION: "api-prod",
+  PRUEBAS_LOCAL: ""
 };
 
 const RECEPCION_BASE_URL: Record<AmbienteHacienda, string> = {
   SANDBOX: "https://api.comprobanteselectronicos.go.cr/recepcion-sandbox/v1",
-  PRODUCCION: "https://api.comprobanteselectronicos.go.cr/recepcion/v1"
+  PRODUCCION: "https://api.comprobanteselectronicos.go.cr/recepcion/v1",
+  PRUEBAS_LOCAL: ""
 };
 
 export class HaciendaApiError extends Error {}
