@@ -109,7 +109,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
           <h3 className="text-sm font-bold text-slate-800">Visualizador de Reportes Clínicos</h3>
           <p className="text-[11px] text-slate-500">Imprime, descarga o envía la ficha del paciente</p>
         </div>
-        <div className="flex gap-2 text-xs items-center">
+        <div className="flex flex-wrap gap-2 text-xs items-center w-full sm:w-auto">
           <span className={`font-bold px-2.5 py-1.5 rounded-xl border ${
             estadoActual === 'CERRADA'
               ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
