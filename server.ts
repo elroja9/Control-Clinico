@@ -3650,13 +3650,13 @@ async function startServer() {
       if (!company) return null;
 
       const [facturaRows] = await pool.query(
-        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '01' AND fechaEmision LIKE ? AND estado NOT IN ('RECHAZADA','ERROR')",
+        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '01' AND fechaEmision LIKE ? AND estado IN ('ACEPTADA','ANULADA')",
         [idCompania, `${periodo}%`]
       );
       const facturasMes = (facturaRows as any[]).map(r => ({ ...r, lineas: typeof r.lineas === "string" ? JSON.parse(r.lineas) : r.lineas }));
 
       const [ncRows] = await pool.query(
-        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '03' AND fechaEmision LIKE ? AND estado NOT IN ('RECHAZADA','ERROR')",
+        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '03' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
         [idCompania, `${periodo}%`]
       );
       const notasCreditoMes = (ncRows as any[]).map(r => ({ ...r, lineas: typeof r.lineas === "string" ? JSON.parse(r.lineas) : r.lineas }));
@@ -3674,8 +3674,8 @@ async function startServer() {
     } else {
       const company = localCompanies.find(c => c.id === idCompania);
       if (!company) return null;
-      const facturasMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(periodo) && f.estado !== "RECHAZADA" && f.estado !== "ERROR");
-      const notasCreditoMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "03" && f.fechaEmision.startsWith(periodo) && f.estado !== "RECHAZADA" && f.estado !== "ERROR");
+      const facturasMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(periodo) && (f.estado === "ACEPTADA" || f.estado === "ANULADA"));
+      const notasCreditoMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "03" && f.fechaEmision.startsWith(periodo) && f.estado === "ACEPTADA");
       const creditoFiscal = localCuentasPagar.filter(c => c.idCompania === idCompania && c.fechaRegistro.startsWith(periodo) && c.estado !== "ANULADA").reduce((s, c) => s + (c.ivaAcreditable || 0), 0);
       const cierre = localCierresFiscales.find(c => c.idCompania === idCompania && c.tipo === "D104" && c.periodo === periodo);
       return { company, facturasMes, notasCreditoMes, creditoFiscal, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
@@ -3738,7 +3738,7 @@ async function startServer() {
       if (!company) return null;
 
       const [facturaRows] = await pool.query(
-        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '01' AND fechaEmision LIKE ? AND estado NOT IN ('ANULADA','RECHAZADA','ERROR')",
+        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '01' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
         [idCompania, `${anioStr}%`]
       );
       const facturasAnio = facturaRows as any[];
@@ -3762,7 +3762,7 @@ async function startServer() {
     } else {
       const company = localCompanies.find(c => c.id === idCompania);
       if (!company) return null;
-      const facturasAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(anioStr) && f.estado !== "ANULADA" && f.estado !== "RECHAZADA" && f.estado !== "ERROR");
+      const facturasAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(anioStr) && f.estado === "ACEPTADA");
       const comprasCxPAnio = localCuentasPagar.filter(c => c.idCompania === idCompania && c.fechaRegistro.startsWith(anioStr) && c.estado !== "ANULADA").reduce((s, c) => s + c.montoTotal, 0);
       const gm = localGastosManuales.find(g => g.idCompania === idCompania && g.anio === anio);
       const gastosManuales: GastosManualesAnuales = gm
