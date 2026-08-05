@@ -5,13 +5,14 @@ import PainMapSelector from './PainMapSelector';
 
 interface ConsultationFormProps {
   patient: Patient;
+  editingConsultation: Consultation | null;
   onSave: (consultation: Consultation) => void;
   onCancel: () => void;
   themeColor: string;
   perfilCompania: 'Fisioterapia' | 'Nutrición' | 'Ambas';
 }
 
-export default function ConsultationForm({ patient, onSave, onCancel, themeColor, perfilCompania }: ConsultationFormProps) {
+export default function ConsultationForm({ patient, editingConsultation, onSave, onCancel, themeColor, perfilCompania }: ConsultationFormProps) {
   const [tipo, setTipo] = useState<'Nutrición' | 'Fisioterapia'>(() => {
     if (perfilCompania === 'Fisioterapia') return 'Fisioterapia';
     return 'Nutrición';
@@ -165,6 +166,158 @@ export default function ConsultationForm({ patient, onSave, onCancel, themeColor
   // Auto-calculate IMC (talla=0 while the field is still empty would otherwise divide by zero)
   const calculatedImc = talla > 0 ? parseFloat((peso / ((talla / 100) * (talla / 100))).toFixed(1)) : 0;
 
+  useEffect(() => {
+    if (!editingConsultation) return;
+    const c = editingConsultation;
+    const a = c.antropometria;
+    const d = c.dieta;
+    const ea = c.evaluacionAntropometrica;
+    const eb = c.evaluacionBioquimica;
+    const ed = c.evaluacionDietetica;
+    const cs = c.composicionSegmentada;
+    const ev = c.estiloVida;
+    const f = c.fisioterapia;
+
+    setTipo(c.tipo);
+    setFecha(c.fecha);
+    setMotivo(c.motivo);
+    setHorasSueno(c.horasSueno);
+    setCompromiso(c.compromiso);
+    setAnotaciones(c.anotacionesGenerales || '');
+
+    if (a) {
+      setPeso(a.peso);
+      setTalla(a.talla);
+      setGrasaCorp(a.grasaCorporal);
+      setGrasaVisc(a.grasaVisceral);
+      setMusculo(a.masaMuscular);
+      setOsea(a.masaOsea);
+      setCintura(a.cintura);
+      setAbdominal(a.abdominal);
+    }
+    if (ea) {
+      setCMuneca(ea.c_muneca ?? 16);
+      setPctGrasaBalanza(ea.porcentaje_grasa_balanza ?? 22);
+      setPctAgua(ea.porcentaje_agua ?? 55);
+      setKgMagros(ea.kg_magros ?? 58.5);
+      setTmb(ea.tmb ?? 1650);
+      setEdadMetabolica(ea.edad_metabolica ?? 30);
+      setPliegueTriceps(ea.pliegue_triceps ?? 12);
+      setPliegueSubescapular(ea.pliegue_subescapular ?? 15);
+      setPliegueBiceps(ea.pliegue_biceps ?? 6);
+      setPliegueCrestaIliaca(ea.pliegue_cresta_iliaca ?? 18);
+      setPliegueSupraespinal(ea.pliegue_supraespinal ?? 14);
+      setPliegueAbdominal(ea.pliegue_abdominal ?? 22);
+      setPliegueMusloMedio(ea.pliegue_muslo_medio ?? 16);
+      setPlieguePiernaMedial(ea.pliegue_pierna_medial ?? 10);
+      setPerimetroBrazoRelajado(ea.perimetro_brazo_relajado ?? 30);
+      setPerimetroBrazoContraido(ea.perimetro_brazo_contraido ?? 32);
+    }
+    if (eb) {
+      setIndiceHoma(eb.indice_homa ?? 1.5);
+      setHb1ac(eb.hb1ac_glicosilada ?? 5.4);
+      setVitD(eb.vit_d ?? 32);
+      setGlicemia(eb.glicemia ?? 90);
+      setInsulinemia(eb.insulinemia ?? 6.5);
+      setHematocrito(eb.hematocrito ?? 42);
+      setHemoglobina(eb.hemoglobina ?? 14);
+      setAlbumina(eb.albumina ?? 4.2);
+      setAcidoUrico(eb.acido_urico ?? 5.0);
+      setTrigliceridos(eb.trigliceridos ?? 120);
+      setColesterolTotal(eb.colesterol_total ?? 180);
+      setColesterolHdl(eb.colesterol_hdl ?? 55);
+      setColesterolLdl(eb.colesterol_ldl ?? 101);
+      setIntolerancias(eb.intolerancias_alimentarias || '');
+      setAlergiasNutri(eb.alergias || '');
+    }
+    if (ed) {
+      setTiemposComida(ed.tiempos_comida ?? '3-4');
+      setLugarConsumo(ed.lugar_consumo ?? 'Casa');
+      setQuienPrepara(ed.quien_prepara || '');
+      setCalificacionApetito(ed.calificacion_apetito ?? 'Bueno');
+      setTipoGrasas(ed.tipo_grasas || '');
+      setCoccionAsado(ed.coccion_asado ?? false);
+      setCoccionFritura(ed.coccion_fritura ?? false);
+      setCoccionHervido(ed.coccion_hervido ?? false);
+      setCoccionPlancha(ed.coccion_plancha ?? false);
+      setCoccionVapor(ed.coccion_vapor ?? false);
+      setCoccionFreidoraAire(ed.coccion_freidora_aire ?? false);
+      setAgregaSal(ed.agrega_sal ?? false);
+      setConsumeAzucar(ed.consume_azucar ?? false);
+      setUtilizaEdulcorante(ed.utiliza_edulcorante ?? false);
+      setDietasAnteriores(ed.dietas_anteriores || '');
+      setConsumeAgua(ed.consume_agua ?? false);
+      setCantidadAgua(ed.cantidad_agua || '');
+      setAlimentosNoConsume(ed.alimentos_no_consume || '');
+      setAlimentosPreferidos(ed.alimentos_preferidos || '');
+    }
+    if (d) {
+      setCalorias(d.totalCalorias);
+      setDesayuno(d.desayuno);
+      setMeriendaMan(d.meriendaManana);
+      setAlmuerzo(d.almuerzo);
+      setMeriendaTar(d.meriendaTarde);
+      setCena(d.cena);
+      setIndicacionesDieta(d.indicaciones);
+    }
+    if (cs?.grasa) {
+      setGrasaTotal(cs.grasa.total ?? 22);
+      setGrasaManoIzq(cs.grasa.mano_izquierda ?? 15);
+      setGrasaManoDer(cs.grasa.mano_derecha ?? 15);
+      setGrasaPiernaIzq(cs.grasa.pierna_izquierda ?? 24);
+      setGrasaPiernaDer(cs.grasa.pierna_derecha ?? 24);
+      setGrasaTronco(cs.grasa.tronco ?? 21);
+      setGrasaCalificacion(cs.grasa.calificacion_grasa || 'Normal');
+    }
+    if (cs?.musculo) {
+      setMusculoTotal(cs.musculo.total ?? 55);
+      setMusculoManoIzq(cs.musculo.mano_izquierda ?? 3.2);
+      setMusculoManoDer(cs.musculo.mano_derecha ?? 3.4);
+      setMusculoPiernaIzq(cs.musculo.pierna_izquierda ?? 9.1);
+      setMusculoPiernaDer(cs.musculo.pierna_derecha ?? 9.3);
+      setMusculoTronco(cs.musculo.tronco ?? 25);
+    }
+    if (ev) {
+      setRealizaEjercicio(ev.realiza_ejercicio ?? false);
+      setTiempoEntrenar(ev.tiempo_entrenar || '');
+      setHaceCuantoEntrena(ev.hace_cuanto_entrena || '');
+      setHoraEntreno(ev.hora_entreno || '');
+      setTipoEjercicio(ev.tipo_ejercicio || '');
+      setFrecuenciaEjercicioSemana(ev.frecuencia_ejercicio_semana || '');
+      setDuracionEjercicio(ev.duracion_ejercicio || '');
+      setSuplementos(ev.suplementos || '');
+      setConsumeAlcohol(ev.consume_alcohol ?? false);
+      setTipoAlcohol(ev.tipo_alcohol || '');
+      setFrecuenciaAlcohol(ev.frecuencia_alcohol || '');
+      setCantidadAlcohol(ev.cantidad_alcohol || '');
+      setFuma(ev.fuma ?? false);
+      setFrecuenciaFumado(ev.frecuencia_fumado || '');
+      setCantidadFumado(ev.cantidad_fumado || '');
+    }
+    if (f) {
+      setMecanismoLesion(f.mecanismoLesion);
+      setDiagnosticoMedico(f.diagnosticoMedico);
+      setEvaDolor(f.evaDolor);
+      setZonaDolor(f.zonaDolor);
+      setTipoDolor(f.tipoDolor);
+      setFactoresAgravantes(f.factoresAgravantes);
+      setFactoresAtenuantes(f.factoresAtenuantes);
+      setPosturaObservaciones(f.posturaObservaciones);
+      setPalpacionHallazgos(f.palpacionHallazgos);
+      setRomMedido(f.romMedido);
+      setFuerzaDaniels(f.fuerzaDaniels);
+      setPruebasEspeciales(f.pruebasEspeciales);
+      setAgentesFisicos(f.agentesFisicos);
+      setTerapiaManual(f.terapiaManual);
+      setEjercicioTerapeutico(f.ejercicioTerapeutico);
+      setSesionesSugeridas(f.sesionesSugeridas);
+      setSoapSubjetivo(f.soapSubjetivo);
+      setSoapObjetivo(f.soapObjetivo);
+      setSoapAnalisis(f.soapAnalisis);
+      setSoapPlan(f.soapPlan);
+    }
+  }, [editingConsultation]);
+
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!motivo.trim()) {
@@ -173,7 +326,7 @@ export default function ConsultationForm({ patient, onSave, onCancel, themeColor
     }
 
     const newConsultation: Consultation = {
-      id: Date.now(),
+      id: editingConsultation?.id ?? Date.now(),
       idPaciente: patient.id,
       idCompania: patient.idCompania,
       fecha,
@@ -339,7 +492,7 @@ export default function ConsultationForm({ patient, onSave, onCancel, themeColor
         <div className="flex items-center gap-2">
           <ClipboardList className="w-5 h-5 animate-bounce" />
           <div>
-            <h3 className="font-bold">Nueva Consulta Clínica</h3>
+            <h3 className="font-bold">{editingConsultation ? 'Editar Consulta Clínica' : 'Nueva Consulta Clínica'}</h3>
             <p className="text-[10.5px] opacity-90">Paciente: {patient.nombreCompleto} (Identificación: {patient.identificacion})</p>
           </div>
         </div>
@@ -1788,7 +1941,7 @@ export default function ConsultationForm({ patient, onSave, onCancel, themeColor
           style={{ backgroundColor: themeColor }}
         >
           <Save className="w-4 h-4" />
-          Guardar Consulta y Reporte
+          {editingConsultation ? 'Actualizar Consulta y Reporte' : 'Guardar Consulta y Reporte'}
         </button>
       </div>
     </form>

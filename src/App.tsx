@@ -16,7 +16,6 @@ import {
   Clock,
   Printer,
   ChevronRight,
-  FileText,
   LogOut,
   Lock,
   Menu,
@@ -406,6 +405,7 @@ export default function App() {
   const [editingPatient, setEditingPatient] = useState<Patient | null>(null);
   
   const [activeConsultationPatient, setActiveConsultationPatient] = useState<Patient | null>(null);
+  const [editingConsultation, setEditingConsultation] = useState<Consultation | null>(null);
   const [selectedReportConsultation, setSelectedReportConsultation] = useState<Consultation | null>(null);
 
   // Filter patients by active company
@@ -476,6 +476,7 @@ export default function App() {
       setSelectedReportConsultation(newConsultation);
     });
     setActiveConsultationPatient(null);
+    setEditingConsultation(null);
   };
 
   const handleDeleteConsultation = (id: number) => {
@@ -1153,8 +1154,9 @@ export default function App() {
         <div className="max-w-4xl mx-auto w-full p-4 sm:p-6 print:hidden">
           <ConsultationForm
             patient={activeConsultationPatient}
+            editingConsultation={editingConsultation}
             onSave={handleSaveConsultation}
-            onCancel={() => setActiveConsultationPatient(null)}
+            onCancel={() => { setActiveConsultationPatient(null); setEditingConsultation(null); }}
             themeColor={activeCompany.colorPrimario}
             perfilCompania={activeCompany.perfilCompania || 'Ambas'}
           />
@@ -1558,7 +1560,6 @@ export default function App() {
                     </div>
                   ) : (
                     searchedPatients.map((p) => {
-                      const latestConsult = filteredConsultationsByCompany.find(c => c.idPaciente === p.id);
                       return (
                         <div key={p.id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between gap-4">
                           <div className="flex justify-between items-start">
@@ -1617,21 +1618,16 @@ export default function App() {
                             <button
                               onClick={() => {
                                 const matched = filteredConsultationsByCompany.find(c => c.idPaciente === p.id);
-                                if (matched) setSelectedReportConsultation(matched);
+                                if (matched) { setEditingConsultation(matched); setActiveConsultationPatient(p); }
                                 else alert("Este paciente aún no registra citas. Cree una primero.");
                               }}
-                              disabled={!latestConsult}
-                              className={`flex-1 py-2 rounded-xl font-bold transition-all border flex items-center justify-center gap-1.5 ${
-                                latestConsult
-                                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200'
-                                  : 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed'
-                              }`}
+                              className="flex-1 py-2 rounded-xl font-bold transition-all border flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200"
                             >
-                              <FileText className="w-3.5 h-3.5" />
-                              Ver Último Reporte
+                              <Edit className="w-3.5 h-3.5" />
+                              Editar Cita
                             </button>
                             <button
-                              onClick={() => setActiveConsultationPatient(p)}
+                              onClick={() => { setEditingConsultation(null); setActiveConsultationPatient(p); }}
                               className="flex-1 text-white py-2 rounded-xl font-bold transition-all shadow-xs flex items-center justify-center gap-1.5"
                               style={{ backgroundColor: activeCompany.colorPrimario }}
                             >
