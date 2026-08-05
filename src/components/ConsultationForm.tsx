@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Patient, Consultation, PorcentajeDieta } from '../data/mockData';
+import { Patient, Consultation, PorcentajeDieta, PlantillaDieta } from '../data/mockData';
 import { Sparkles, Save, X, Calendar, ClipboardList, Activity, Heart, Dumbbell, ChevronRight, Calculator, TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import PainMapSelector from './PainMapSelector';
 import { calcularTMB, calcularPromedioSemanal, aplicarPorcentaje, FACTORES_ACTIVIDAD, FormulaTMB, DireccionPrescripcion } from '../utils/calorieFormulas';
@@ -12,9 +12,10 @@ interface ConsultationFormProps {
   themeColor: string;
   perfilCompania: 'Fisioterapia' | 'Nutrición' | 'Ambas';
   porcentajesDieta: PorcentajeDieta[];
+  plantillasDieta: PlantillaDieta[];
 }
 
-export default function ConsultationForm({ patient, editingConsultation, onSave, onCancel, themeColor, perfilCompania, porcentajesDieta }: ConsultationFormProps) {
+export default function ConsultationForm({ patient, editingConsultation, onSave, onCancel, themeColor, perfilCompania, porcentajesDieta, plantillasDieta }: ConsultationFormProps) {
   const [tipo, setTipo] = useState<'Nutrición' | 'Fisioterapia'>(() => {
     if (perfilCompania === 'Fisioterapia') return 'Fisioterapia';
     return 'Nutrición';
@@ -175,6 +176,9 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
   const [porcentajePrescripcion, setPorcentajePrescripcion] = useState<number>(0);
   const [tmbRestaurado, setTmbRestaurado] = useState<number | null>(null);
   const [promedioRestaurado, setPromedioRestaurado] = useState<number | null>(null);
+  const [macrosCarbohidratos, setMacrosCarbohidratos] = useState(0);
+  const [macrosProteinas, setMacrosProteinas] = useState(0);
+  const [macrosGrasas, setMacrosGrasas] = useState(0);
 
   const [prescripcionAplicada, setPrescripcionAplicada] = useState(false);
 
@@ -205,11 +209,33 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
   const porcentajesDisponibles = porcentajesDieta.filter(p => p.idCompania === patient.idCompania).map(p => Number(p.porcentaje));
   const porcentajesParaMostrar = porcentajesDisponibles.length > 0 ? [...new Set(porcentajesDisponibles)] : [10, 15, 20];
 
+  const plantillasCoincidentes = prescripcionFinal != null
+    ? plantillasDieta.filter(p =>
+        p.idCompania === patient.idCompania &&
+        p.direccion === direccionPrescripcion &&
+        prescripcionFinal >= p.caloriaMin &&
+        prescripcionFinal <= p.caloriaMax
+      )
+    : [];
+
   const handleAplicarPrescripcion = () => {
     if (tmbSeleccionado == null || prescripcionFinal == null) return;
     setTmb(Math.round(tmbSeleccionado));
     setCalorias(Math.round(prescripcionFinal));
     setPrescripcionAplicada(true);
+  };
+
+  const handleAplicarPlantilla = (plantilla: PlantillaDieta) => {
+    setDesayuno(plantilla.desayuno);
+    setMeriendaMan(plantilla.meriendaManana);
+    setAlmuerzo(plantilla.almuerzo);
+    setMeriendaTar(plantilla.meriendaTarde);
+    setCena(plantilla.cena);
+    setIndicacionesDieta(plantilla.indicaciones);
+    setMacrosCarbohidratos(plantilla.carbohidratosG);
+    setMacrosProteinas(plantilla.proteinasG);
+    setMacrosGrasas(plantilla.grasasG);
+    handleAplicarPrescripcion();
   };
 
   // Auto-calculate IMC (talla=0 while the field is still empty would otherwise divide by zero)
@@ -320,6 +346,11 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
         setTmbRestaurado(pc.tmb);
         setPromedioRestaurado(pc.promedioMantenimiento);
       }
+      if (d.macros) {
+        setMacrosCarbohidratos(d.macros.carbohidratosG);
+        setMacrosProteinas(d.macros.proteinasG);
+        setMacrosGrasas(d.macros.grasasG);
+      }
     }
     if (cs?.grasa) {
       setGrasaTotal(cs.grasa.total ?? 22);
@@ -427,6 +458,13 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
               promedioMantenimiento,
               direccion: direccionPrescripcion,
               porcentaje: porcentajePrescripcion
+            }
+          } : {}),
+          ...(macrosCarbohidratos > 0 || macrosProteinas > 0 || macrosGrasas > 0 ? {
+            macros: {
+              carbohidratosG: macrosCarbohidratos,
+              proteinasG: macrosProteinas,
+              grasasG: macrosGrasas
             }
           } : {})
         },
@@ -1804,6 +1842,33 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                               </div>
                             </div>
                           )}
+
+                          {plantillasCoincidentes.length > 0 && (
+                            <div className="space-y-2">
+                              {(patient.alergiasAlimentarias || alimentosNoConsume || alimentosPreferidos) && (
+                                <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-amber-800">
+                                  <p className="font-bold">⚠ Revisar antes de aplicar una plantilla:</p>
+                                  {patient.alergiasAlimentarias && <p>Alergias: {patient.alergiasAlimentarias}</p>}
+                                  {alimentosNoConsume && <p>No consume: {alimentosNoConsume}</p>}
+                                  {alimentosPreferidos && <p>Prefiere: {alimentosPreferidos}</p>}
+                                </div>
+                              )}
+                              <label className="block text-slate-600 font-semibold">Plantillas sugeridas para este rango</label>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {plantillasCoincidentes.map(pl => (
+                                  <button
+                                    type="button"
+                                    key={pl.id}
+                                    onClick={() => handleAplicarPlantilla(pl)}
+                                    className="p-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-left"
+                                  >
+                                    <div className="font-semibold text-slate-700">{pl.nombre}</div>
+                                    <div className="text-[10px] text-slate-500">{pl.caloriaMin}-{pl.caloriaMax} kcal · C:{pl.carbohidratosG}g P:{pl.proteinasG}g G:{pl.grasasG}g</div>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </>
                       )}
                     </>
@@ -1819,6 +1884,38 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       onChange={(e) => setCalorias(parseInt(e.target.value) || 0)}
                       className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs text-slate-800 font-bold"
                     />
+                  </div>
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60">
+                    <label className="block text-slate-600 font-bold mb-1">Macronutrientes (g/día)</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-slate-500 text-[10px] mb-0.5">Carbohidratos</label>
+                        <input
+                          type="number"
+                          value={macrosCarbohidratos}
+                          onChange={(e) => setMacrosCarbohidratos(parseInt(e.target.value) || 0)}
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-500 text-[10px] mb-0.5">Proteínas</label>
+                        <input
+                          type="number"
+                          value={macrosProteinas}
+                          onChange={(e) => setMacrosProteinas(parseInt(e.target.value) || 0)}
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-800"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-500 text-[10px] mb-0.5">Grasas</label>
+                        <input
+                          type="number"
+                          value={macrosGrasas}
+                          onChange={(e) => setMacrosGrasas(parseInt(e.target.value) || 0)}
+                          className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-800"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
 
