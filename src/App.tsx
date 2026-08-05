@@ -49,6 +49,7 @@ import {
   defaultNotificationLogs,
   defaultCalendarBlocks,
   defaultPorcentajesDieta,
+  defaultPlantillasDieta,
   defaultServicios,
   Company,
   Patient,
@@ -60,6 +61,7 @@ import {
   SmtpConfigInput,
   CalendarBlock,
   PorcentajeDieta,
+  PlantillaDieta,
   CompanyPayment,
   Servicio,
   Factura,
@@ -141,6 +143,11 @@ export default function App() {
   const [porcentajesDieta, setPorcentajesDieta] = useState<PorcentajeDieta[]>(() => {
     const local = localStorage.getItem('fisio_porcentajes_dieta');
     return local ? JSON.parse(local) : defaultPorcentajesDieta;
+  });
+
+  const [plantillasDieta, setPlantillasDieta] = useState<PlantillaDieta[]>(() => {
+    const local = localStorage.getItem('fisio_plantillas_dieta');
+    return local ? JSON.parse(local) : defaultPlantillasDieta;
   });
 
   const [servicios, setServicios] = useState<Servicio[]>(() => {
@@ -233,6 +240,11 @@ export default function App() {
       .then(data => { if (Array.isArray(data)) setPorcentajesDieta(data); })
       .catch(err => console.log("MySQL offline, using local fallback for porcentajes de dieta"));
 
+    fetch('/api/plantillas-dieta')
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (Array.isArray(data)) setPlantillasDieta(data); })
+      .catch(err => console.log("MySQL offline, using local fallback for plantillas de dieta"));
+
     fetch('/api/servicios')
       .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
       .then(data => { if (data && data.length > 0) setServicios(data); })
@@ -283,6 +295,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('fisio_porcentajes_dieta', JSON.stringify(porcentajesDieta));
   }, [porcentajesDieta]);
+
+  useEffect(() => {
+    localStorage.setItem('fisio_plantillas_dieta', JSON.stringify(plantillasDieta));
+  }, [plantillasDieta]);
 
   useEffect(() => {
     localStorage.setItem('fisio_servicios', JSON.stringify(servicios));
@@ -570,6 +586,28 @@ export default function App() {
     });
   };
 
+  const handleSavePlantillaDieta = (plantilla: PlantillaDieta) => {
+    fetch('/api/plantillas-dieta', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(plantilla)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setPlantillasDieta(prev => {
+        const exists = prev.some(p => p.id === data.id);
+        return exists ? prev.map(p => p.id === data.id ? data : p) : [...prev, data];
+      });
+    })
+    .catch(err => {
+      console.error("Error saving plantilla dieta to MySQL:", err);
+      setPlantillasDieta(prev => {
+        const exists = prev.some(p => p.id === plantilla.id);
+        return exists ? prev.map(p => p.id === plantilla.id ? plantilla : p) : [...prev, plantilla];
+      });
+    });
+  };
+
   const handleSaveServicio = (servicio: Servicio) => {
     fetch('/api/servicios', {
       method: 'POST',
@@ -754,6 +792,17 @@ export default function App() {
       .catch(err => {
         console.error("Error deleting porcentaje dieta from MySQL:", err);
         setPorcentajesDieta(prev => prev.filter(p => p.id !== id));
+      });
+  };
+
+  const handleDeletePlantillaDieta = (id: number) => {
+    fetch(`/api/plantillas-dieta/${id}`, { method: 'DELETE' })
+      .then(() => {
+        setPlantillasDieta(prev => prev.filter(p => p.id !== id));
+      })
+      .catch(err => {
+        console.error("Error deleting plantilla dieta from MySQL:", err);
+        setPlantillasDieta(prev => prev.filter(p => p.id !== id));
       });
   };
 
@@ -1209,6 +1258,7 @@ export default function App() {
             themeColor={activeCompany.colorPrimario}
             perfilCompania={activeCompany.perfilCompania || 'Ambas'}
             porcentajesDieta={porcentajesDieta}
+            plantillasDieta={plantillasDieta}
           />
         </div>
       ) : isAddingPatient || editingPatient ? (
@@ -1869,6 +1919,9 @@ export default function App() {
                 porcentajesDieta={porcentajesDieta}
                 onSavePorcentajeDieta={handleSavePorcentajeDieta}
                 onDeletePorcentajeDieta={handleDeletePorcentajeDieta}
+                plantillasDieta={plantillasDieta}
+                onSavePlantillaDieta={handleSavePlantillaDieta}
+                onDeletePlantillaDieta={handleDeletePlantillaDieta}
               />
             )}
 
