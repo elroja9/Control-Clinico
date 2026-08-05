@@ -89,7 +89,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
           <span className="text-[10px] font-bold text-amber-700 uppercase block">Pendiente</span>
           <span className="text-sm font-bold text-amber-900">₡{totalPendiente.toLocaleString('es-CR', { maximumFractionDigits: 0 })}</span>
@@ -104,7 +104,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
         </div>
       </div>
 
-      <div className="flex gap-1.5 mb-3">
+      <div className="flex flex-wrap gap-1.5 mb-3">
         {(['TODAS', 'PENDIENTE', 'VENCIDA', 'PAGADA'] as const).map(f => (
           <button
             key={f}
@@ -167,7 +167,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
                       <span>{error}</span>
                     </div>
                   )}
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <div>
                       <label className="block text-slate-600 font-medium mb-1 text-[10px]">Monto (₡)</label>
                       <input

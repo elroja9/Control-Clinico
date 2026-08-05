@@ -293,7 +293,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
                     </div>
                   </div>
                   {consultation.dieta.macros && (
-                    <div className="grid grid-cols-3 gap-3 mt-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
                       <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
                         <span className="text-[9.5px] text-slate-500 block">Carbohidratos</span>
                         <span className="text-sm font-semibold text-slate-800 block">{consultation.dieta.macros.carbohidratosG} g</span>

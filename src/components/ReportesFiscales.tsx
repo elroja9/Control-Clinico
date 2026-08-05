@@ -225,7 +225,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
                 </table>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
                   <span className="text-[10px] font-bold text-slate-500 uppercase block">Débito Fiscal</span>
                   <span className="text-sm font-bold text-slate-800">{colones(d104.debitoFiscal)}</span>

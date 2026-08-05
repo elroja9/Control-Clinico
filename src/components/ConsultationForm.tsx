@@ -1625,7 +1625,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       <label htmlFor="consumeAlcohol" className="font-bold text-slate-700">Consumo de Alcohol</label>
                     </div>
                     {consumeAlcohol && (
-                      <div className="grid grid-cols-3 gap-2 pt-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
                         <div>
                           <label className="block text-[10px] text-slate-500">Tipo</label>
                           <input
@@ -1904,7 +1904,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60">
                     <label className="block text-slate-600 font-bold mb-1">Macronutrientes (g/día)</label>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                       <div>
                         <label className="block text-slate-500 text-[10px] mb-0.5">Carbohidratos</label>
                         <input

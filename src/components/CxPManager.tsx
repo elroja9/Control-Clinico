@@ -322,7 +322,7 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-3 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
           <span className="text-[10px] font-bold text-amber-700 uppercase block">Pendiente</span>
           <span className="text-sm font-bold text-amber-900">₡{totalPendiente.toLocaleString('es-CR', { maximumFractionDigits: 0 })}</span>
@@ -434,7 +434,7 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
         </form>
       )}
 
-      <div className="flex gap-1.5 mb-3">
+      <div className="flex flex-wrap gap-1.5 mb-3">
         {(['TODAS', 'PENDIENTE', 'VENCIDA', 'PAGADA'] as const).map(f => (
           <button key={f} onClick={() => setFiltro(f)} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${filtro === f ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
             {f === 'TODAS' ? 'Todas' : f.charAt(0) + f.slice(1).toLowerCase()}
@@ -492,7 +492,7 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
                       <span>{abonoError}</span>
                     </div>
                   )}
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <div>
                       <label className="block text-slate-600 font-medium mb-1 text-[10px]">Monto (₡)</label>
                       <input type="number" min="0" step="0.01" value={montoAbono} onChange={(e) => setMontoAbono(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />

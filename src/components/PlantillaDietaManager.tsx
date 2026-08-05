@@ -195,7 +195,7 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
           </div>
 
           <div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-slate-600 font-semibold mb-1">Carbohidratos (%)</label>
                 <input type="number" min={0} max={100} value={carbohidratosPct} onChange={(e) => setCarbohidratosPct(e.target.value)} placeholder="ej: 40" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />

@@ -324,7 +324,7 @@ export default function PublicBooking() {
               {cargandoHorarios ? (
                 <div className="flex items-center gap-2 text-xs text-slate-500 py-3"><Loader2 className="w-4 h-4 animate-spin" /> Buscando horarios...</div>
               ) : (
-                <div className="grid grid-cols-4 gap-1.5">
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
                   {horariosDisponibles.map(h => (
                     <button
                       key={h}
@@ -335,7 +335,7 @@ export default function PublicBooking() {
                       {h}
                     </button>
                   ))}
-                  {horariosDisponibles.length === 0 && <p className="col-span-4 text-slate-500 text-xs text-center py-2">No hay horarios libres ese día.</p>}
+                  {horariosDisponibles.length === 0 && <p className="col-span-3 sm:col-span-4 text-slate-500 text-xs text-center py-2">No hay horarios libres ese día.</p>}
                 </div>
               )}
             </div>

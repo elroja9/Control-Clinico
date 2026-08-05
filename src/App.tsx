@@ -1866,7 +1866,7 @@ export default function App() {
 
                           {/* Quick parameters readout */}
                           {isNut && c.antropometria && (
-                            <div className="grid grid-cols-4 gap-2 mt-4 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-150">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-150">
                               <div>
                                 <span className="text-slate-400 block font-bold">Peso:</span>
                                 <span className="font-bold text-slate-700">{c.antropometria.peso} kg</span>
@@ -1887,7 +1887,7 @@ export default function App() {
                           )}
 
                           {!isNut && c.fisioterapia && (
-                            <div className="grid grid-cols-4 gap-2 mt-4 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-150">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-150">
                               <div>
                                 <span className="text-slate-400 block font-bold">Zona Dolor:</span>
                                 <span className="font-bold text-slate-700 uppercase">{c.fisioterapia.zonaDolor}</span>
