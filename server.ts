@@ -3464,12 +3464,12 @@ async function startServer() {
         citas = (citasRows as any[]).map(normalizeRow);
         const [consultasRows] = await pool.query("SELECT idPaciente, id_paciente, fecha, estadoConsulta FROM consultas WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]);
         consultas = (consultasRows as any[]).map(normalizeRow).map(c => ({ idPaciente: c.idPaciente, fecha: c.fecha, estado: c.estadoConsulta }));
-        const [pacientesRows] = await pool.query("SELECT id, id_paciente, nombreCompleto FROM pacientes WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
+        const [pacientesRows] = await pool.query("SELECT id, id_paciente, nombreCompleto FROM pacientes WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]);
         pacientes = (pacientesRows as any[]).map(normalizeRow).map(p => ({ id: p.id, nombreCompleto: p.nombreCompleto }));
       } else {
         citas = localCitas.filter(c => c.idCompania === idCompania).map(c => ({ idPaciente: c.idPaciente, fechaHora: c.fechaHora, estadoCita: c.estadoCita }));
-        consultas = localConsultations.filter(c => c.idCompania === idCompania).map(c => ({ idPaciente: c.idPaciente, fecha: c.fecha, estado: c.estado }));
-        pacientes = localPatients.filter(p => p.idCompania === idCompania).map(p => ({ id: p.id, nombreCompleto: p.nombreCompleto }));
+        consultas = localConsultations.filter(c => c.idCompania === idCompania && c.activo !== false).map(c => ({ idPaciente: c.idPaciente, fecha: c.fecha, estado: c.estado }));
+        pacientes = localPatients.filter(p => p.idCompania === idCompania && p.activo !== false).map(p => ({ id: p.id, nombreCompleto: p.nombreCompleto }));
       }
       res.json(construirReporteClientesSesiones(desde, hasta, citas, consultas, pacientes));
     } catch (err: any) {
