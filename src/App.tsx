@@ -24,7 +24,8 @@ import {
   Share2,
   Receipt,
   Landmark,
-  FileSpreadsheet
+  FileSpreadsheet,
+  BarChart3
 } from 'lucide-react';
 import {
   LineChart,
@@ -84,6 +85,7 @@ import CxCManager from './components/CxCManager';
 import ProveedorManager from './components/ProveedorManager';
 import CxPManager from './components/CxPManager';
 import ReportesFiscales from './components/ReportesFiscales';
+import ReporteriaClinica from './components/ReporteriaClinica';
 
 export default function App() {
   // --- Persistent Storage Core (Synced with MySQL Backend) ---
@@ -331,7 +333,7 @@ export default function App() {
   const activeCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
   // App Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales' | 'reporteria'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // --- Login and Company Registration Handlers ---
@@ -1198,6 +1200,20 @@ export default function App() {
             </button>
 
             <button
+              onClick={() => { setActiveTab('reporteria'); setIsMobileMenuOpen(false); }}
+              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
+                activeTab === 'reporteria'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4" />
+                <span>Reportería</span>
+              </div>
+            </button>
+
+            <button
               onClick={() => { setActiveTab('branding'); setIsMobileMenuOpen(false); }}
               className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
                 activeTab === 'branding'
@@ -1419,6 +1435,20 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <FileSpreadsheet className="w-4 h-4" />
                   <span>Reportes Fiscales</span>
+                </div>
+              </button>
+
+              <button
+                onClick={() => setActiveTab('reporteria')}
+                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
+                  activeTab === 'reporteria'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4" />
+                  <span>Reportería</span>
                 </div>
               </button>
 
@@ -1923,6 +1953,11 @@ export default function App() {
             {/* ================= REPORTES FISCALES D-104 / D-101 ================= */}
             {activeTab === 'reportes-fiscales' && (
               <ReportesFiscales company={activeCompany} />
+            )}
+
+            {/* ================= REPORTERÍA DE CLIENTES Y SESIONES ================= */}
+            {activeTab === 'reporteria' && (
+              <ReporteriaClinica company={activeCompany} />
             )}
 
             {/* ================= 4. CLINIC BRANDING CUSTOMIZATION ================= */}
