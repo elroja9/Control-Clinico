@@ -93,7 +93,7 @@ let localCabysCatalogo: LocalCabysEntry[] = [];
 
 interface LocalHaciendaConfig {
   idCompania: number;
-  ambiente: 'SANDBOX' | 'PRODUCCION';
+  ambiente: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL';
   usuarioAtv: string;
   passwordAtvCifrado: string;
   certificadoP12Cifrado: string;
@@ -318,6 +318,8 @@ async function createTables() {
     await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS total DECIMAL(14,5) NULL`);
     await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS mensajeError TEXT NULL`);
     await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS creadaEn VARCHAR(30) NULL`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS medioPago VARCHAR(5) NOT NULL DEFAULT '01'`);
+    await pool.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS montoRecibido DECIMAL(12,2) NULL`);
     // Tres columnas heredadas más bloqueaban cada INSERT real (verificado): `id_compania`,
     // `id_consulta` e `id_paciente` son NOT NULL con FOREIGN KEY — sin valor, MariaDB las rellena
     // con 0 (sql_mode no está en modo estricto) y la FK rechaza ese 0 porque no existe. Esta app
@@ -342,6 +344,7 @@ async function createTables() {
     // compartir un solo contador entre Factura y Nota de Crédito no colisionaría, pero
     // arrancarían ambas desde donde iba la otra en vez de cada una desde 1).
     await pool.query(`ALTER TABLE compania_hacienda_config ADD COLUMN IF NOT EXISTS ultimo_consecutivo_nc INT NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE compania_hacienda_config MODIFY COLUMN ambiente ENUM('SANDBOX','PRODUCCION','PRUEBAS_LOCAL') NOT NULL DEFAULT 'SANDBOX'`);
 
     // CXC (Cuentas por Cobrar) — se crea automáticamente al facturar con condicionVenta='02'
     // (ver POST /api/facturas). `estado` solo guarda PENDIENTE/PAGADA/ANULADA — "vencida" se
@@ -2502,7 +2505,7 @@ async function startServer() {
     }
   });
 
-  async function cargarCredencialesAtv(idCompania: number): Promise<{ ambiente: 'SANDBOX' | 'PRODUCCION'; usuarioAtv: string; passwordAtv: string } | null> {
+  async function cargarCredencialesAtv(idCompania: number): Promise<{ ambiente: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL'; usuarioAtv: string; passwordAtv: string } | null> {
     if (dbConnected && pool) {
       const [rows] = await pool.query("SELECT ambiente, usuario_atv, password_atv_enc FROM compania_hacienda_config WHERE id_compania = ?", [idCompania]);
       const row = (rows as any[])[0];
@@ -2557,6 +2560,7 @@ async function startServer() {
       const idPaciente = parseInt(body.idPaciente);
       const condicionVenta = body.condicionVenta || "01";
       const medioPago = body.medioPago || "01";
+      const montoRecibido = body.montoRecibido != null && String(body.montoRecibido).trim() !== '' ? parseFloat(body.montoRecibido) : null;
       const lineasBody: Array<{ idServicio: number; cantidad: number }> = body.lineas || [];
 
       if (lineasBody.length === 0) {
@@ -2717,36 +2721,45 @@ async function startServer() {
         condicionVenta,
         tipoDocumento: "01",
         idFacturaReferencia: null,
-        motivoAnulacion: null
+        motivoAnulacion: null,
+        medioPago,
+        montoRecibido
       };
 
-      // Envío a Hacienda — best-effort: si Hacienda no responde o rechaza, la factura queda
-      // guardada como FIRMADA/ERROR y se puede reintentar el envío después.
-      try {
-        const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
-        const envio = await enviarFacturaHacienda({
-          ambiente: credenciales.ambiente,
-          token,
-          clave,
-          fechaEmisionIso: fechaEmisionCR(fechaEmision),
-          tipoIdentificacionEmisor: company.tipoIdentificacion,
-          cedulaEmisor: limpiarIdentificacion(company.identificacion),
-          tipoIdentificacionReceptor: tipoIdReceptor,
-          cedulaReceptor: limpiarIdentificacion(paciente.identificacion),
-          xmlFirmado
-        });
-        nuevaFactura.estado = envio.aceptadoParaProcesar ? "ENVIADA" : "ERROR";
-        nuevaFactura.mensajeError = envio.mensaje;
-      } catch (err: any) {
-        nuevaFactura.estado = "ERROR";
-        nuevaFactura.mensajeError = err.message;
-        console.error("[Hacienda] Error enviando factura:", err.message || err);
+      if (credenciales.ambiente === "PRUEBAS_LOCAL") {
+        // Modo sin envío: la factura se numera y guarda igual que siempre, pero nunca se
+        // llama a la API de Hacienda — ni para pedir token ni para enviar el XML.
+        nuevaFactura.estado = "SIMULADA";
+        nuevaFactura.mensajeError = "Ambiente de pruebas locales — no se envió a Hacienda.";
+      } else {
+        // Envío a Hacienda — best-effort: si Hacienda no responde o rechaza, la factura queda
+        // guardada como FIRMADA/ERROR y se puede reintentar el envío después.
+        try {
+          const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
+          const envio = await enviarFacturaHacienda({
+            ambiente: credenciales.ambiente,
+            token,
+            clave,
+            fechaEmisionIso: fechaEmisionCR(fechaEmision),
+            tipoIdentificacionEmisor: company.tipoIdentificacion,
+            cedulaEmisor: limpiarIdentificacion(company.identificacion),
+            tipoIdentificacionReceptor: tipoIdReceptor,
+            cedulaReceptor: limpiarIdentificacion(paciente.identificacion),
+            xmlFirmado
+          });
+          nuevaFactura.estado = envio.aceptadoParaProcesar ? "ENVIADA" : "ERROR";
+          nuevaFactura.mensajeError = envio.mensaje;
+        } catch (err: any) {
+          nuevaFactura.estado = "ERROR";
+          nuevaFactura.mensajeError = err.message;
+          console.error("[Hacienda] Error enviando factura:", err.message || err);
+        }
       }
 
       if (dbConnected && pool) {
         const [result] = await pool.query(
-          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, lineas, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, JSON.stringify(nuevaFactura.lineas), nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion]
+          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, lineas, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, JSON.stringify(nuevaFactura.lineas), nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion, nuevaFactura.medioPago, nuevaFactura.montoRecibido]
         );
         nuevaFactura.id = (result as any).insertId;
       } else {
