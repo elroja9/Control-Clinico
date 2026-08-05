@@ -63,8 +63,11 @@ interface AgendaCalendarProps {
     idPaciente: number;
     condicionVenta: string;
     medioPago: string;
+    montoRecibido: number | null;
     lineas: Array<{ idServicio: number; cantidad: number }>;
   }) => Promise<Factura>;
+  onVerificarEstadoFactura: (idFactura: number) => Promise<Factura>;
+  ivaPorDefecto: number;
   themeColor: string;
 }
 
@@ -84,6 +87,8 @@ export default function AgendaCalendar({
   servicios,
   facturas,
   onCrearFactura,
+  onVerificarEstadoFactura,
+  ivaPorDefecto,
   onDeleteCalendarBlock,
   themeColor
 }: AgendaCalendarProps) {
@@ -127,6 +132,7 @@ export default function AgendaCalendar({
   const [facturaCita, setFacturaCita] = useState<Cita | null>(null);
   const [facturaCantidades, setFacturaCantidades] = useState<Record<number, number>>({});
   const [facturaMedioPago, setFacturaMedioPago] = useState('01');
+  const [facturaMontoRecibido, setFacturaMontoRecibido] = useState('');
   const [facturaEnviando, setFacturaEnviando] = useState(false);
   const [facturaError, setFacturaError] = useState('');
   const [facturaResultado, setFacturaResultado] = useState<Factura | null>(null);
@@ -464,15 +470,29 @@ export default function AgendaCalendar({
     setFacturaCita(cita);
     setFacturaCantidades(cita.idServicio ? { [cita.idServicio]: 1 } : {});
     setFacturaMedioPago('01');
+    setFacturaMontoRecibido('');
     setFacturaError('');
     setFacturaResultado(null);
   };
 
-  const facturaSubtotalPreview = (Object.entries(facturaCantidades) as [string, number][]).reduce((sum, [idServicio, cantidad]) => {
-    if (!cantidad || cantidad <= 0) return sum;
+  const facturaDesglosePreview = (Object.entries(facturaCantidades) as [string, number][]).reduce((acc, [idServicio, cantidad]) => {
+    if (!cantidad || cantidad <= 0) return acc;
     const servicio = companyServicios.find(s => s.id === parseInt(idServicio));
-    return sum + (servicio ? servicio.precio * cantidad : 0);
-  }, 0);
+    if (!servicio) return acc;
+    const porcentajeIva = servicio.porcentajeIva != null ? servicio.porcentajeIva : ivaPorDefecto;
+    const subTotal = servicio.precio * cantidad;
+    const montoIva = subTotal * (porcentajeIva / 100);
+    return {
+      subtotal: acc.subtotal + subTotal,
+      iva: acc.iva + montoIva,
+      total: acc.total + subTotal + montoIva
+    };
+  }, { subtotal: 0, iva: 0, total: 0 });
+
+  const facturaMontoRecibidoNum = facturaMontoRecibido.trim() !== '' ? parseFloat(facturaMontoRecibido) : null;
+  const facturaVuelto = facturaMontoRecibidoNum != null && !isNaN(facturaMontoRecibidoNum)
+    ? facturaMontoRecibidoNum - facturaDesglosePreview.total
+    : null;
 
   const handleEmitirFactura = async () => {
     if (!facturaCita) return;
@@ -494,9 +514,21 @@ export default function AgendaCalendar({
         idPaciente: facturaCita.idPaciente,
         condicionVenta: '01',
         medioPago: facturaMedioPago,
+        montoRecibido: facturaMontoRecibidoNum,
         lineas
       });
       setFacturaResultado(factura);
+
+      // Hacienda a veces tarda unos segundos en resolver una factura ENVIADA — se consulta
+      // una vez automáticamente; si sigue sin resolver, el botón manual en el historial
+      // permite reintentar cuando se quiera.
+      if (factura.estado === 'ENVIADA') {
+        setTimeout(() => {
+          onVerificarEstadoFactura(factura.id)
+            .then(actualizada => setFacturaResultado(prev => (prev && prev.id === actualizada.id ? actualizada : prev)))
+            .catch(() => {});
+        }, 8000);
+      }
     } catch (err: any) {
       setFacturaError(err.message || 'No se pudo generar la factura.');
     } finally {
@@ -1373,11 +1405,40 @@ export default function AgendaCalendar({
                     </select>
                   </div>
 
-                  <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs">
-                    <span className="text-slate-500">Subtotal estimado (sin IVA)</span>
-                    <span className="font-bold text-slate-800">₡{facturaSubtotalPreview.toLocaleString('es-CR', { maximumFractionDigits: 2 })}</span>
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">Subtotal</span>
+                      <span className="font-semibold text-slate-700">₡{facturaDesglosePreview.subtotal.toLocaleString('es-CR', { maximumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-500">IVA</span>
+                      <span className="font-semibold text-slate-700">₡{facturaDesglosePreview.iva.toLocaleString('es-CR', { maximumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex items-center justify-between border-t border-slate-200 pt-1">
+                      <span className="text-slate-600 font-bold">Total</span>
+                      <span className="font-bold text-slate-800">₡{facturaDesglosePreview.total.toLocaleString('es-CR', { maximumFractionDigits: 2 })}</span>
+                    </div>
                   </div>
-                  <p className="text-[10px] text-slate-400">El IVA y el total exacto se calculan al emitir la factura.</p>
+
+                  <div>
+                    <label className="block text-slate-600 text-xs font-bold mb-1.5">Monto Recibido</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={facturaMontoRecibido}
+                      onChange={(e) => setFacturaMontoRecibido(e.target.value)}
+                      placeholder={`ej: ${Math.ceil(facturaDesglosePreview.total)}`}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                    />
+                    {facturaVuelto != null && (
+                      <p className={`text-[10px] mt-1 font-bold ${facturaVuelto < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                        {facturaVuelto < 0
+                          ? `Falta ₡${Math.abs(facturaVuelto).toLocaleString('es-CR', { maximumFractionDigits: 2 })}`
+                          : `Vuelto: ₡${facturaVuelto.toLocaleString('es-CR', { maximumFractionDigits: 2 })}`}
+                      </p>
+                    )}
+                  </div>
 
                   <div className="flex gap-2 justify-end pt-1">
                     <button
