@@ -649,6 +649,7 @@ export default function App() {
     idPaciente: number;
     condicionVenta: string;
     medioPago: string;
+    montoRecibido: number | null;
     lineas: Array<{ idServicio: number; cantidad: number }>;
   }): Promise<Factura> => {
     const res = await fetch('/api/facturas', {
@@ -673,6 +674,20 @@ export default function App() {
     setFacturas(prev => [...prev.map(f => f.id === idFactura ? { ...f, estado: 'ANULADA' as const } : f), data]);
     setCxc(prev => prev.map(c => c.idFactura === idFactura && c.estado === 'PENDIENTE' ? { ...c, estado: 'ANULADA' as const } : c));
     return data;
+  };
+
+  const handleVerificarEstadoFactura = async (idFactura: number): Promise<Factura> => {
+    const res = await fetch(`/api/facturas/${idFactura}/estado`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo verificar el estado con Hacienda.');
+    let facturaActualizada: Factura | undefined;
+    setFacturas(prev => prev.map(f => {
+      if (f.id !== idFactura) return f;
+      facturaActualizada = { ...f, estado: data.estado };
+      return facturaActualizada;
+    }));
+    if (!facturaActualizada) throw new Error('Factura no encontrada en el estado local.');
+    return facturaActualizada;
   };
 
   const handleRegistrarPagoCxc = async (idCuentaCobrar: number, monto: number, medioPago: string, referencia: string): Promise<void> => {
@@ -1867,6 +1882,7 @@ export default function App() {
                   facturas={facturas.filter(f => f.idCompania === selectedCompanyId)}
                   patients={filteredPatientsByCompany}
                   onAnularFactura={handleAnularFactura}
+                  onVerificarEstadoFactura={handleVerificarEstadoFactura}
                 />
                 <CxCManager
                   cxc={cxc.filter(c => c.idCompania === selectedCompanyId)}
@@ -1964,6 +1980,8 @@ export default function App() {
                 servicios={servicios}
                 facturas={facturas}
                 onCrearFactura={handleCrearFactura}
+                onVerificarEstadoFactura={handleVerificarEstadoFactura}
+                ivaPorDefecto={activeCompany.ivaPorDefecto}
                 themeColor={activeCompany.colorPrimario}
               />
             )}
