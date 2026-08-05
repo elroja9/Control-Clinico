@@ -788,6 +788,7 @@ export interface Factura {
   id: number;
   idCompania: number;
   idCita: number | null;
+  idConsulta: number | null; // solo en Facturas (no Notas de Crédito) — impide refacturar la misma consulta (UNIQUE en BD)
   idPaciente: number;
   clave: string; // 50 dígitos
   consecutivo: string; // 20 dígitos

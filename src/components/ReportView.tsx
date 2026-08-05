@@ -8,12 +8,14 @@ interface ReportViewProps {
   patient: Patient;
   company: Company;
   servicios: Servicio[];
+  facturas: Factura[];
   onClose: () => void;
   onNotificationSent: (log: NotificationLog) => void;
   onConsultationUpdated: (consulta: Consultation) => void;
   onCrearFactura: (payload: {
     idCompania: number;
     idCita: number | null;
+    idConsulta: number | null;
     idPaciente: number;
     condicionVenta: string;
     medioPago: string;
@@ -44,7 +46,7 @@ function gramosDesdeMacroPct(pct: number | null, totalCalorias: number, kcalPorG
   return Math.round((pct / 100) * totalCalorias / kcalPorGramo);
 }
 
-export default function ReportView({ consultation, patient, company, servicios, onClose, onNotificationSent, onConsultationUpdated, onCrearFactura, onVerificarEstadoFactura }: ReportViewProps) {
+export default function ReportView({ consultation, patient, company, servicios, facturas, onClose, onNotificationSent, onConsultationUpdated, onCrearFactura, onVerificarEstadoFactura }: ReportViewProps) {
   const [emailSent, setEmailSent] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [facturando, setFacturando] = useState(false);
@@ -52,6 +54,13 @@ export default function ReportView({ consultation, patient, company, servicios, 
   const [cambiandoEstado, setCambiandoEstado] = useState(false);
 
   const companyServicios = servicios.filter(s => s.idCompania === company.id && s.activo);
+  // Una consulta solo puede tener una Factura (no Nota de Crédito) para siempre — ver el
+  // UNIQUE en facturas.id_consulta (reutilizado tal cual desde ConsultorioDB_schema.sql), que
+  // no distingue por estado ni se libera al anular. Corregir una factura ya emitida es una Nota
+  // de Crédito contra la original (ver FacturacionManager), no una refacturación desde acá — el
+  // botón se deshabilita apenas existe cualquier factura para esta consulta, anulada o no, para
+  // que el estado del botón coincida siempre con lo que el servidor realmente va a aceptar.
+  const facturaExistente = facturas.find(f => f.idConsulta === consultation.id && f.tipoDocumento === '01');
 
   const handleToggleEstado = async () => {
     const nuevoEstado = estadoActual === 'CERRADA' ? 'ABIERTA' : 'CERRADA';
@@ -143,10 +152,12 @@ export default function ReportView({ consultation, patient, company, servicios, 
           </button>
           <button
             onClick={() => setFacturando(true)}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 px-3 rounded-xl border border-slate-200 transition-all flex items-center gap-1.5"
+            disabled={!!facturaExistente}
+            title={facturaExistente ? `Ya facturada (${facturaExistente.consecutivo})` : undefined}
+            className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 px-3 rounded-xl border border-slate-200 transition-all flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <Receipt className="w-4 h-4" />
-            Facturar
+            {facturaExistente ? `Facturada (${facturaExistente.consecutivo})` : 'Facturar'}
           </button>
           <button
             onClick={triggerPrint}
@@ -519,6 +530,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
           idCompania={company.id}
           idPaciente={patient.id}
           idCita={null}
+          idConsulta={consultation.id}
           nombrePaciente={patient.nombreCompleto}
           servicios={companyServicios}
           ivaPorDefecto={company.ivaPorDefecto}

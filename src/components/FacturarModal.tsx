@@ -6,6 +6,7 @@ interface FacturarModalProps {
   idCompania: number;
   idPaciente: number;
   idCita: number | null;
+  idConsulta?: number | null;
   nombrePaciente: string;
   servicios: Servicio[];
   ivaPorDefecto: number;
@@ -13,6 +14,7 @@ interface FacturarModalProps {
   onCrearFactura: (payload: {
     idCompania: number;
     idCita: number | null;
+    idConsulta: number | null;
     idPaciente: number;
     condicionVenta: string;
     medioPago: string;
@@ -29,6 +31,7 @@ export default function FacturarModal({
   idCompania,
   idPaciente,
   idCita,
+  idConsulta,
   nombrePaciente,
   servicios,
   ivaPorDefecto,
@@ -81,6 +84,7 @@ export default function FacturarModal({
       const factura = await onCrearFactura({
         idCompania,
         idCita,
+        idConsulta: idConsulta ?? null,
         idPaciente,
         condicionVenta: '01',
         medioPago: facturaMedioPago,

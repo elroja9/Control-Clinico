@@ -60,6 +60,7 @@ interface AgendaCalendarProps {
   onCrearFactura: (payload: {
     idCompania: number;
     idCita: number | null;
+    idConsulta: number | null;
     idPaciente: number;
     condicionVenta: string;
     medioPago: string;

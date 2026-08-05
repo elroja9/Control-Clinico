@@ -2234,7 +2234,7 @@ async function startServer() {
       const idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         const [rows] = await pool.query("SELECT * FROM facturas WHERE idCompania = ?", [idCompania]);
-        res.json((rows as any[]).map(row => normalizeRow(row, 'id_factura')).map(r => ({ ...r, lineas: typeof r.lineas === 'string' ? JSON.parse(r.lineas) : r.lineas })));
+        res.json((rows as any[]).map(row => normalizeRow(row, 'id_factura')).map(r => ({ ...r, idConsulta: r.id_consulta, lineas: typeof r.lineas === 'string' ? JSON.parse(r.lineas) : r.lineas })));
       } else {
         res.json(localFacturas.filter(f => f.idCompania === idCompania));
       }
@@ -2248,6 +2248,7 @@ async function startServer() {
       const body = req.body;
       const idCompania = sessionOf(req).idCompania;
       const idCita = body.idCita != null ? parseInt(body.idCita) : null;
+      const idConsulta = body.idConsulta != null ? parseInt(body.idConsulta) : null;
       const idPaciente = parseInt(body.idPaciente);
       const condicionVenta = body.condicionVenta || "01";
       const medioPago = body.medioPago || "01";
@@ -2257,6 +2258,22 @@ async function startServer() {
 
       if (lineasBody.length === 0) {
         return res.status(400).json({ error: "Agregue al menos un servicio a facturar." });
+      }
+
+      // `facturas.id_consulta` es una columna heredada de ConsultorioDB_schema.sql con un
+      // UNIQUE KEY (uq_facturas_consulta) — nunca antes usada por esta app. La reutilizamos tal
+      // cual para impedir facturar dos veces la misma consulta: chequeo aquí para un mensaje
+      // claro, y el UNIQUE de la BD queda como red de seguridad ante una carrera entre dos
+      // solicitudes simultáneas (capturado más abajo como ER_DUP_ENTRY).
+      if (idConsulta != null) {
+        if (dbConnected && pool) {
+          const [yaFacturada] = await pool.query("SELECT id_factura FROM facturas WHERE id_consulta = ?", [idConsulta]);
+          if ((yaFacturada as any[]).length > 0) {
+            return res.status(409).json({ error: "Esta consulta ya fue facturada." });
+          }
+        } else if (localFacturas.some(f => f.idConsulta === idConsulta)) {
+          return res.status(409).json({ error: "Esta consulta ya fue facturada." });
+        }
       }
 
       let company: Company | undefined;
@@ -2405,6 +2422,7 @@ async function startServer() {
       const nuevaFactura: any = {
         idCompania,
         idCita,
+        idConsulta,
         idPaciente,
         clave,
         consecutivo,
@@ -2465,11 +2483,20 @@ async function startServer() {
       }
 
       if (dbConnected && pool) {
-        const [result] = await pool.query(
-          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, lineas, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, JSON.stringify(nuevaFactura.lineas), nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion, nuevaFactura.medioPago, nuevaFactura.montoRecibido]
-        );
-        nuevaFactura.id = (result as any).insertId;
+        try {
+          const [result] = await pool.query(
+            "INSERT INTO facturas (idCompania, idCita, id_consulta, idPaciente, clave, consecutivo, fechaEmision, ambiente, lineas, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idConsulta, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, JSON.stringify(nuevaFactura.lineas), nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion, nuevaFactura.medioPago, nuevaFactura.montoRecibido]
+          );
+          nuevaFactura.id = (result as any).insertId;
+        } catch (err: any) {
+          // Red de seguridad ante una carrera entre dos solicitudes simultáneas para la misma
+          // consulta — el chequeo de arriba ya cubre el caso normal (secuencial).
+          if (err.code === "ER_DUP_ENTRY" && nuevaFactura.idConsulta != null) {
+            return res.status(409).json({ error: "Esta consulta ya fue facturada." });
+          }
+          throw err;
+        }
       } else {
         nuevaFactura.id = Math.max(0, ...localFacturas.map(f => f.id)) + 1;
         localFacturas.push(nuevaFactura);

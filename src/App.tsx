@@ -687,6 +687,7 @@ export default function App() {
   const handleCrearFactura = async (payload: {
     idCompania: number;
     idCita: number | null;
+    idConsulta: number | null;
     idPaciente: number;
     condicionVenta: string;
     medioPago: string;
@@ -1324,6 +1325,7 @@ export default function App() {
           patient={patients.find(p => p.id === selectedReportConsultation.idPaciente) || patients[0]}
           company={activeCompany}
           servicios={servicios}
+          facturas={facturas.filter(f => f.idCompania === selectedCompanyId)}
           onClose={() => setSelectedReportConsultation(null)}
           onNotificationSent={handleAddNotificationLog}
           onConsultationUpdated={handleConsultationUpdated}
