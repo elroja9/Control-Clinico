@@ -69,6 +69,10 @@ export default function CompanySettings({
       alert('Ingrese un porcentaje entre 0 y 100.');
       return;
     }
+    if (porcentajesDeEstaEmpresa.some(p => Number(p.porcentaje) === valor)) {
+      alert('Ese porcentaje ya está en la lista.');
+      return;
+    }
     onSavePorcentajeDieta({ id: 0, idCompania: currentCompany.id, porcentaje: valor });
     setNuevoPorcentaje('');
   };

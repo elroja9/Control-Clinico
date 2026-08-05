@@ -1921,8 +1921,12 @@ async function startServer() {
 
   app.post("/api/porcentajes-dieta", requireAuth, async (req, res) => {
     try {
+      const session = sessionOf(req);
+      if (session.rol !== "Administrador" && !isSaasAdmin(session)) {
+        return res.status(403).json({ error: "Solo un Administrador puede modificar los porcentajes de la empresa." });
+      }
       const p = req.body;
-      p.idCompania = sessionOf(req).idCompania;
+      p.idCompania = session.idCompania;
       const porcentajeNum = parseFloat(p.porcentaje);
       if (!Number.isFinite(porcentajeNum) || porcentajeNum < 0 || porcentajeNum > 100) {
         return res.status(400).json({ error: "porcentaje debe ser un número entre 0 y 100" });
@@ -1961,8 +1965,12 @@ async function startServer() {
 
   app.delete("/api/porcentajes-dieta/:id", requireAuth, async (req, res) => {
     try {
+      const session = sessionOf(req);
+      if (session.rol !== "Administrador" && !isSaasAdmin(session)) {
+        return res.status(403).json({ error: "Solo un Administrador puede modificar los porcentajes de la empresa." });
+      }
       const id = parseInt(req.params.id);
-      const idCompania = sessionOf(req).idCompania;
+      const idCompania = session.idCompania;
       if (dbConnected && pool) {
         await pool.query("DELETE FROM compania_porcentajes_dieta WHERE id = ? AND idCompania = ?", [id, idCompania]);
         res.json({ success: true });

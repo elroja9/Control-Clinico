@@ -25,6 +25,11 @@ describe('calcularTMB', () => {
   it('Muller - mujer, no usa talla (peso=60, edad=25)', () => {
     expect(calcularTMB('MULLER', 'F', 60, 165, 25)).toBeCloseTo(1353.28, 2);
   });
+
+  it('lanza un error si la fórmula no es reconocida', () => {
+    // @ts-expect-error - probando manejo de un valor inválido en runtime (ej. dato legado corrupto)
+    expect(() => calcularTMB('DESCONOCIDA', 'M', 70, 175, 30)).toThrow();
+  });
 });
 
 describe('calcularPromedioSemanal', () => {

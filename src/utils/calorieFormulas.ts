@@ -27,6 +27,8 @@ export function calcularTMB(formula: FormulaTMB, sexo: Sexo, peso: number, talla
       return sexo === 'M'
         ? (0.047 * peso - 0.01452 * edad + 3.21 + 1.009) * 238.8
         : (0.047 * peso - 0.01452 * edad + 3.21) * 238.8;
+    default:
+      throw new Error(`Fórmula TMB desconocida: ${formula}`);
   }
 }
 

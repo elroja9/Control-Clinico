@@ -176,9 +176,12 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
   const [tmbRestaurado, setTmbRestaurado] = useState<number | null>(null);
   const [promedioRestaurado, setPromedioRestaurado] = useState<number | null>(null);
 
+  const [prescripcionAplicada, setPrescripcionAplicada] = useState(false);
+
   const invalidarRestaurado = () => {
     setTmbRestaurado(null);
     setPromedioRestaurado(null);
+    setPrescripcionAplicada(false);
   };
 
   const tmbPorFormula = patient.sexo ? {
@@ -200,12 +203,13 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
     : null;
 
   const porcentajesDisponibles = porcentajesDieta.filter(p => p.idCompania === patient.idCompania).map(p => Number(p.porcentaje));
-  const porcentajesParaMostrar = porcentajesDisponibles.length > 0 ? porcentajesDisponibles : [10, 15, 20];
+  const porcentajesParaMostrar = porcentajesDisponibles.length > 0 ? [...new Set(porcentajesDisponibles)] : [10, 15, 20];
 
   const handleAplicarPrescripcion = () => {
     if (tmbSeleccionado == null || prescripcionFinal == null) return;
     setTmb(Math.round(tmbSeleccionado));
     setCalorias(Math.round(prescripcionFinal));
+    setPrescripcionAplicada(true);
   };
 
   // Auto-calculate IMC (talla=0 while the field is still empty would otherwise divide by zero)
@@ -1692,6 +1696,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
                       {formulaSeleccionada && (
                         <>
+                          <label className="block text-slate-600 font-semibold mb-1.5">2. Actividad semanal</label>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                               <label className="block text-slate-600 font-semibold mb-1">Días de descanso / semana</label>
@@ -1785,13 +1790,18 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                                 <div className="text-[10px] text-teal-700 uppercase font-bold">Resultado calculado</div>
                                 <div className="text-xl font-black text-teal-800">{Math.round(prescripcionFinal)} kcal/día</div>
                               </div>
-                              <button
-                                type="button"
-                                onClick={handleAplicarPrescripcion}
-                                className="bg-teal-600 hover:bg-teal-700 text-white font-semibold px-3 py-1.5 rounded-lg text-xs"
-                              >
-                                Usar este valor
-                              </button>
+                              <div className="text-right">
+                                <button
+                                  type="button"
+                                  onClick={handleAplicarPrescripcion}
+                                  className="bg-teal-600 hover:bg-teal-700 text-white font-semibold px-3 py-1.5 rounded-lg text-xs"
+                                >
+                                  Usar este valor
+                                </button>
+                                {prescripcionAplicada && (
+                                  <p className="text-[10px] text-teal-700 font-semibold mt-1">✓ Aplicado a TMB y Presupuesto Calórico</p>
+                                )}
+                              </div>
                             </div>
                           )}
                         </>

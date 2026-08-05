@@ -230,7 +230,7 @@ export default function App() {
 
     fetch('/api/porcentajes-dieta')
       .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
-      .then(data => { if (data && data.length > 0) setPorcentajesDieta(data); })
+      .then(data => { if (Array.isArray(data)) setPorcentajesDieta(data); })
       .catch(err => console.log("MySQL offline, using local fallback for porcentajes de dieta"));
 
     fetch('/api/servicios')
