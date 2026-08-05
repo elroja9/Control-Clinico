@@ -145,7 +145,7 @@ export interface NotificationLog {
   idCompania: number;
   idCita?: number | null;
   idConsulta?: number | null;
-  tipo: 'CONFIRMACION' | 'MODIFICACION' | 'RECORDATORIO' | 'CANCELACION' | 'CONSULTA';
+  tipo: 'CONFIRMACION' | 'MODIFICACION' | 'RECORDATORIO' | 'CANCELACION' | 'CONSULTA' | 'FACTURA';
   destinatario: string;
   asunto: string;
   cuerpo: string;

@@ -36,7 +36,7 @@ import { serviciosDefectoParaPerfil } from "./server/serviciosDefecto";
 import { parsearFacturaProveedorXML } from "./server/xmlProveedorParser";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
-import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail } from "./server/emailTemplates";
+import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderFacturaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
 import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales, PorcentajeDieta, PlantillaDieta } from "./src/data/mockData";
 import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
@@ -2745,6 +2745,80 @@ async function startServer() {
       res.json({ id, estado: nuevoEstado, estadoHacienda: estadoHacienda.estado });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Reenvía por correo un resumen HTML del comprobante ya emitido (no adjunta el XML firmado de
+  // Hacienda — este no se persiste en ningún lado, ver POST /api/facturas). Sin columna idFactura
+  // dedicada en notification_logs; el consecutivo queda en el asunto/cuerpo del log igual.
+  app.post("/api/facturas/:id/reenviar-correo", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      let factura: any;
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM facturas WHERE id = ? OR id_factura = ?", [id, id]);
+        factura = (rows as any[]).map(normalizeRow)[0];
+      } else {
+        factura = localFacturas.find(f => f.id === id);
+      }
+      if (!factura) return res.status(404).json({ error: "Factura no encontrada." });
+      if (!canAccessCompany(sessionOf(req), factura.idCompania)) {
+        return res.status(403).json({ error: "No autorizado." });
+      }
+      factura.lineas = typeof factura.lineas === 'string' ? JSON.parse(factura.lineas) : factura.lineas;
+
+      const idCompania = factura.idCompania;
+      let company: Company | undefined;
+      let paciente: Patient | undefined;
+      let smtpConfig: CompaniaSmtpConfig | undefined;
+      if (dbConnected && pool) {
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        company = (companyRows as any[]).map(normalizeRow)[0];
+        const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [factura.idPaciente, factura.idPaciente]);
+        paciente = (pacienteRows as any[]).map(normalizeRow)[0];
+        const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [idCompania]);
+        const smtpRow = (smtpRows as any[])[0];
+        smtpConfig = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
+      } else {
+        company = localCompanies.find(c => c.id === idCompania);
+        paciente = localPatients.find(p => p.id === factura.idPaciente);
+        smtpConfig = localSmtpConfigs.find(s => s.idCompania === idCompania);
+      }
+      if (!company) return res.status(404).json({ error: "Empresa no encontrada." });
+      if (!paciente) return res.status(404).json({ error: "Paciente no encontrado." });
+      if (!paciente.correoElectronico) return res.status(400).json({ error: "El paciente no tiene un correo electrónico registrado." });
+      if (!smtpConfig || !smtpConfig.activo) {
+        return res.status(400).json({ error: "Las notificaciones SMTP no están activas para esta empresa." });
+      }
+
+      const rendered = renderFacturaEmail({ company, patient: paciente, factura });
+      await sendMail(smtpConfig, { to: paciente.correoElectronico, subject: rendered.subject, html: rendered.html, text: rendered.text });
+
+      const log: any = {
+        idCompania,
+        idCita: null,
+        idConsulta: null,
+        tipo: "FACTURA",
+        destinatario: paciente.correoElectronico,
+        asunto: rendered.subject,
+        cuerpo: rendered.text,
+        enviadoEn: new Date().toISOString()
+      };
+      if (dbConnected && pool) {
+        const [result] = await pool.query(
+          "INSERT INTO notification_logs (idCompania, idCita, idConsulta, tipo, destinatario, asunto, cuerpo, enviadoEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          [log.idCompania, log.idCita, log.idConsulta, log.tipo, log.destinatario, log.asunto, log.cuerpo, log.enviadoEn]
+        );
+        log.id = (result as any).insertId;
+      } else {
+        log.id = Math.max(0, ...localLogs.map(item => item.id), 0) + 1;
+        localLogs.push(log);
+      }
+
+      res.json(log);
+    } catch (err: any) {
+      console.error("Error reenviando factura por correo:", err);
+      res.status(500).json({ error: err.message || "No se pudo reenviar la factura por correo." });
     }
   });
 

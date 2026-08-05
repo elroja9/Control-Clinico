@@ -1,4 +1,4 @@
-import type { Company, Patient, Cita, Consultation, User } from "../src/data/mockData";
+import type { Company, Patient, Cita, Consultation, User, Factura } from "../src/data/mockData";
 
 export interface RenderedEmail {
   subject: string;
@@ -257,6 +257,74 @@ export function renderConsultaEmail(params: {
   `;
 
   const text = `${title}\n\nEstimado(a) ${patient.nombreCompleto},\nFecha: ${consultation.fecha}\nMotivo: ${consultation.motivo}\n\n${sectionText}${consultation.anotacionesGenerales ? `Recomendaciones: ${consultation.anotacionesGenerales}\n` : ""}\n${company.nombreComercial}`;
+
+  return { subject, html: emailShell(company, title, bodyHtml), text };
+}
+
+const MEDIO_PAGO_LABEL: Record<string, string> = {
+  "01": "Efectivo",
+  "02": "Tarjeta",
+  "06": "SINPE Móvil"
+};
+
+export function renderFacturaEmail(params: {
+  company: Company;
+  patient: Patient;
+  factura: Factura;
+}): RenderedEmail {
+  const { company, patient, factura } = params;
+  const esNotaCredito = factura.tipoDocumento === "03";
+  const title = esNotaCredito ? "Nota de Crédito Electrónica" : "Factura Electrónica";
+  const subject = `${title} ${factura.consecutivo} - ${company.nombreComercial}`;
+  const colones = (n: number) => `₡${n.toLocaleString("es-CR", { maximumFractionDigits: 2 })}`;
+
+  const filasHtml = factura.lineas
+    .map(
+      (l) => `
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;">${escapeHtml(l.nombre)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:center;">${l.cantidad}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right;">${colones(l.precioUnitario)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right;">${colones(l.montoTotalLinea)}</td>
+    </tr>`
+    )
+    .join("");
+
+  const tablaHtml = `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+      <thead>
+        <tr style="background-color:#f8fafc;">
+          <td style="padding:8px;font-size:10px;font-weight:bold;color:#64748b;text-transform:uppercase;">Detalle</td>
+          <td style="padding:8px;font-size:10px;font-weight:bold;color:#64748b;text-transform:uppercase;text-align:center;">Cant.</td>
+          <td style="padding:8px;font-size:10px;font-weight:bold;color:#64748b;text-transform:uppercase;text-align:right;">Precio Unit.</td>
+          <td style="padding:8px;font-size:10px;font-weight:bold;color:#64748b;text-transform:uppercase;text-align:right;">Total</td>
+        </tr>
+      </thead>
+      <tbody>${filasHtml}</tbody>
+    </table>`;
+
+  const detailsHtml =
+    infoCard("Clave Numérica", escapeHtml(factura.clave)) +
+    infoCard("Consecutivo", escapeHtml(factura.consecutivo)) +
+    infoCard("Fecha de Emisión", new Date(factura.fechaEmision).toLocaleString("es-CR")) +
+    infoCard("Estado", escapeHtml(factura.estado)) +
+    (!esNotaCredito ? infoCard("Medio de Pago", escapeHtml(MEDIO_PAGO_LABEL[factura.medioPago] || factura.medioPago)) : "");
+
+  const bodyHtml = `
+    <p>Estimado(a) ${escapeHtml(patient.nombreCompleto)},</p>
+    <p>Le compartimos el detalle de su comprobante electrónico:</p>
+    ${detailsHtml}
+    ${tablaHtml}
+    <p style="margin-top:16px;text-align:right;font-size:13px;line-height:1.8;">
+      Subtotal: ${colones(factura.subtotal)}<br/>
+      IVA: ${colones(factura.totalIva)}<br/>
+      <span style="font-weight:bold;font-size:15px;">Total: ${colones(factura.total)}</span>
+    </p>
+    <p style="margin-top:16px;">Gracias por su confianza.</p>
+    <p style="margin-top:16px;font-weight:bold;">${escapeHtml(company.nombreComercial)}</p>
+  `;
+
+  const text = `${title} ${factura.consecutivo}\n\nEstimado(a) ${patient.nombreCompleto},\nClave: ${factura.clave}\nFecha de Emisión: ${new Date(factura.fechaEmision).toLocaleString("es-CR")}\nEstado: ${factura.estado}\nTotal: ${colones(factura.total)}\n\n${company.nombreComercial}`;
 
   return { subject, html: emailShell(company, title, bodyHtml), text };
 }
