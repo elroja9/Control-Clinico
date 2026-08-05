@@ -169,7 +169,7 @@ export default function CompanySettings({
   const [smtpActivo, setSmtpActivo] = useState(false);
 
   // --- Hacienda Digital Signature State ---
-  const [haciendaAmbiente, setHaciendaAmbiente] = useState<'SANDBOX' | 'PRODUCCION'>('SANDBOX');
+  const [haciendaAmbiente, setHaciendaAmbiente] = useState<'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL'>('SANDBOX');
   const [haciendaUsuarioAtv, setHaciendaUsuarioAtv] = useState('');
   const [haciendaPasswordAtv, setHaciendaPasswordAtv] = useState('');
   const [haciendaTienePasswordAtv, setHaciendaTienePasswordAtv] = useState(false);
@@ -989,10 +989,11 @@ export default function CompanySettings({
               <label className="block text-slate-600 mb-1 font-semibold">Ambiente</label>
               <select
                 value={haciendaAmbiente}
-                onChange={(e) => setHaciendaAmbiente(e.target.value as 'SANDBOX' | 'PRODUCCION')}
+                onChange={(e) => setHaciendaAmbiente(e.target.value as 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL')}
                 className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
               >
-                <option value="SANDBOX">Sandbox (Pruebas)</option>
+                <option value="PRUEBAS_LOCAL">Pruebas Locales (no envía a Hacienda)</option>
+                <option value="SANDBOX">Sandbox (Pruebas de Hacienda — envía tráfico real)</option>
                 <option value="PRODUCCION">Producción</option>
               </select>
             </div>
