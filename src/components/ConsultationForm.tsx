@@ -242,6 +242,18 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
     handleAplicarPrescripcion();
   };
 
+  // Autocompletar con la primera plantilla que coincida, pero solo si el menú sigue en
+  // blanco — si ya hay contenido (escrito a mano o restaurado de una consulta guardada), se
+  // deja la lista de "Plantillas sugeridas" para que el nutricionista elija reemplazarlo o no.
+  const primeraPlantillaCoincidenteId = plantillasCoincidentes.length > 0 ? plantillasCoincidentes[0].id : null;
+  useEffect(() => {
+    if (primeraPlantillaCoincidenteId == null) return;
+    const menuVacio = !desayuno && !meriendaMan && !almuerzo && !meriendaTar && !cena;
+    if (!menuVacio) return;
+    const plantilla = plantillasDieta.find(p => p.id === primeraPlantillaCoincidenteId);
+    if (plantilla) handleAplicarPlantilla(plantilla);
+  }, [primeraPlantillaCoincidenteId]);
+
   // Auto-calculate IMC (talla=0 while the field is still empty would otherwise divide by zero)
   const calculatedImc = talla > 0 ? parseFloat((peso / ((talla / 100) * (talla / 100))).toFixed(1)) : 0;
 

@@ -10,6 +10,18 @@ interface ReportViewProps {
   onNotificationSent: (log: NotificationLog) => void;
 }
 
+const FORMULA_LABEL: Record<string, string> = {
+  HARRIS_BENEDICT_OBESOS: 'Harris Benedict (Obesos)',
+  MIFFLIN_ST_JEOR: 'Mifflin St Jeor',
+  MULLER: 'Müller'
+};
+
+const DIRECCION_LABEL: Record<string, string> = {
+  DEFICIT: 'Déficit',
+  MANTENIMIENTO: 'Mantenimiento',
+  SUPERAVIT: 'Superávit'
+};
+
 export default function ReportView({ consultation, patient, company, onClose, onNotificationSent }: ReportViewProps) {
   const [emailSent, setEmailSent] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -193,6 +205,50 @@ export default function ReportView({ consultation, patient, company, onClose, on
                   </div>
                 </div>
               </div>
+
+              {/* Prescripción Calórica */}
+              {consultation.dieta?.prescripcionCalorica && (
+                <div className="border-t border-slate-150 pt-5">
+                  <h4 className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-1.5" style={{ color: company.colorPrimario }}>
+                    <Sliders className="w-4 h-4" />
+                    Prescripción Calórica
+                  </h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
+                      <span className="text-[10px] text-slate-500 block">Fórmula</span>
+                      <span className="text-sm font-bold text-slate-900 block">{FORMULA_LABEL[consultation.dieta.prescripcionCalorica.formula] || consultation.dieta.prescripcionCalorica.formula}</span>
+                    </div>
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
+                      <span className="text-[10px] text-slate-500 block">TMB</span>
+                      <span className="text-lg font-bold text-slate-900 block">{consultation.dieta.prescripcionCalorica.tmb} kcal</span>
+                    </div>
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
+                      <span className="text-[10px] text-slate-500 block">Objetivo</span>
+                      <span className="text-sm font-bold text-slate-900 block">{DIRECCION_LABEL[consultation.dieta.prescripcionCalorica.direccion] || consultation.dieta.prescripcionCalorica.direccion} {consultation.dieta.prescripcionCalorica.porcentaje}%</span>
+                    </div>
+                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
+                      <span className="text-[10px] text-slate-500 block">Presupuesto Calórico</span>
+                      <span className="text-lg font-bold text-teal-600 block">{consultation.dieta.totalCalorias} kcal</span>
+                    </div>
+                  </div>
+                  {consultation.dieta.macros && (
+                    <div className="grid grid-cols-3 gap-3 mt-3">
+                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
+                        <span className="text-[9.5px] text-slate-500 block">Carbohidratos</span>
+                        <span className="text-sm font-semibold text-slate-800 block">{consultation.dieta.macros.carbohidratosG} g</span>
+                      </div>
+                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
+                        <span className="text-[9.5px] text-slate-500 block">Proteínas</span>
+                        <span className="text-sm font-semibold text-slate-800 block">{consultation.dieta.macros.proteinasG} g</span>
+                      </div>
+                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
+                        <span className="text-[9.5px] text-slate-500 block">Grasas</span>
+                        <span className="text-sm font-semibold text-slate-800 block">{consultation.dieta.macros.grasasG} g</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Diet Plan Schedule */}
               {consultation.dieta && (

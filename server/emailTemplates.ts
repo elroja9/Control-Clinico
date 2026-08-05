@@ -6,6 +6,18 @@ export interface RenderedEmail {
   text: string;
 }
 
+const FORMULA_LABEL: Record<string, string> = {
+  HARRIS_BENEDICT_OBESOS: "Harris Benedict (Obesos)",
+  MIFFLIN_ST_JEOR: "Mifflin St Jeor",
+  MULLER: "Müller"
+};
+
+const DIRECCION_LABEL: Record<string, string> = {
+  DEFICIT: "Déficit",
+  MANTENIMIENTO: "Mantenimiento",
+  SUPERAVIT: "Superávit"
+};
+
 function escapeHtml(value: string | number | null | undefined): string {
   const str = String(value ?? "");
   return str
@@ -175,6 +187,22 @@ export function renderConsultaEmail(params: {
 
     if (consultation.dieta) {
       const d = consultation.dieta;
+
+      if (d.prescripcionCalorica) {
+        const pc = d.prescripcionCalorica;
+        const formulaLabel = FORMULA_LABEL[pc.formula] || pc.formula;
+        const direccionLabel = DIRECCION_LABEL[pc.direccion] || pc.direccion;
+        sectionHtml += `
+          <h2 style="color:${escapeHtml(company.colorPrimario)};font-size:13px;text-transform:uppercase;margin-top:20px;">Prescripción Calórica</h2>
+          ${infoCard("Fórmula", escapeHtml(formulaLabel))}
+          ${infoCard("TMB", `${pc.tmb} kcal`)}
+          ${infoCard("Objetivo", `${escapeHtml(direccionLabel)} ${pc.porcentaje}%`)}
+          ${infoCard("Presupuesto Calórico", `${d.totalCalorias} kcal`)}
+          ${d.macros ? infoCard("Macronutrientes", `Carbohidratos ${d.macros.carbohidratosG}g &middot; Proteínas ${d.macros.proteinasG}g &middot; Grasas ${d.macros.grasasG}g`) : ""}
+        `;
+        sectionText += `Prescripción Calórica\nFórmula: ${formulaLabel} | TMB: ${pc.tmb} kcal | Objetivo: ${direccionLabel} ${pc.porcentaje}% | Presupuesto: ${d.totalCalorias} kcal\n${d.macros ? `Macronutrientes: Carbohidratos ${d.macros.carbohidratosG}g, Proteínas ${d.macros.proteinasG}g, Grasas ${d.macros.grasasG}g\n` : ""}\n`;
+      }
+
       sectionHtml += `
         <h2 style="color:${escapeHtml(company.colorPrimario)};font-size:13px;text-transform:uppercase;margin-top:20px;">Plan Alimentario Recomendado (${d.totalCalorias} kcal)</h2>
         ${infoCard("Desayuno", escapeHtml(d.desayuno))}
