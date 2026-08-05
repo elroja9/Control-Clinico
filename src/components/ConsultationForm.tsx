@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Patient, Consultation } from '../data/mockData';
-import { Sparkles, Save, X, Calendar, ClipboardList, Activity, Heart, Dumbbell, ChevronRight } from 'lucide-react';
+import { Patient, Consultation, PorcentajeDieta } from '../data/mockData';
+import { Sparkles, Save, X, Calendar, ClipboardList, Activity, Heart, Dumbbell, ChevronRight, Calculator, TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import PainMapSelector from './PainMapSelector';
+import { calcularTMB, calcularPromedioSemanal, aplicarPorcentaje, FACTORES_ACTIVIDAD, FormulaTMB, DireccionPrescripcion } from '../utils/calorieFormulas';
 
 interface ConsultationFormProps {
   patient: Patient;
@@ -10,9 +11,10 @@ interface ConsultationFormProps {
   onCancel: () => void;
   themeColor: string;
   perfilCompania: 'Fisioterapia' | 'Nutrición' | 'Ambas';
+  porcentajesDieta: PorcentajeDieta[];
 }
 
-export default function ConsultationForm({ patient, editingConsultation, onSave, onCancel, themeColor, perfilCompania }: ConsultationFormProps) {
+export default function ConsultationForm({ patient, editingConsultation, onSave, onCancel, themeColor, perfilCompania, porcentajesDieta }: ConsultationFormProps) {
   const [tipo, setTipo] = useState<'Nutrición' | 'Fisioterapia'>(() => {
     if (perfilCompania === 'Fisioterapia') return 'Fisioterapia';
     return 'Nutrición';
@@ -163,6 +165,40 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
   const [soapAnalisis, setSoapAnalisis] = useState('');
   const [soapPlan, setSoapPlan] = useState('');
 
+  // Prescripción Calórica (Déficit/Superávit)
+  const [formulaSeleccionada, setFormulaSeleccionada] = useState<FormulaTMB | null>(null);
+  const [diasDescanso, setDiasDescanso] = useState(7);
+  const [diasEntrenamiento, setDiasEntrenamiento] = useState(0);
+  const [factorActividadDescanso, setFactorActividadDescanso] = useState<number>(FACTORES_ACTIVIDAD.SEDENTARIO);
+  const [factorActividadEntreno, setFactorActividadEntreno] = useState<number>(FACTORES_ACTIVIDAD.LIGERA);
+  const [direccionPrescripcion, setDireccionPrescripcion] = useState<DireccionPrescripcion>('DEFICIT');
+  const [porcentajePrescripcion, setPorcentajePrescripcion] = useState<number>(0);
+
+  const tmbPorFormula = patient.sexo ? {
+    HARRIS_BENEDICT_OBESOS: calcularTMB('HARRIS_BENEDICT_OBESOS', patient.sexo, peso, talla, patient.edad),
+    MIFFLIN_ST_JEOR: calcularTMB('MIFFLIN_ST_JEOR', patient.sexo, peso, talla, patient.edad),
+    MULLER: calcularTMB('MULLER', patient.sexo, peso, talla, patient.edad),
+  } : null;
+
+  const tmbSeleccionado = formulaSeleccionada && tmbPorFormula ? tmbPorFormula[formulaSeleccionada] : null;
+
+  const promedioMantenimiento = tmbSeleccionado != null
+    ? calcularPromedioSemanal(tmbSeleccionado, factorActividadDescanso, diasDescanso, factorActividadEntreno, diasEntrenamiento)
+    : null;
+
+  const prescripcionFinal = promedioMantenimiento != null
+    ? aplicarPorcentaje(promedioMantenimiento, direccionPrescripcion, porcentajePrescripcion)
+    : null;
+
+  const porcentajesDisponibles = porcentajesDieta.filter(p => p.idCompania === patient.idCompania).map(p => Number(p.porcentaje));
+  const porcentajesParaMostrar = porcentajesDisponibles.length > 0 ? porcentajesDisponibles : [10, 15, 20];
+
+  const handleAplicarPrescripcion = () => {
+    if (tmbSeleccionado == null || prescripcionFinal == null) return;
+    setTmb(Math.round(tmbSeleccionado));
+    setCalorias(Math.round(prescripcionFinal));
+  };
+
   // Auto-calculate IMC (talla=0 while the field is still empty would otherwise divide by zero)
   const calculatedImc = talla > 0 ? parseFloat((peso / ((talla / 100) * (talla / 100))).toFixed(1)) : 0;
 
@@ -259,6 +295,16 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
       setMeriendaTar(d.meriendaTarde);
       setCena(d.cena);
       setIndicacionesDieta(d.indicaciones);
+      if (d.prescripcionCalorica) {
+        const pc = d.prescripcionCalorica;
+        setFormulaSeleccionada(pc.formula);
+        setDiasDescanso(pc.diasDescanso);
+        setDiasEntrenamiento(pc.diasEntrenamiento);
+        setFactorActividadDescanso(pc.factorActividadDescanso);
+        setFactorActividadEntreno(pc.factorActividadEntreno);
+        setDireccionPrescripcion(pc.direccion);
+        setPorcentajePrescripcion(pc.porcentaje);
+      }
     }
     if (cs?.grasa) {
       setGrasaTotal(cs.grasa.total ?? 22);
@@ -354,7 +400,20 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
           almuerzo,
           meriendaTarde: meriendaTar,
           cena,
-          indicaciones: indicacionesDieta
+          indicaciones: indicacionesDieta,
+          ...(formulaSeleccionada && tmbSeleccionado != null && promedioMantenimiento != null ? {
+            prescripcionCalorica: {
+              formula: formulaSeleccionada,
+              tmb: tmbSeleccionado,
+              diasDescanso,
+              diasEntrenamiento,
+              factorActividadDescanso,
+              factorActividadEntreno,
+              promedioMantenimiento,
+              direccion: direccionPrescripcion,
+              porcentaje: porcentajePrescripcion
+            }
+          } : {})
         },
         evaluacionAntropometrica: {
           peso,
@@ -1582,6 +1641,154 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                 <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-400" />
               </summary>
               <div className="p-4 space-y-4">
+                <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-4">
+                  <div className="flex items-center gap-2 text-slate-700 font-bold">
+                    <Calculator className="w-4 h-4 text-teal-600" />
+                    Prescripción Calórica (Déficit/Superávit)
+                  </div>
+
+                  {!patient.sexo ? (
+                    <p className="text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2.5">
+                      Complete el sexo del paciente en su ficha para poder calcular la prescripción calórica.
+                    </p>
+                  ) : (
+                    <>
+                      <div>
+                        <label className="block text-slate-600 font-semibold mb-1.5">1. Elija la fórmula de TMB</label>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          {(['HARRIS_BENEDICT_OBESOS', 'MIFFLIN_ST_JEOR', 'MULLER'] as FormulaTMB[]).map(f => {
+                            const tmbCalculado = tmbPorFormula ? tmbPorFormula[f] : 0;
+                            const seleccionada = formulaSeleccionada === f;
+                            const etiquetas: Record<FormulaTMB, string> = {
+                              HARRIS_BENEDICT_OBESOS: 'Harris Benedict (Obesos)',
+                              MIFFLIN_ST_JEOR: 'Mifflin St Jeor',
+                              MULLER: 'Müller'
+                            };
+                            return (
+                              <button
+                                type="button"
+                                key={f}
+                                onClick={() => setFormulaSeleccionada(f)}
+                                className={`p-2.5 rounded-lg border text-left ${seleccionada ? 'border-teal-500 bg-teal-50' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
+                              >
+                                <div className="font-semibold text-slate-700">{etiquetas[f]}</div>
+                                <div className="text-lg font-black text-slate-800">{Math.round(tmbCalculado)} <span className="text-[10px] font-normal text-slate-400">kcal/día</span></div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {formulaSeleccionada && (
+                        <>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-slate-600 font-semibold mb-1">Días de descanso / semana</label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={7}
+                                value={diasDescanso}
+                                onChange={(e) => setDiasDescanso(parseInt(e.target.value) || 0)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs"
+                              />
+                              <select
+                                value={factorActividadDescanso}
+                                onChange={(e) => setFactorActividadDescanso(parseFloat(e.target.value))}
+                                className="w-full mt-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs"
+                              >
+                                <option value={FACTORES_ACTIVIDAD.SEDENTARIO}>Sedentario (1.2)</option>
+                                <option value={FACTORES_ACTIVIDAD.LIGERA}>Actividad ligera (1.375)</option>
+                                <option value={FACTORES_ACTIVIDAD.MODERADA}>Actividad moderada (1.5)</option>
+                                <option value={FACTORES_ACTIVIDAD.MUY_ACTIVO}>Muy activo (1.725)</option>
+                                <option value={FACTORES_ACTIVIDAD.EXTRA_ACTIVO}>Extra activo (1.9)</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-slate-600 font-semibold mb-1">Días de entrenamiento / semana</label>
+                              <input
+                                type="number"
+                                min={0}
+                                max={7}
+                                value={diasEntrenamiento}
+                                onChange={(e) => setDiasEntrenamiento(parseInt(e.target.value) || 0)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs"
+                              />
+                              <select
+                                value={factorActividadEntreno}
+                                onChange={(e) => setFactorActividadEntreno(parseFloat(e.target.value))}
+                                className="w-full mt-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs"
+                              >
+                                <option value={FACTORES_ACTIVIDAD.SEDENTARIO}>Sedentario (1.2)</option>
+                                <option value={FACTORES_ACTIVIDAD.LIGERA}>Actividad ligera (1.375)</option>
+                                <option value={FACTORES_ACTIVIDAD.MODERADA}>Actividad moderada (1.5)</option>
+                                <option value={FACTORES_ACTIVIDAD.MUY_ACTIVO}>Muy activo (1.725)</option>
+                                <option value={FACTORES_ACTIVIDAD.EXTRA_ACTIVO}>Extra activo (1.9)</option>
+                              </select>
+                            </div>
+                          </div>
+                          <p className="text-[10px] text-slate-400">Nota: pacientes de menos de 60kg — se recomienda usar actividad ligera (Solís, L. 2020).</p>
+
+                          {promedioMantenimiento != null && (
+                            <p className="text-slate-700 font-semibold">
+                              Promedio para mantenimiento: <span className="font-black">{Math.round(promedioMantenimiento)} kcal/día</span>
+                            </p>
+                          )}
+
+                          <div>
+                            <label className="block text-slate-600 font-semibold mb-1.5">3. Dirección y porcentaje</label>
+                            <div className="flex gap-2 mb-2">
+                              {(['DEFICIT', 'MANTENIMIENTO', 'SUPERAVIT'] as DireccionPrescripcion[]).map(d => (
+                                <button
+                                  type="button"
+                                  key={d}
+                                  onClick={() => { setDireccionPrescripcion(d); if (d === 'MANTENIMIENTO') setPorcentajePrescripcion(0); }}
+                                  className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1 ${direccionPrescripcion === d ? 'bg-teal-600 text-white' : 'bg-slate-100 text-slate-600'}`}
+                                >
+                                  {d === 'DEFICIT' && <TrendingDown className="w-3.5 h-3.5" />}
+                                  {d === 'SUPERAVIT' && <TrendingUp className="w-3.5 h-3.5" />}
+                                  {d === 'MANTENIMIENTO' && <Minus className="w-3.5 h-3.5" />}
+                                  {d === 'DEFICIT' ? 'Déficit' : d === 'SUPERAVIT' ? 'Superávit' : 'Mantenimiento'}
+                                </button>
+                              ))}
+                            </div>
+                            {direccionPrescripcion !== 'MANTENIMIENTO' && (
+                              <div className="flex flex-wrap gap-2">
+                                {porcentajesParaMostrar.map(pct => (
+                                  <button
+                                    type="button"
+                                    key={pct}
+                                    onClick={() => setPorcentajePrescripcion(pct)}
+                                    className={`px-3 py-1 rounded-full text-xs font-semibold border ${porcentajePrescripcion === pct ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-slate-200 bg-white text-slate-600'}`}
+                                  >
+                                    {pct}%
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {prescripcionFinal != null && (
+                            <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 flex items-center justify-between">
+                              <div>
+                                <div className="text-[10px] text-teal-700 uppercase font-bold">Resultado calculado</div>
+                                <div className="text-xl font-black text-teal-800">{Math.round(prescripcionFinal)} kcal/día</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={handleAplicarPrescripcion}
+                                className="bg-teal-600 hover:bg-teal-700 text-white font-semibold px-3 py-1.5 rounded-lg text-xs"
+                              >
+                                Usar este valor
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 w-56">
                     <label className="block text-slate-600 font-bold mb-1">Presupuesto Calórico Diario (kcal)</label>
