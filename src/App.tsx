@@ -48,6 +48,7 @@ import {
   defaultSmtpConfigs,
   defaultNotificationLogs,
   defaultCalendarBlocks,
+  defaultPorcentajesDieta,
   defaultServicios,
   Company,
   Patient,
@@ -58,6 +59,7 @@ import {
   NotificationLog,
   SmtpConfigInput,
   CalendarBlock,
+  PorcentajeDieta,
   CompanyPayment,
   Servicio,
   Factura,
@@ -134,6 +136,11 @@ export default function App() {
   const [calendarBlocks, setCalendarBlocks] = useState<CalendarBlock[]>(() => {
     const local = localStorage.getItem('fisio_calendar_blocks');
     return local ? JSON.parse(local) : defaultCalendarBlocks;
+  });
+
+  const [porcentajesDieta, setPorcentajesDieta] = useState<PorcentajeDieta[]>(() => {
+    const local = localStorage.getItem('fisio_porcentajes_dieta');
+    return local ? JSON.parse(local) : defaultPorcentajesDieta;
   });
 
   const [servicios, setServicios] = useState<Servicio[]>(() => {
@@ -221,6 +228,11 @@ export default function App() {
       .then(data => { if (data && data.length > 0) setCalendarBlocks(data); })
       .catch(err => console.log("MySQL offline, using local fallback for calendar blocks"));
 
+    fetch('/api/porcentajes-dieta')
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (data && data.length > 0) setPorcentajesDieta(data); })
+      .catch(err => console.log("MySQL offline, using local fallback for porcentajes de dieta"));
+
     fetch('/api/servicios')
       .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
       .then(data => { if (data && data.length > 0) setServicios(data); })
@@ -267,6 +279,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('fisio_calendar_blocks', JSON.stringify(calendarBlocks));
   }, [calendarBlocks]);
+
+  useEffect(() => {
+    localStorage.setItem('fisio_porcentajes_dieta', JSON.stringify(porcentajesDieta));
+  }, [porcentajesDieta]);
 
   useEffect(() => {
     localStorage.setItem('fisio_servicios', JSON.stringify(servicios));
@@ -532,6 +548,28 @@ export default function App() {
     });
   };
 
+  const handleSavePorcentajeDieta = (porcentaje: PorcentajeDieta) => {
+    fetch('/api/porcentajes-dieta', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(porcentaje)
+    })
+    .then(res => res.json())
+    .then(data => {
+      setPorcentajesDieta(prev => {
+        const exists = prev.some(p => p.id === data.id);
+        return exists ? prev.map(p => p.id === data.id ? data : p) : [...prev, data];
+      });
+    })
+    .catch(err => {
+      console.error("Error saving porcentaje dieta to MySQL:", err);
+      setPorcentajesDieta(prev => {
+        const exists = prev.some(p => p.id === porcentaje.id);
+        return exists ? prev.map(p => p.id === porcentaje.id ? porcentaje : p) : [...prev, porcentaje];
+      });
+    });
+  };
+
   const handleSaveServicio = (servicio: Servicio) => {
     fetch('/api/servicios', {
       method: 'POST',
@@ -705,6 +743,17 @@ export default function App() {
       .catch(err => {
         console.error("Error deleting calendar block from MySQL:", err);
         setCalendarBlocks(prev => prev.filter(b => b.id !== id));
+      });
+  };
+
+  const handleDeletePorcentajeDieta = (id: number) => {
+    fetch(`/api/porcentajes-dieta/${id}`, { method: 'DELETE' })
+      .then(() => {
+        setPorcentajesDieta(prev => prev.filter(p => p.id !== id));
+      })
+      .catch(err => {
+        console.error("Error deleting porcentaje dieta from MySQL:", err);
+        setPorcentajesDieta(prev => prev.filter(p => p.id !== id));
       });
   };
 
@@ -1159,6 +1208,7 @@ export default function App() {
             onCancel={() => { setActiveConsultationPatient(null); setEditingConsultation(null); }}
             themeColor={activeCompany.colorPrimario}
             perfilCompania={activeCompany.perfilCompania || 'Ambas'}
+            porcentajesDieta={porcentajesDieta}
           />
         </div>
       ) : isAddingPatient || editingPatient ? (
@@ -1816,6 +1866,9 @@ export default function App() {
                 onSaveServicio={handleSaveServicio}
                 onCargarServiciosDefecto={handleCargarServiciosDefecto}
                 onAjustarStock={handleAjustarStock}
+                porcentajesDieta={porcentajesDieta}
+                onSavePorcentajeDieta={handleSavePorcentajeDieta}
+                onDeletePorcentajeDieta={handleDeletePorcentajeDieta}
               />
             )}
 
