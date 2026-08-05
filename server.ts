@@ -984,6 +984,89 @@ function acumularLineasD104(lineas: any[], signo: 1 | -1, acc: { t13: TarifaAcum
   }
 }
 
+interface ReporteClientesSesiones {
+  resumen: {
+    pacientesNuevos: number;
+    pacientesAtendidos: number;
+    sesionesCompletadas: number;
+    tasaAsistencia: number;
+  };
+  tendenciaMensual: Array<{ mes: string; pacientesNuevos: number; sesionesCompletadas: number }>;
+  pacientes: Array<{ idPaciente: number; nombreCompleto: string; sesionesCompletadas: number; esNuevo: boolean }>;
+}
+
+function construirReporteClientesSesiones(
+  desde: string,
+  hasta: string,
+  citas: Array<{ idPaciente: number; fechaHora: string; estadoCita: string }>,
+  consultas: Array<{ idPaciente: number; fecha: string; estado?: string }>,
+  pacientes: Array<{ id: number; nombreCompleto: string }>
+): ReporteClientesSesiones {
+  const enRango = (fecha: string) => {
+    const dia = fecha.slice(0, 10);
+    return dia >= desde && dia <= hasta;
+  };
+
+  // Primera cita histórica por paciente (de cualquier estado, sin importar el rango) —
+  // define cuándo "nació" el paciente para efectos de reportería.
+  const primeraCitaPorPaciente = new Map<number, string>();
+  for (const c of citas) {
+    const actual = primeraCitaPorPaciente.get(c.idPaciente);
+    if (!actual || c.fechaHora < actual) primeraCitaPorPaciente.set(c.idPaciente, c.fechaHora);
+  }
+  const esNuevoEnRango = (idPaciente: number) => {
+    const primera = primeraCitaPorPaciente.get(idPaciente);
+    return primera != null && enRango(primera);
+  };
+
+  const consultasCerradasEnRango = consultas.filter(c => c.estado === 'CERRADA' && enRango(c.fecha));
+  const citasEnRango = citas.filter(c => enRango(c.fechaHora));
+
+  const sesionesPorPaciente = new Map<number, number>();
+  for (const c of consultasCerradasEnRango) {
+    sesionesPorPaciente.set(c.idPaciente, (sesionesPorPaciente.get(c.idPaciente) || 0) + 1);
+  }
+
+  const completadas = citasEnRango.filter(c => c.estadoCita === 'COMPLETADA').length;
+  const elegibles = citasEnRango.filter(c => c.estadoCita === 'COMPLETADA' || c.estadoCita === 'NO_ASISTIO' || c.estadoCita === 'CANCELADA').length;
+
+  const meses: string[] = [];
+  const cursor = new Date(desde + 'T00:00:00');
+  cursor.setDate(1);
+  const fin = new Date(hasta + 'T00:00:00');
+  while (cursor <= fin) {
+    meses.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`);
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  const tendenciaMensual = meses.map(mes => ({
+    mes,
+    pacientesNuevos: Array.from(primeraCitaPorPaciente.values()).filter(f => f.slice(0, 7) === mes && enRango(f)).length,
+    sesionesCompletadas: consultasCerradasEnRango.filter(c => c.fecha.slice(0, 7) === mes).length
+  }));
+
+  const pacientesDetalle = pacientes
+    .map(p => ({
+      idPaciente: p.id,
+      nombreCompleto: p.nombreCompleto,
+      sesionesCompletadas: sesionesPorPaciente.get(p.id) || 0,
+      esNuevo: esNuevoEnRango(p.id)
+    }))
+    .filter(p => p.sesionesCompletadas > 0 || p.esNuevo)
+    .sort((a, b) => b.sesionesCompletadas - a.sesionesCompletadas);
+
+  return {
+    resumen: {
+      pacientesNuevos: pacientes.filter(p => esNuevoEnRango(p.id)).length,
+      pacientesAtendidos: sesionesPorPaciente.size,
+      sesionesCompletadas: consultasCerradasEnRango.length,
+      tasaAsistencia: elegibles > 0 ? Math.round((completadas / elegibles) * 1000) / 10 : 0
+    },
+    tendenciaMensual,
+    pacientes: pacientesDetalle
+  };
+}
+
 function construirReporteD104(periodo: string, company: Company, facturasMes: any[], notasCreditoMes: any[], creditoFiscal: number, yaCerrado: boolean, fechaCierre: string | null): ReporteD104 {
   const tarifas = {
     t13: { base: 0, iva: 0 }, t4: { base: 0, iva: 0 }, t2: { base: 0, iva: 0 }, t1: { base: 0, iva: 0 }, exento: { base: 0, iva: 0 }
@@ -3760,6 +3843,35 @@ async function startServer() {
       return { company, facturasMes, notasCreditoMes, creditoFiscal, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
     }
   }
+
+  app.get("/api/reportes/clientes-sesiones", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      const desde = String(req.query.desde || "");
+      const hasta = String(req.query.hasta || "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta)) {
+        return res.status(400).json({ error: "Parámetros desde/hasta inválidos. Use el formato YYYY-MM-DD." });
+      }
+      let citas: Array<{ idPaciente: number; fechaHora: string; estadoCita: string }>;
+      let consultas: Array<{ idPaciente: number; fecha: string; estado?: string }>;
+      let pacientes: Array<{ id: number; nombreCompleto: string }>;
+      if (dbConnected && pool) {
+        const [citasRows] = await pool.query("SELECT idPaciente, fechaHora, estadoCita FROM citas WHERE idCompania = ?", [idCompania]);
+        citas = (citasRows as any[]).map(normalizeRow);
+        const [consultasRows] = await pool.query("SELECT idPaciente, id_paciente, fecha, estado FROM consultas WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
+        consultas = (consultasRows as any[]).map(normalizeRow).map(c => ({ idPaciente: c.idPaciente, fecha: c.fecha, estado: c.estado }));
+        const [pacientesRows] = await pool.query("SELECT id, id_paciente, nombreCompleto FROM pacientes WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
+        pacientes = (pacientesRows as any[]).map(normalizeRow).map(p => ({ id: p.id, nombreCompleto: p.nombreCompleto }));
+      } else {
+        citas = localCitas.filter(c => c.idCompania === idCompania).map(c => ({ idPaciente: c.idPaciente, fechaHora: c.fechaHora, estadoCita: c.estadoCita }));
+        consultas = localConsultations.filter(c => c.idCompania === idCompania).map(c => ({ idPaciente: c.idPaciente, fecha: c.fecha, estado: c.estado }));
+        pacientes = localPatients.filter(p => p.idCompania === idCompania).map(p => ({ id: p.id, nombreCompleto: p.nombreCompleto }));
+      }
+      res.json(construirReporteClientesSesiones(desde, hasta, citas, consultas, pacientes));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   app.get("/api/reportes/d104", requireAuth, async (req, res) => {
     try {
