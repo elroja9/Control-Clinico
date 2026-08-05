@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION, Servicio, PorcentajeDieta } from '../data/mockData';
+import PlantillaDietaManager from './PlantillaDietaManager';
+import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION, Servicio, PorcentajeDieta, PlantillaDieta } from '../data/mockData';
 import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X } from 'lucide-react';
 
@@ -21,6 +22,9 @@ interface CompanySettingsProps {
   porcentajesDieta: PorcentajeDieta[];
   onSavePorcentajeDieta: (porcentaje: PorcentajeDieta) => void;
   onDeletePorcentajeDieta: (id: number) => void;
+  plantillasDieta: PlantillaDieta[];
+  onSavePlantillaDieta: (plantilla: PlantillaDieta) => void;
+  onDeletePlantillaDieta: (id: number) => void;
 }
 
 export default function CompanySettings({
@@ -40,7 +44,10 @@ export default function CompanySettings({
   onAjustarStock,
   porcentajesDieta,
   onSavePorcentajeDieta,
-  onDeletePorcentajeDieta
+  onDeletePorcentajeDieta,
+  plantillasDieta,
+  onSavePlantillaDieta,
+  onDeletePlantillaDieta
 }: CompanySettingsProps) {
   const currentCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
@@ -1633,6 +1640,16 @@ export default function CompanySettings({
             </button>
           </div>
         </div>
+      )}
+
+      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
+        <PlantillaDietaManager
+          idCompania={currentCompany.id}
+          plantillasDieta={plantillasDieta}
+          onSavePlantillaDieta={onSavePlantillaDieta}
+          onDeletePlantillaDieta={onDeletePlantillaDieta}
+          themeColor={currentCompany.colorPrimario}
+        />
       )}
 
       {/* Editing / Creating Form */}
