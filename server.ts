@@ -468,15 +468,20 @@ function construirReporteClientesSesiones(
     return dia >= desde && dia <= hasta;
   };
 
-  // Primera cita histórica por paciente (de cualquier estado, sin importar el rango) —
-  // define cuándo "nació" el paciente para efectos de reportería.
-  const primeraCitaPorPaciente = new Map<number, string>();
-  for (const c of citas) {
-    const actual = primeraCitaPorPaciente.get(c.idPaciente);
-    if (!actual || c.fechaHora < actual) primeraCitaPorPaciente.set(c.idPaciente, c.fechaHora);
-  }
+  // "Primer contacto" de cada paciente = la fecha más temprana entre su primera cita (de
+  // cualquier estado, sin importar el rango) y su primera consulta registrada — cubre tanto
+  // al paciente que se agenda normalmente como al que se le crea la consulta directo, sin
+  // pasar por la agenda (que antes nunca contaba como "nuevo").
+  const primerContactoPorPaciente = new Map<number, string>();
+  const registrarPrimerContacto = (idPaciente: number, fecha: string) => {
+    const actual = primerContactoPorPaciente.get(idPaciente);
+    if (!actual || fecha < actual) primerContactoPorPaciente.set(idPaciente, fecha);
+  };
+  for (const c of citas) registrarPrimerContacto(c.idPaciente, c.fechaHora);
+  for (const c of consultas) registrarPrimerContacto(c.idPaciente, c.fecha);
+
   const esNuevoEnRango = (idPaciente: number) => {
-    const primera = primeraCitaPorPaciente.get(idPaciente);
+    const primera = primerContactoPorPaciente.get(idPaciente);
     return primera != null && enRango(primera);
   };
 
@@ -502,7 +507,7 @@ function construirReporteClientesSesiones(
 
   const tendenciaMensual = meses.map(mes => ({
     mes,
-    pacientesNuevos: Array.from(primeraCitaPorPaciente.values()).filter(f => f.slice(0, 7) === mes && enRango(f)).length,
+    pacientesNuevos: Array.from(primerContactoPorPaciente.values()).filter(f => f.slice(0, 7) === mes && enRango(f)).length,
     sesionesCompletadas: consultasCerradasEnRango.filter(c => c.fecha.slice(0, 7) === mes).length
   }));
 
