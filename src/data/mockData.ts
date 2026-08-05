@@ -192,6 +192,11 @@ export interface Consultation {
       direccion: DireccionPrescripcion;
       porcentaje: number;
     };
+    macros?: {
+      carbohidratosG: number;
+      proteinasG: number;
+      grasasG: number;
+    };
   };
   evaluacionAntropometrica?: {
     peso: number;
@@ -656,6 +661,26 @@ export interface PorcentajeDieta {
 }
 
 export const defaultPorcentajesDieta: PorcentajeDieta[] = [];
+
+export interface PlantillaDieta {
+  id: number;
+  idCompania: number;
+  nombre: string;
+  direccion: DireccionPrescripcion;
+  caloriaMin: number;
+  caloriaMax: number;
+  carbohidratosG: number;
+  proteinasG: number;
+  grasasG: number;
+  desayuno: string;
+  meriendaManana: string;
+  almuerzo: string;
+  meriendaTarde: string;
+  cena: string;
+  indicaciones: string;
+}
+
+export const defaultPlantillasDieta: PlantillaDieta[] = [];
 
 export interface HaciendaConfig {
   idCompania: number;
