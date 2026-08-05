@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { Factura, Patient } from '../data/mockData';
-import { Receipt, XCircle, FileMinus, AlertCircle } from 'lucide-react';
+import { Receipt, XCircle, FileMinus, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface FacturacionManagerProps {
   facturas: Factura[];
   patients: Patient[];
   onAnularFactura: (idFactura: number, motivo: string) => Promise<Factura>;
+  onVerificarEstadoFactura: (idFactura: number) => Promise<Factura>;
 }
 
 const ESTADO_ESTILO: Record<string, string> = {
@@ -14,14 +15,33 @@ const ESTADO_ESTILO: Record<string, string> = {
   ACEPTADA: 'bg-emerald-100 text-emerald-800',
   RECHAZADA: 'bg-rose-100 text-rose-800',
   ERROR: 'bg-rose-100 text-rose-800',
-  ANULADA: 'bg-slate-200 text-slate-600'
+  ANULADA: 'bg-slate-200 text-slate-600',
+  SIMULADA: 'bg-sky-100 text-sky-700'
 };
 
-export default function FacturacionManager({ facturas, patients, onAnularFactura }: FacturacionManagerProps) {
+const MEDIO_PAGO_LABEL: Record<string, string> = {
+  '01': 'Efectivo',
+  '02': 'Tarjeta',
+  '06': 'SINPE Móvil'
+};
+
+export default function FacturacionManager({ facturas, patients, onAnularFactura, onVerificarEstadoFactura }: FacturacionManagerProps) {
   const [anulandoId, setAnulandoId] = useState<number | null>(null);
   const [motivoAnulacion, setMotivoAnulacion] = useState('');
   const [anulando, setAnulando] = useState(false);
   const [error, setError] = useState('');
+  const [verificandoId, setVerificandoId] = useState<number | null>(null);
+
+  const handleVerificarEstado = async (id: number) => {
+    setVerificandoId(id);
+    try {
+      await onVerificarEstadoFactura(id);
+    } catch (err: any) {
+      setError(err.message || 'No se pudo verificar el estado con Hacienda.');
+    } finally {
+      setVerificandoId(null);
+    }
+  };
 
   const ordenadas = [...facturas].sort((a, b) => b.creadaEn.localeCompare(a.creadaEn));
 
@@ -79,6 +99,8 @@ export default function FacturacionManager({ facturas, patients, onAnularFactura
                   <span className="text-[10px] text-slate-500 block truncate">
                     {nombrePaciente(f.idPaciente)} &middot; {new Date(f.fechaEmision).toLocaleString('es-CR')} &middot; ₡{f.total.toLocaleString('es-CR', { maximumFractionDigits: 2 })}
                     {f.condicionVenta === '02' && ' · Crédito'}
+                    {!esNotaCredito && ` · ${MEDIO_PAGO_LABEL[f.medioPago] || f.medioPago}`}
+                    {!esNotaCredito && f.montoRecibido != null && ` · Vuelto ₡${(f.montoRecibido - f.total).toLocaleString('es-CR', { maximumFractionDigits: 2 })}`}
                   </span>
                   {esNotaCredito && f.idFacturaReferencia != null && (
                     <span className="text-[10px] text-slate-400 block">Anula factura {referenciaFactura(f.idFacturaReferencia)}{f.motivoAnulacion ? ` — ${f.motivoAnulacion}` : ''}</span>
@@ -91,6 +113,16 @@ export default function FacturacionManager({ facturas, patients, onAnularFactura
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ESTADO_ESTILO[f.estado] || 'bg-slate-100 text-slate-600'}`}>
                     {f.estado}
                   </span>
+                  {f.estado === 'ENVIADA' && (
+                    <button
+                      onClick={() => handleVerificarEstado(f.id)}
+                      disabled={verificandoId === f.id}
+                      title="Verificar estado con Hacienda"
+                      className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${verificandoId === f.id ? 'animate-spin' : ''}`} />
+                    </button>
+                  )}
                   {puedeAnular(f) && (
                     <button
                       onClick={() => { setAnulandoId(f.id); setMotivoAnulacion(''); setError(''); }}
