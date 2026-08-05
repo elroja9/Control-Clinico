@@ -1259,8 +1259,11 @@ export default function App() {
           consultation={selectedReportConsultation}
           patient={patients.find(p => p.id === selectedReportConsultation.idPaciente) || patients[0]}
           company={activeCompany}
+          servicios={servicios}
           onClose={() => setSelectedReportConsultation(null)}
           onNotificationSent={handleAddNotificationLog}
+          onCrearFactura={handleCrearFactura}
+          onVerificarEstadoFactura={handleVerificarEstadoFactura}
         />
       ) : activeConsultationPatient ? (
         // Open Consultation creator form

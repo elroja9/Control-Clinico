@@ -1,13 +1,25 @@
-import { Patient, Consultation, Company, NotificationLog } from '../data/mockData';
-import { Printer, Download, Share2, Mail, CheckCircle2, Sliders, Calendar, User, Info, Heart, Dumbbell, RefreshCw } from 'lucide-react';
+import { Patient, Consultation, Company, NotificationLog, Servicio, Factura } from '../data/mockData';
+import { Printer, Download, Share2, Mail, CheckCircle2, Sliders, Calendar, User, Info, Heart, Dumbbell, RefreshCw, Receipt } from 'lucide-react';
 import { useState } from 'react';
+import FacturarModal from './FacturarModal';
 
 interface ReportViewProps {
   consultation: Consultation;
   patient: Patient;
   company: Company;
+  servicios: Servicio[];
   onClose: () => void;
   onNotificationSent: (log: NotificationLog) => void;
+  onCrearFactura: (payload: {
+    idCompania: number;
+    idCita: number | null;
+    idPaciente: number;
+    condicionVenta: string;
+    medioPago: string;
+    montoRecibido: number | null;
+    lineas: Array<{ idServicio: number; cantidad: number }>;
+  }) => Promise<Factura>;
+  onVerificarEstadoFactura: (idFactura: number) => Promise<Factura>;
 }
 
 const FORMULA_LABEL: Record<string, string> = {
@@ -22,9 +34,12 @@ const DIRECCION_LABEL: Record<string, string> = {
   SUPERAVIT: 'Superávit'
 };
 
-export default function ReportView({ consultation, patient, company, onClose, onNotificationSent }: ReportViewProps) {
+export default function ReportView({ consultation, patient, company, servicios, onClose, onNotificationSent, onCrearFactura, onVerificarEstadoFactura }: ReportViewProps) {
   const [emailSent, setEmailSent] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [facturando, setFacturando] = useState(false);
+
+  const companyServicios = servicios.filter(s => s.idCompania === company.id && s.activo);
 
   const triggerPrint = () => {
     window.print();
@@ -78,6 +93,13 @@ export default function ReportView({ consultation, patient, company, onClose, on
           >
             {isSending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
             {isSending ? 'Enviando...' : emailSent ? '¡Correo Enviado!' : 'Enviar a Correo'}
+          </button>
+          <button
+            onClick={() => setFacturando(true)}
+            className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 px-3 rounded-xl border border-slate-200 transition-all flex items-center gap-1.5"
+          >
+            <Receipt className="w-4 h-4" />
+            Facturar
           </button>
           <button
             onClick={triggerPrint}
@@ -266,13 +288,13 @@ export default function ReportView({ consultation, patient, company, onClose, on
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {consultation.dieta.meriendaManana && (
                           <div className="bg-slate-50 rounded-xl p-3 border-l-4 border-l-teal-500 flex items-start gap-3 text-xs">
-                            <div className="font-bold text-slate-700 w-16 shrink-0">Colación AM:</div>
+                            <div className="font-bold text-slate-700 w-16 shrink-0">Merienda AM:</div>
                             <div className="text-slate-800">{consultation.dieta.meriendaManana}</div>
                           </div>
                         )}
                         {consultation.dieta.meriendaTarde && (
                           <div className="bg-slate-50 rounded-xl p-3 border-l-4 border-l-teal-500 flex items-start gap-3 text-xs">
-                            <div className="font-bold text-slate-700 w-16 shrink-0">Colación PM:</div>
+                            <div className="font-bold text-slate-700 w-16 shrink-0">Merienda PM:</div>
                             <div className="text-slate-800">{consultation.dieta.meriendaTarde}</div>
                           </div>
                         )}
@@ -435,6 +457,21 @@ export default function ReportView({ consultation, patient, company, onClose, on
           </div>
         </div>
       </div>
+
+      {facturando && (
+        <FacturarModal
+          idCompania={company.id}
+          idPaciente={patient.id}
+          idCita={null}
+          nombrePaciente={patient.nombreCompleto}
+          servicios={companyServicios}
+          ivaPorDefecto={company.ivaPorDefecto}
+          onCrearFactura={onCrearFactura}
+          onVerificarEstadoFactura={onVerificarEstadoFactura}
+          onClose={() => setFacturando(false)}
+          themeColor={company.colorPrimario}
+        />
+      )}
     </div>
   );
 }
