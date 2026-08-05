@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Factura, Patient, Company, NotificationLog } from '../data/mockData';
 import { Printer, Mail, RefreshCw, X, FileMinus, Receipt } from 'lucide-react';
 
@@ -57,8 +58,15 @@ export default function FacturaDetailView({ factura, patient, company, onClose, 
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-50 p-4 sm:p-6 print:bg-white print:p-0 print:static print:overflow-visible">
+  // Portal a document.body: FacturaDetailView se monta anidado dentro de FacturacionManager
+  // (a diferencia de ReportView, que reemplaza toda la pantalla desde App.tsx), así que sin el
+  // portal quedaría atrapado dentro del padding/bordes de esa tarjeta. Usa `absolute` con alto
+  // automático (no `fixed`, y sin fijar `bottom`) para superponerse en pantalla — la mayoría de
+  // navegadores paginan mal o directamente no imprimen contenido `position: fixed` (queda
+  // recortado al alto de un solo viewport, o la página sale en blanco); un alto fijo/forzado
+  // tiene el mismo problema. Con alto automático, la página crece y pagina con normalidad.
+  return createPortal(
+    <div className="absolute top-0 left-0 right-0 z-50 bg-slate-50 p-4 sm:p-6 print:bg-white print:p-0">
       {/* Top action toolbar - hidden in Print */}
       <div className="max-w-3xl mx-auto mb-6 bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
         <div>
@@ -208,6 +216,7 @@ export default function FacturaDetailView({ factura, patient, company, onClose, 
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
