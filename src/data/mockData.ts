@@ -96,6 +96,7 @@ export interface Patient {
   esguinces: string;
   cirugiasOrtopedicas: string;
   actividadFisica: string;
+  activo?: boolean; // false = eliminado (soft-delete); ausente/true = activo
 }
 
 export interface Cita {
@@ -161,6 +162,7 @@ export interface Consultation {
   horasSueno: number;
   compromiso: number; // 1-10
   estado?: 'ABIERTA' | 'CERRADA'; // Nace ABIERTA; CERRADA cuando el nutricionista finaliza la sesión. Sigue siendo editable en ambos estados.
+  activo?: boolean; // false = eliminada (soft-delete); ausente/true = activa
 
   // Nutrición específica
   antropometria?: {

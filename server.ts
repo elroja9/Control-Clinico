@@ -654,6 +654,7 @@ async function createTables() {
     await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS cirugiasOrtopedicas TEXT NULL`);
     await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS actividadFisica TEXT NULL`);
     await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS sexo VARCHAR(1) NULL`);
+    await pool.query(`ALTER TABLE pacientes ADD COLUMN IF NOT EXISTS activo TINYINT(1) NOT NULL DEFAULT 1`);
 
     // consultas
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS id INT NULL`);
@@ -674,6 +675,7 @@ async function createTables() {
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS composicionSegmentada JSON NULL`);
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS estiloVida JSON NULL`);
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS estado VARCHAR(20) NOT NULL DEFAULT 'ABIERTA'`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS activo TINYINT(1) NOT NULL DEFAULT 1`);
 
     // Catálogo global (sin idCompania) de división territorial de Costa Rica (INEC) — mismo
     // diseño que en POS-RESTAURANTE (id compuesto: cantón = provincia+código, distrito =
@@ -1777,7 +1779,7 @@ async function startServer() {
     try {
       const session = sessionOf(req);
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM pacientes WHERE idCompania = ? OR id_compania = ?", [session.idCompania, session.idCompania]);
+        const [rows] = await pool.query("SELECT * FROM pacientes WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [session.idCompania, session.idCompania]);
         const formatted = (rows as any[]).map(row => {
           const norm = normalizeRow(row);
           return {
@@ -1790,7 +1792,7 @@ async function startServer() {
         });
         res.json(formatted);
       } else {
-        res.json(localPatients.filter(p => p.idCompania === session.idCompania));
+        res.json(localPatients.filter(p => p.idCompania === session.idCompania && p.activo !== false));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1838,12 +1840,38 @@ async function startServer() {
     }
   });
 
+  // Soft-delete: nunca se borra la fila (conserva el historial de consultas/facturas
+  // enlazadas al paciente) — solo se marca activo = 0 y GET /api/patients deja de listarlo.
+  app.delete("/api/patients/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const idCompania = sessionOf(req).idCompania;
+      if (dbConnected && pool) {
+        const [result] = await pool.query(
+          "UPDATE pacientes SET activo = 0 WHERE (id = ? OR id_paciente = ?) AND (idCompania = ? OR id_compania = ?)",
+          [id, id, idCompania, idCompania]
+        );
+        if ((result as any).affectedRows === 0) {
+          return res.status(404).json({ error: "Paciente no encontrado." });
+        }
+        res.json({ success: true });
+      } else {
+        const idx = localPatients.findIndex(p => p.id === id && p.idCompania === idCompania);
+        if (idx === -1) return res.status(404).json({ error: "Paciente no encontrado." });
+        localPatients[idx] = { ...localPatients[idx], activo: false };
+        res.json({ success: true });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // 4. Consultations
   app.get("/api/consultations", requireAuth, async (req, res) => {
     try {
       const session = sessionOf(req);
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM consultas WHERE idCompania = ? OR id_compania = ?", [session.idCompania, session.idCompania]);
+        const [rows] = await pool.query("SELECT * FROM consultas WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [session.idCompania, session.idCompania]);
         const formatted = (rows as any[]).map(row => {
           const norm = normalizeRow(row);
           return {
@@ -1860,7 +1888,7 @@ async function startServer() {
         });
         res.json(formatted);
       } else {
-        res.json(localConsultations.filter(c => c.idCompania === session.idCompania));
+        res.json(localConsultations.filter(c => c.idCompania === session.idCompania && c.activo !== false));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1946,6 +1974,32 @@ async function startServer() {
         if (idx === -1) return res.status(404).json({ error: "Consulta no encontrada." });
         localConsultations[idx] = { ...localConsultations[idx], estado };
         res.json(localConsultations[idx]);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Soft-delete: nunca se borra la fila (conserva el historial clínico) — solo se marca
+  // activo = 0 y GET /api/consultations deja de listarla.
+  app.delete("/api/consultations/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const idCompania = sessionOf(req).idCompania;
+      if (dbConnected && pool) {
+        const [result] = await pool.query(
+          "UPDATE consultas SET activo = 0 WHERE (id = ? OR id_consulta = ?) AND (idCompania = ? OR id_compania = ?)",
+          [id, id, idCompania, idCompania]
+        );
+        if ((result as any).affectedRows === 0) {
+          return res.status(404).json({ error: "Consulta no encontrada." });
+        }
+        res.json({ success: true });
+      } else {
+        const idx = localConsultations.findIndex(c => c.id === id && c.idCompania === idCompania);
+        if (idx === -1) return res.status(404).json({ error: "Consulta no encontrada." });
+        localConsultations[idx] = { ...localConsultations[idx], activo: false };
+        res.json({ success: true });
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });

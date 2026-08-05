@@ -509,9 +509,14 @@ export default function App() {
   };
 
   const handleDeletePatient = (id: number) => {
-    if (confirm("¿Está seguro de eliminar el expediente de este paciente? Esto no borrará sus consultas históricas.")) {
-      setPatients(prev => prev.filter(p => p.id !== id));
-    }
+    if (!confirm("¿Está seguro de eliminar el expediente de este paciente? Esto no borrará sus consultas históricas.")) return;
+    fetch(`/api/patients/${id}`, { method: 'DELETE' })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.error || 'No se pudo eliminar el paciente.');
+        setPatients(prev => prev.filter(p => p.id !== id));
+      })
+      .catch(err => alert(err.message || 'No se pudo eliminar el paciente.'));
   };
 
   const handleSaveConsultation = (newConsultation: Consultation) => {
@@ -543,9 +548,14 @@ export default function App() {
   };
 
   const handleDeleteConsultation = (id: number) => {
-    if (confirm("¿Eliminar este registro de consulta?")) {
-      setConsultations(prev => prev.filter(c => c.id !== id));
-    }
+    if (!confirm("¿Eliminar este registro de consulta?")) return;
+    fetch(`/api/consultations/${id}`, { method: 'DELETE' })
+      .then(res => res.json().then(data => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.error || 'No se pudo eliminar la consulta.');
+        setConsultations(prev => prev.filter(c => c.id !== id));
+      })
+      .catch(err => alert(err.message || 'No se pudo eliminar la consulta.'));
   };
 
   // --- Agenda / Citas / SMTP / SOAP Integration Handlers ---
