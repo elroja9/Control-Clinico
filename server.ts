@@ -106,11 +106,11 @@ interface LocalHaciendaConfig {
 let localHaciendaConfigs: LocalHaciendaConfig[] = [];
 
 async function setupDatabase() {
-  const host = process.env.DB_HOST || "172.28.185.50";
-  const port = parseInt(process.env.DB_PORT || "7878");
-  const user = process.env.DB_USER || "root";
+  const host = process.env.DB_HOST;
+  const port = parseInt(process.env.DB_PORT || "");
+  const user = process.env.DB_USER;
   const password = process.env.DB_PASSWORD || "";
-  const database = process.env.DB_NAME || "ConsultorioDB";
+  const database = process.env.DB_NAME;
 
   try {
     console.log(`[MySQL] Conectando al servidor en ${host}:${port} como usuario ${user}...`);
@@ -656,7 +656,7 @@ async function startServer() {
   // archivo y viaja como data URL base64 dentro del JSON de POST /api/companies (hasta 2MB
   // crudos ~= 2.7MB en base64, ver CompanySettings.tsx).
   app.use(express.json({ limit: '10mb' }));
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT);
 
   // --- Authentication ---
   // Every route below is protected by requireAuth unless explicitly marked "no auth" (the
@@ -667,7 +667,7 @@ async function startServer() {
 
   async function fetchUserById(id: number): Promise<any | undefined> {
     if (dbConnected && pool) {
-      const [rows] = await pool.query("SELECT * FROM usuarios WHERE id = ? OR id_usuario = ?", [id, id]);
+      const [rows] = await pool.query("SELECT * FROM usuarios WHERE id_usuario = ?", [id]);
       return (rows as any[]).map(normalizeRow)[0];
     }
     return localUsers.find(u => u.id === id);
@@ -675,7 +675,7 @@ async function startServer() {
 
   async function fetchCompanyById(id: number): Promise<Company | undefined> {
     if (dbConnected && pool) {
-      const [rows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [id, id]);
+      const [rows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [id]);
       return (rows as any[]).map(normalizeRow)[0];
     }
     return localCompanies.find(c => c.id === id);
@@ -759,7 +759,7 @@ async function startServer() {
       if (!isBcryptHash(user.contrasena)) {
         const upgraded = hashPassword(password);
         if (dbConnected && pool) {
-          await pool.query("UPDATE usuarios SET contrasena = ?, password_hash = ? WHERE id = ? OR id_usuario = ?", [upgraded, upgraded, user.id, user.id]);
+          await pool.query("UPDATE usuarios SET contrasena = ?, password_hash = ? WHERE id_usuario = ?", [upgraded, upgraded, user.id]);
         } else {
           localUsers = localUsers.map(u => u.id === user.id ? { ...u, contrasena: upgraded } : u);
         }
@@ -835,7 +835,7 @@ async function startServer() {
       const hash = hashPassword(nuevaContrasena);
 
       if (dbConnected && pool) {
-        await pool.query("UPDATE usuarios SET contrasena = ?, password_hash = ? WHERE id = ? OR id_usuario = ?", [hash, hash, user.id, user.id]);
+        await pool.query("UPDATE usuarios SET contrasena = ?, password_hash = ? WHERE id_usuario = ?", [hash, hash, user.id]);
       } else {
         localUsers = localUsers.map(u => u.id === user.id ? { ...u, contrasena: hash } : u);
       }
@@ -867,9 +867,9 @@ async function startServer() {
     res.json({
       connected: dbConnected,
       error: dbError,
-      server: process.env.DB_HOST || "172.28.185.50",
-      port: process.env.DB_PORT || "7878",
-      database: "ConsultorioDB"
+      server: process.env.DB_HOST,
+      port: process.env.DB_PORT,
+      database: process.env.DB_NAME
     });
   });
 
@@ -882,7 +882,7 @@ async function startServer() {
       if (dbConnected && pool) {
         const [rows] = isSaasAdmin(session)
           ? await pool.query("SELECT * FROM companias")
-          : await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [session.idCompania, session.idCompania]);
+          : await pool.query("SELECT * FROM companias WHERE id_compania = ?", [session.idCompania]);
         res.json((rows as any[]).map(normalizeRow));
       } else {
         res.json(isSaasAdmin(session) ? localCompanies : localCompanies.filter(c => c.id === session.idCompania));
@@ -908,16 +908,16 @@ async function startServer() {
 
       if (dbConnected && pool) {
         if (c.id) {
-          const [exists] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [c.id, c.id]);
+          const [exists] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [c.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, horarioAtencion = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, regimenSimplificado = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id = ? OR id_compania = ?",
+              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, horarioAtencion = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, regimenSimplificado = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id_compania = ?",
               [
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
                 c.estadoSaas, c.maxUsuarios, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, JSON.stringify(c.horarioAtencion || null), c.requiereConfirmacionCitas ? 1 : 0,
                 c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0,
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl,
-                c.id, c.id
+                c.id
               ]
             );
             return res.json(c);
@@ -948,7 +948,7 @@ async function startServer() {
         // un fallo de correo no debe impedir que la empresa quede creada.
         if (c.id !== 7) {
           try {
-            const [platRows] = await pool.query("SELECT * FROM companias WHERE id = 7 OR id_compania = 7");
+            const [platRows] = await pool.query("SELECT * FROM companias WHERE id_compania = 7");
             const platformCompany: Company | undefined = (platRows as any[]).map(normalizeRow)[0];
             const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = 7");
             const smtpRow = (smtpRows as any[])[0];
@@ -1001,11 +1001,11 @@ async function startServer() {
       let estadoAnterior: Company["estadoSaas"] | undefined;
 
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [companyId, companyId]);
+        const [rows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [companyId]);
         company = (rows as any[]).map(normalizeRow)[0];
         if (!company) return res.status(404).json({ error: "Empresa no encontrada." });
         estadoAnterior = company.estadoSaas;
-        await pool.query("UPDATE companias SET estadoSaas = ? WHERE id = ? OR id_compania = ?", [nuevoEstado, companyId, companyId]);
+        await pool.query("UPDATE companias SET estadoSaas = ? WHERE id_compania = ?", [nuevoEstado, companyId]);
         company.estadoSaas = nuevoEstado;
       } else {
         company = localCompanies.find(c => c.id === companyId);
@@ -1022,7 +1022,7 @@ async function startServer() {
           let adminUser: any;
 
           if (dbConnected && pool) {
-            const [platRows] = await pool.query("SELECT * FROM companias WHERE id = 7 OR id_compania = 7");
+            const [platRows] = await pool.query("SELECT * FROM companias WHERE id_compania = 7");
             platformCompany = (platRows as any[]).map(normalizeRow)[0];
             const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = 7");
             const smtpRow = (smtpRows as any[])[0];
@@ -1086,8 +1086,8 @@ async function startServer() {
 
         if (p.montoMensual != null || p.proximoVencimiento != null) {
           await pool.query(
-            "UPDATE companias SET montoMensual = COALESCE(?, montoMensual), proximoVencimiento = COALESCE(?, proximoVencimiento) WHERE id = ? OR id_compania = ?",
-            [p.montoMensual != null ? parseFloat(p.montoMensual) : null, p.proximoVencimiento || null, companyId, companyId]
+            "UPDATE companias SET montoMensual = COALESCE(?, montoMensual), proximoVencimiento = COALESCE(?, proximoVencimiento) WHERE id_compania = ?",
+            [p.montoMensual != null ? parseFloat(p.montoMensual) : null, p.proximoVencimiento || null, companyId]
           );
         }
       } else {
@@ -1133,7 +1133,7 @@ async function startServer() {
       let totalUsuariosCompania = 0;
       let maxUsuarios = 5;
       if (dbConnected && pool) {
-        const [companyRows] = await pool.query("SELECT maxUsuarios FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        const [companyRows] = await pool.query("SELECT maxUsuarios FROM companias WHERE id_compania = ?", [idCompania]);
         const companyRow = (companyRows as any[])[0];
         if (companyRow) maxUsuarios = companyRow.maxUsuarios;
         const [countRows] = await pool.query("SELECT COUNT(*) as count FROM usuarios WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
@@ -1939,7 +1939,7 @@ async function startServer() {
       let company: Company | undefined;
       let existentes: Servicio[];
       if (dbConnected && pool) {
-        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(normalizeRow)[0];
         const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
         existentes = (servicioRows as any[]).map(normalizeRow);
@@ -2252,7 +2252,7 @@ async function startServer() {
       let paciente: Patient | undefined;
       let serviciosDisponibles: Servicio[];
       if (dbConnected && pool) {
-        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(normalizeRow)[0];
         const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [idPaciente, idPaciente]);
         paciente = (pacienteRows as any[]).map(normalizeRow)[0];
@@ -2539,7 +2539,7 @@ async function startServer() {
       let company: Company | undefined;
       let paciente: Patient | undefined;
       if (dbConnected && pool) {
-        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(normalizeRow)[0];
         const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [factura.idPaciente, factura.idPaciente]);
         paciente = (pacienteRows as any[]).map(normalizeRow)[0];
@@ -2777,7 +2777,7 @@ async function startServer() {
       let paciente: Patient | undefined;
       let smtpConfig: CompaniaSmtpConfig | undefined;
       if (dbConnected && pool) {
-        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(normalizeRow)[0];
         const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [factura.idPaciente, factura.idPaciente]);
         paciente = (pacienteRows as any[]).map(normalizeRow)[0];
@@ -3416,7 +3416,7 @@ async function startServer() {
 
   async function obtenerDatosD104(idCompania: number, periodo: string) {
     if (dbConnected && pool) {
-      const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+      const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
       const company: Company | undefined = (companyRows as any[]).map(normalizeRow)[0];
       if (!company) return null;
 
@@ -3533,7 +3533,7 @@ async function startServer() {
   async function obtenerDatosD101(idCompania: number, anio: number) {
     const anioStr = String(anio);
     if (dbConnected && pool) {
-      const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+      const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
       const company: Company | undefined = (companyRows as any[]).map(normalizeRow)[0];
       if (!company) return null;
 
@@ -3814,7 +3814,7 @@ async function startServer() {
       let smtpConfig: CompaniaSmtpConfig | undefined;
 
       if (dbConnected && pool) {
-        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(normalizeRow)[0];
         const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [idCompania]);
         const smtpRow = (smtpRows as any[])[0];
@@ -4055,7 +4055,7 @@ async function startServer() {
         user = (userRows as any[]).map(normalizeRow)[0];
         if (!user) return res.status(404).json({ error: "Profesional no encontrado." });
 
-        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [user.idCompania, user.idCompania]);
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [user.idCompania]);
         company = (companyRows as any[]).map(normalizeRow)[0];
 
         const [citaRows] = await pool.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ?", [idUsuario, `${fecha}%`]);
@@ -4121,7 +4121,7 @@ async function startServer() {
       if (dbConnected && pool) {
         const [userRows] = await pool.query("SELECT * FROM usuarios WHERE id = ? OR id_usuario = ?", [idUsuarioNutricionista, idUsuarioNutricionista]);
         user = (userRows as any[]).map(normalizeRow)[0];
-        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id = ? OR id_compania = ?", [idCompania, idCompania]);
+        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(normalizeRow)[0];
       } else {
         user = localUsers.find(u => u.id === idUsuarioNutricionista);
