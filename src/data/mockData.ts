@@ -1,4 +1,5 @@
 import { TableInfo } from './schema';
+import type { FormulaTMB, DireccionPrescripcion } from '../utils/calorieFormulas';
 
 export interface HorarioDia {
   abre: string | null;   // 'HH:MM', null = cerrado ese día
@@ -73,6 +74,7 @@ export interface Patient {
   nombreCompleto: string;
   fechaNacimiento: string;
   edad: number;
+  sexo?: 'M' | 'F'; // opcional en ficha; requerido para calcular TMB (Harris Benedict/Mifflin/Muller)
   ocupacion: string;
   correoElectronico: string;
   situacionVivienda: 'SOLO' | 'ACOMPAÑADO' | 'FAMILIAR';
@@ -179,6 +181,17 @@ export interface Consultation {
     meriendaTarde: string;
     cena: string;
     indicaciones: string;
+    prescripcionCalorica?: {
+      formula: FormulaTMB;
+      tmb: number;
+      diasDescanso: number;
+      diasEntrenamiento: number;
+      factorActividadDescanso: number;
+      factorActividadEntreno: number;
+      promedioMantenimiento: number;
+      direccion: DireccionPrescripcion;
+      porcentaje: number;
+    };
   };
   evaluacionAntropometrica?: {
     peso: number;
@@ -635,6 +648,14 @@ export interface CalendarBlock {
 }
 
 export const defaultCalendarBlocks: CalendarBlock[] = [];
+
+export interface PorcentajeDieta {
+  id: number;
+  idCompania: number;
+  porcentaje: number;
+}
+
+export const defaultPorcentajesDieta: PorcentajeDieta[] = [];
 
 export interface HaciendaConfig {
   idCompania: number;
