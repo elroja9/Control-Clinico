@@ -1187,7 +1187,7 @@ async function startServer() {
           // Scoped by idCompania too — an id that only collides by coincidence (never a real
           // edit of this tenant's own record) must fall through to INSERT below instead of
           // overwriting another company's user.
-          const [exists] = await pool.query("SELECT * FROM usuarios WHERE (id = ? OR id_usuario = ?) AND (idCompania = ? OR id_compania = ?)", [u.id, u.id, parseInt(u.idCompania), parseInt(u.idCompania)]);
+          const [exists] = await pool.query("SELECT * FROM usuarios WHERE id_usuario = ? AND (idCompania = ? OR id_compania = ?)", [u.id, parseInt(u.idCompania), parseInt(u.idCompania)]);
           const existingRow = (exists as any[])[0];
           if (existingRow) {
             // Un `contrasena` vacío significa "no está cambiando la contraseña" (el cliente ya
@@ -1198,8 +1198,8 @@ async function startServer() {
               ? hashPassword(String(u.contrasena).trim())
               : (existingRow.contrasena || existingRow.password_hash);
             await pool.query(
-              "UPDATE usuarios SET idCompania = ?, id_compania = ?, nombre = ?, usuario = ?, correo = ?, email = ?, contrasena = ?, password_hash = ?, rol = ?, activo = ?, ubicacionDireccion = ?, ubicacionLat = ?, ubicacionLng = ?, maxTiempoTrasladoMinutos = ? WHERE id = ? OR id_usuario = ?",
-              [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, contrasenaFinal, contrasenaFinal, u.rol, u.activo ? 1 : 0, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45, u.id, u.id]
+              "UPDATE usuarios SET idCompania = ?, id_compania = ?, nombre = ?, usuario = ?, correo = ?, email = ?, contrasena = ?, password_hash = ?, rol = ?, activo = ?, ubicacionDireccion = ?, ubicacionLat = ?, ubicacionLng = ?, maxTiempoTrasladoMinutos = ? WHERE id_usuario = ?",
+              [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, contrasenaFinal, contrasenaFinal, u.rol, u.activo ? 1 : 0, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45, u.id]
             );
             const { contrasena, password_hash, ...safeUser } = u;
             return res.json(safeUser);
@@ -1270,13 +1270,13 @@ async function startServer() {
       if (dbConnected && pool) {
         if (p.id) {
           // Scoped by idCompania too — see comment on the equivalent usuarios check above.
-          const [exists] = await pool.query("SELECT * FROM pacientes WHERE (id = ? OR id_paciente = ?) AND (idCompania = ? OR id_compania = ?)", [p.id, p.id, parseInt(p.idCompania), parseInt(p.idCompania)]);
+          const [exists] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ? AND (idCompania = ? OR id_compania = ?)", [p.id, parseInt(p.idCompania), parseInt(p.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE pacientes SET idCompania = ?, id_compania = ?, nombreCompleto = ?, nombre_completo = ?, fechaNacimiento = ?, fecha_nacimiento = ?, edad = ?, sexo = ?, ocupacion = ?, correoElectronico = ?, correo_electronico = ?, situacionVivienda = ?, situacion_vivienda = ?, tipoIdentificacion = ?, fact_tipo_identificacion = ?, identificacion = ?, fact_identificacion = ?, telefono = ?, provinciaId = ?, cantonId = ?, distritoId = ?, otrasSenas = ?, diabetes = ?, hipertension = ?, gastritis = ?, estrenimiento = ?, alergiasAlimentarias = ?, fracturas = ?, esguinces = ?, cirugiasOrtopedicas = ?, actividadFisica = ? WHERE id = ? OR id_paciente = ?",
+              "UPDATE pacientes SET idCompania = ?, id_compania = ?, nombreCompleto = ?, nombre_completo = ?, fechaNacimiento = ?, fecha_nacimiento = ?, edad = ?, sexo = ?, ocupacion = ?, correoElectronico = ?, correo_electronico = ?, situacionVivienda = ?, situacion_vivienda = ?, tipoIdentificacion = ?, fact_tipo_identificacion = ?, identificacion = ?, fact_identificacion = ?, telefono = ?, provinciaId = ?, cantonId = ?, distritoId = ?, otrasSenas = ?, diabetes = ?, hipertension = ?, gastritis = ?, estrenimiento = ?, alergiasAlimentarias = ?, fracturas = ?, esguinces = ?, cirugiasOrtopedicas = ?, actividadFisica = ? WHERE id_paciente = ?",
               [
                 parseInt(p.idCompania), parseInt(p.idCompania), p.nombreCompleto, p.nombreCompleto, p.fechaNacimiento, p.fechaNacimiento, parseInt(p.edad), p.sexo || null, p.ocupacion, p.correoElectronico, p.correoElectronico, p.situacionVivienda, p.situacionVivienda, p.tipoIdentificacion, p.tipoIdentificacion, p.identificacion, p.identificacion, p.telefono, parseInt(p.provinciaId), parseInt(p.cantonId), parseInt(p.distritoId), p.otrasSenas, p.diabetes ? 1 : 0, p.hipertension ? 1 : 0, p.gastritis ? 1 : 0, p.estrenimiento ? 1 : 0, p.alergiasAlimentarias, p.fracturas, p.esguinces, p.cirugiasOrtopedicas, p.actividadFisica,
-                p.id, p.id
+                p.id
               ]
             );
             return res.json(p);
@@ -1312,8 +1312,8 @@ async function startServer() {
       const idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         const [result] = await pool.query(
-          "UPDATE pacientes SET activo = 0 WHERE (id = ? OR id_paciente = ?) AND (idCompania = ? OR id_compania = ?)",
-          [id, id, idCompania, idCompania]
+          "UPDATE pacientes SET activo = 0 WHERE id_paciente = ? AND (idCompania = ? OR id_compania = ?)",
+          [id, idCompania, idCompania]
         );
         if ((result as any).affectedRows === 0) {
           return res.status(404).json({ error: "Paciente no encontrado." });
@@ -1369,14 +1369,14 @@ async function startServer() {
       if (dbConnected && pool) {
         if (con.id) {
           // Scoped by idCompania too — see comment on the equivalent usuarios check above.
-          const [exists] = await pool.query("SELECT * FROM consultas WHERE (id = ? OR id_consulta = ?) AND (idCompania = ? OR id_compania = ?)", [con.id, con.id, parseInt(con.idCompania), parseInt(con.idCompania)]);
+          const [exists] = await pool.query("SELECT * FROM consultas WHERE id_consulta = ? AND (idCompania = ? OR id_compania = ?)", [con.id, parseInt(con.idCompania), parseInt(con.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, dieta = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, evaluacionAntropometrica = ?, evaluacionBioquimica = ?, evaluacionDietetica = ?, composicionSegmentada = ?, estiloVida = ?, estadoConsulta = ? WHERE id = ? OR id_consulta = ?",
+              "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, dieta = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, evaluacionAntropometrica = ?, evaluacionBioquimica = ?, evaluacionDietetica = ?, composicionSegmentada = ?, estiloVida = ?, estadoConsulta = ? WHERE id_consulta = ?",
               [
                 parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
                 JSON.stringify(con.evaluacionAntropometrica || null), JSON.stringify(con.evaluacionBioquimica || null), JSON.stringify(con.evaluacionDietetica || null), JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null), con.estado || 'ABIERTA',
-                con.id, con.id
+                con.id
               ]
             );
             return res.json(con);
@@ -1415,13 +1415,13 @@ async function startServer() {
       }
       if (dbConnected && pool) {
         const [result] = await pool.query(
-          "UPDATE consultas SET estadoConsulta = ? WHERE (id = ? OR id_consulta = ?) AND (idCompania = ? OR id_compania = ?)",
-          [estado, id, id, session.idCompania, session.idCompania]
+          "UPDATE consultas SET estadoConsulta = ? WHERE id_consulta = ? AND (idCompania = ? OR id_compania = ?)",
+          [estado, id, session.idCompania, session.idCompania]
         );
         if ((result as any).affectedRows === 0) {
           return res.status(404).json({ error: "Consulta no encontrada." });
         }
-        const [rows] = await pool.query("SELECT * FROM consultas WHERE id = ? OR id_consulta = ?", [id, id]);
+        const [rows] = await pool.query("SELECT * FROM consultas WHERE id_consulta = ?", [id]);
         const row = (rows as any[])[0];
         if (!row) return res.status(404).json({ error: "Consulta no encontrada." });
         const norm = normalizeRow(row);
@@ -1458,8 +1458,8 @@ async function startServer() {
       const idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         const [result] = await pool.query(
-          "UPDATE consultas SET activo = 0 WHERE (id = ? OR id_consulta = ?) AND (idCompania = ? OR id_compania = ?)",
-          [id, id, idCompania, idCompania]
+          "UPDATE consultas SET activo = 0 WHERE id_consulta = ? AND (idCompania = ? OR id_compania = ?)",
+          [id, idCompania, idCompania]
         );
         if ((result as any).affectedRows === 0) {
           return res.status(404).json({ error: "Consulta no encontrada." });
@@ -1802,13 +1802,13 @@ async function startServer() {
           // `stock` NUNCA se toca aquí — solo POST /api/servicios/:id/ajustar-stock puede
           // cambiarlo, para que cada cambio de existencias quede en movimientos_inventario en
           // vez de poder sobreescribirse en silencio desde este formulario genérico.
-          const [exists] = await pool.query("SELECT id FROM servicios WHERE (id = ? OR id_servicio = ?) AND (idCompania = ? OR id_compania = ?)", [s.id, s.id, parseInt(s.idCompania), parseInt(s.idCompania)]);
+          const [exists] = await pool.query("SELECT id_servicio FROM servicios WHERE id_servicio = ? AND (idCompania = ? OR id_compania = ?)", [s.id, parseInt(s.idCompania), parseInt(s.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE servicios SET idCompania = ?, id_compania = ?, nombre = ?, precio = ?, porcentajeIva = ?, duracionMinutos = ?, codigoCabys = ?, unidadMedida = ?, activo = ?, tipo = ?, stockMinimo = ?, costoUnitario = ?, codigoBarras = ? WHERE id = ? OR id_servicio = ?",
-              [parseInt(s.idCompania), parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 0, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo ? 1 : 0, tipo, stockMinimo, costoUnitario, codigoBarras, s.id, s.id]
+              "UPDATE servicios SET idCompania = ?, id_compania = ?, nombre = ?, precio = ?, porcentajeIva = ?, duracionMinutos = ?, codigoCabys = ?, unidadMedida = ?, activo = ?, tipo = ?, stockMinimo = ?, costoUnitario = ?, codigoBarras = ? WHERE id_servicio = ?",
+              [parseInt(s.idCompania), parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 0, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo ? 1 : 0, tipo, stockMinimo, costoUnitario, codigoBarras, s.id]
             );
-            const [refreshed] = await pool.query("SELECT * FROM servicios WHERE id = ? OR id_servicio = ?", [s.id, s.id]);
+            const [refreshed] = await pool.query("SELECT * FROM servicios WHERE id_servicio = ?", [s.id]);
             return res.json(normalizeRow((refreshed as any[])[0]));
           }
         }
@@ -1827,7 +1827,7 @@ async function startServer() {
           );
         }
 
-        const [created] = await pool.query("SELECT * FROM servicios WHERE id = ? OR id_servicio = ?", [s.id, s.id]);
+        const [created] = await pool.query("SELECT * FROM servicios WHERE id_servicio = ?", [s.id]);
         res.json(normalizeRow((created as any[])[0]));
       } else {
         s.tipo = tipo;
@@ -1869,7 +1869,7 @@ async function startServer() {
         const connection = await pool.getConnection();
         try {
           await connection.beginTransaction();
-          const [rows] = await connection.query("SELECT * FROM servicios WHERE (id = ? OR id_servicio = ?) AND (idCompania = ? OR id_compania = ?) FOR UPDATE", [id, id, session.idCompania, session.idCompania]);
+          const [rows] = await connection.query("SELECT * FROM servicios WHERE id_servicio = ? AND (idCompania = ? OR id_compania = ?) FOR UPDATE", [id, session.idCompania, session.idCompania]);
           const servicio = (rows as any[]).map(normalizeRow)[0];
           if (!servicio) {
             await connection.rollback();
@@ -1882,7 +1882,7 @@ async function startServer() {
           const stockAnterior = servicio.stock || 0;
           const delta = nuevoStock - stockAnterior;
 
-          await connection.query("UPDATE servicios SET stock = ? WHERE id = ? OR id_servicio = ?", [nuevoStock, id, id]);
+          await connection.query("UPDATE servicios SET stock = ? WHERE id_servicio = ?", [nuevoStock, id]);
           if (delta !== 0) {
             await connection.query(
               "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'AJUSTE', ?, ?, ?, ?, ?, ?)",
@@ -2254,7 +2254,7 @@ async function startServer() {
       if (dbConnected && pool) {
         const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(normalizeRow)[0];
-        const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [idPaciente, idPaciente]);
+        const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ?", [idPaciente]);
         paciente = (pacienteRows as any[]).map(normalizeRow)[0];
         const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
         serviciosDisponibles = (servicioRows as any[]).map(normalizeRow);
@@ -2331,14 +2331,14 @@ async function startServer() {
 
           for (const l of lineasCalculadas) {
             if (l.tipo !== 'ARTICULO' || !l.idServicio) continue;
-            const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE (id = ? OR id_servicio = ?) FOR UPDATE", [l.idServicio, l.idServicio]);
+            const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE id_servicio = ? FOR UPDATE", [l.idServicio]);
             const stockActual = (servicioRows as any[])[0]?.stock || 0;
             if (stockActual < l.cantidad) {
               await connection.rollback();
               return res.status(409).json({ error: `Existencias insuficientes de "${l.detalle}" (disponible: ${stockActual}, solicitado: ${l.cantidad}).` });
             }
             const stockResultante = stockActual - l.cantidad;
-            await connection.query("UPDATE servicios SET stock = ? WHERE id = ? OR id_servicio = ?", [stockResultante, l.idServicio, l.idServicio]);
+            await connection.query("UPDATE servicios SET stock = ? WHERE id_servicio = ?", [stockResultante, l.idServicio]);
             await connection.query(
               "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'VENTA', ?, ?, ?, ?, ?, ?)",
               [idCompania, l.idServicio, -l.cantidad, stockResultante, `Factura ${consecutivoParaMovimiento}`, null, null, new Date().toISOString()]
@@ -2516,7 +2516,7 @@ async function startServer() {
 
       let factura: any;
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM facturas WHERE id = ? OR id_factura = ?", [id, id]);
+        const [rows] = await pool.query("SELECT * FROM facturas WHERE id_factura = ?", [id]);
         factura = (rows as any[]).map(normalizeRow)[0];
       } else {
         factura = localFacturas.find(f => f.id === id);
@@ -2541,7 +2541,7 @@ async function startServer() {
       if (dbConnected && pool) {
         const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(normalizeRow)[0];
-        const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [factura.idPaciente, factura.idPaciente]);
+        const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ?", [factura.idPaciente]);
         paciente = (pacienteRows as any[]).map(normalizeRow)[0];
       } else {
         company = localCompanies.find(c => c.id === idCompania);
@@ -2574,10 +2574,10 @@ async function startServer() {
 
           for (const l of lineasOriginales) {
             if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
-            const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE (id = ? OR id_servicio = ?) FOR UPDATE", [l.idServicio, l.idServicio]);
+            const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE id_servicio = ? FOR UPDATE", [l.idServicio]);
             const stockActual = (servicioRows as any[])[0]?.stock || 0;
             const stockResultante = stockActual + l.cantidad;
-            await connection.query("UPDATE servicios SET stock = ? WHERE id = ? OR id_servicio = ?", [stockResultante, l.idServicio, l.idServicio]);
+            await connection.query("UPDATE servicios SET stock = ? WHERE id_servicio = ?", [stockResultante, l.idServicio]);
             await connection.query(
               "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'DEVOLUCION_VENTA', ?, ?, ?, ?, ?, ?)",
               [idCompania, l.idServicio, l.cantidad, stockResultante, `Anulación factura ${factura.consecutivo}`, motivo, null, new Date().toISOString()]
@@ -2695,7 +2695,7 @@ async function startServer() {
           [notaCredito.idCompania, notaCredito.idCita, notaCredito.idPaciente, notaCredito.clave, notaCredito.consecutivo, notaCredito.fechaEmision, notaCredito.ambiente, JSON.stringify(notaCredito.lineas), notaCredito.subtotal, notaCredito.totalIva, notaCredito.total, notaCredito.estado, notaCredito.mensajeError, notaCredito.creadaEn, notaCredito.condicionVenta, notaCredito.tipoDocumento, notaCredito.idFacturaReferencia, notaCredito.motivoAnulacion]
         );
         notaCredito.id = (result as any).insertId;
-        await pool.query("UPDATE facturas SET estado = 'ANULADA' WHERE id = ? OR id_factura = ?", [factura.id, factura.id]);
+        await pool.query("UPDATE facturas SET estado = 'ANULADA' WHERE id_factura = ?", [factura.id]);
         // Si esta factura había generado una CXC que aún no está pagada, se anula también — ya
         // no hay una deuda real que cobrar sobre un comprobante que Hacienda considera anulado.
         // Si ya estaba PAGADA se deja intacta (el cobro ya ocurrió, es un hecho histórico).
@@ -2721,7 +2721,7 @@ async function startServer() {
       const id = parseInt(req.params.id);
       let factura: any;
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM facturas WHERE id = ? OR id_factura = ?", [id, id]);
+        const [rows] = await pool.query("SELECT * FROM facturas WHERE id_factura = ?", [id]);
         factura = (rows as any[]).map(normalizeRow)[0];
       } else {
         factura = localFacturas.find(f => f.id === id);
@@ -2741,7 +2741,7 @@ async function startServer() {
       const nuevoEstado = mapaEstado[estadoHacienda.estado] || factura.estado;
 
       if (dbConnected && pool) {
-        await pool.query("UPDATE facturas SET estado = ? WHERE id = ? OR id_factura = ?", [nuevoEstado, id, id]);
+        await pool.query("UPDATE facturas SET estado = ? WHERE id_factura = ?", [nuevoEstado, id]);
       } else {
         const idx = localFacturas.findIndex(f => f.id === id);
         if (idx !== -1) localFacturas[idx].estado = nuevoEstado as any;
@@ -2761,7 +2761,7 @@ async function startServer() {
       const id = parseInt(req.params.id);
       let factura: any;
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM facturas WHERE id = ? OR id_factura = ?", [id, id]);
+        const [rows] = await pool.query("SELECT * FROM facturas WHERE id_factura = ?", [id]);
         factura = (rows as any[]).map(normalizeRow)[0];
       } else {
         factura = localFacturas.find(f => f.id === id);
@@ -2779,7 +2779,7 @@ async function startServer() {
       if (dbConnected && pool) {
         const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(normalizeRow)[0];
-        const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [factura.idPaciente, factura.idPaciente]);
+        const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ?", [factura.idPaciente]);
         paciente = (pacienteRows as any[]).map(normalizeRow)[0];
         const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [idCompania]);
         const smtpRow = (smtpRows as any[])[0];
@@ -3083,7 +3083,7 @@ async function startServer() {
               const idServicio = parseInt(l.idServicio as any);
               const cantidad = parseFloat(l.cantidad as any);
               const costoUnitario = parseFloat(l.costoUnitario as any);
-              const [rows] = await connection.query("SELECT * FROM servicios WHERE (id = ? OR id_servicio = ?) AND (idCompania = ? OR id_compania = ?) FOR UPDATE", [idServicio, idServicio, idCompania, idCompania]);
+              const [rows] = await connection.query("SELECT * FROM servicios WHERE id_servicio = ? AND (idCompania = ? OR id_compania = ?) FOR UPDATE", [idServicio, idCompania, idCompania]);
               const servicio = (rows as any[]).map(normalizeRow)[0];
               if (!servicio) {
                 await connection.rollback();
@@ -3094,7 +3094,7 @@ async function startServer() {
                 return res.status(400).json({ error: `"${servicio.nombre}" es un servicio, no un artículo — no tiene existencias que alimentar.` });
               }
               const stockResultante = (servicio.stock || 0) + cantidad;
-              await connection.query("UPDATE servicios SET stock = ?, costoUnitario = ? WHERE id = ? OR id_servicio = ?", [stockResultante, costoUnitario, idServicio, idServicio]);
+              await connection.query("UPDATE servicios SET stock = ?, costoUnitario = ? WHERE id_servicio = ?", [stockResultante, costoUnitario, idServicio]);
               await connection.query(
                 "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'COMPRA', ?, ?, ?, ?, ?, ?)",
                 [idCompania, idServicio, cantidad, stockResultante, `Compra a ${proveedor.nombre}${numeroFacturaProveedor ? ` (${numeroFacturaProveedor})` : ""}`, notas, null, new Date().toISOString()]
@@ -3298,7 +3298,7 @@ async function startServer() {
               if (existente) {
                 idServicio = existente.id;
                 stockResultante = (existente.stock || 0) + linea.cantidad;
-                await connection.query("UPDATE servicios SET stock = ?, costoUnitario = ? WHERE id = ? OR id_servicio = ?", [stockResultante, linea.precioUnitario, idServicio, idServicio]);
+                await connection.query("UPDATE servicios SET stock = ?, costoUnitario = ? WHERE id_servicio = ?", [stockResultante, linea.precioUnitario, idServicio]);
               } else {
                 const unidadMedida = UNIDADES_VALIDAS.has(linea.unidadMedida) ? linea.unidadMedida : "Unid";
                 const [result] = await connection.query(
@@ -3833,7 +3833,7 @@ async function startServer() {
 
       async function fetchPatientById(id: number): Promise<Patient | undefined> {
         if (dbConnected && pool) {
-          const [rows] = await pool.query("SELECT * FROM pacientes WHERE id = ? OR id_paciente = ?", [id, id]);
+          const [rows] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ?", [id]);
           return (rows as any[]).map(normalizeRow)[0];
         }
         return localPatients.find(p => p.id === id);
@@ -3852,7 +3852,7 @@ async function startServer() {
 
       async function fetchConsultationById(id: number): Promise<Consultation | undefined> {
         if (dbConnected && pool) {
-          const [rows] = await pool.query("SELECT * FROM consultas WHERE id = ? OR id_consulta = ?", [id, id]);
+          const [rows] = await pool.query("SELECT * FROM consultas WHERE id_consulta = ?", [id]);
           const row = (rows as any[]).map(normalizeRow)[0];
           if (!row) return undefined;
           return {
@@ -4051,7 +4051,7 @@ async function startServer() {
       let bloqueosDelDia: CalendarBlock[];
 
       if (dbConnected && pool) {
-        const [userRows] = await pool.query("SELECT * FROM usuarios WHERE id = ? OR id_usuario = ?", [idUsuario, idUsuario]);
+        const [userRows] = await pool.query("SELECT * FROM usuarios WHERE id_usuario = ?", [idUsuario]);
         user = (userRows as any[]).map(normalizeRow)[0];
         if (!user) return res.status(404).json({ error: "Profesional no encontrado." });
 
@@ -4079,7 +4079,7 @@ async function startServer() {
         const idServicio = parseInt(req.query.idServicio as string);
         let servicio: Servicio | undefined;
         if (dbConnected && pool) {
-          const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE (id = ? OR id_servicio = ?) AND (idCompania = ? OR id_compania = ?) AND activo = 1", [idServicio, idServicio, user.idCompania, user.idCompania]);
+          const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE id_servicio = ? AND (idCompania = ? OR id_compania = ?) AND activo = 1", [idServicio, user.idCompania, user.idCompania]);
           servicio = (servicioRows as any[]).map(normalizeRow)[0];
         } else {
           servicio = localServicios.find(s => s.id === idServicio && s.idCompania === user.idCompania && s.activo);
@@ -4119,7 +4119,7 @@ async function startServer() {
       let user: any;
       let company: Company | undefined;
       if (dbConnected && pool) {
-        const [userRows] = await pool.query("SELECT * FROM usuarios WHERE id = ? OR id_usuario = ?", [idUsuarioNutricionista, idUsuarioNutricionista]);
+        const [userRows] = await pool.query("SELECT * FROM usuarios WHERE id_usuario = ?", [idUsuarioNutricionista]);
         user = (userRows as any[]).map(normalizeRow)[0];
         const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(normalizeRow)[0];
@@ -4138,7 +4138,7 @@ async function startServer() {
         idServicio = parseInt(body.idServicio);
         let servicio: Servicio | undefined;
         if (dbConnected && pool) {
-          const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE (id = ? OR id_servicio = ?) AND (idCompania = ? OR id_compania = ?) AND activo = 1", [idServicio, idServicio, idCompania, idCompania]);
+          const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE id_servicio = ? AND (idCompania = ? OR id_compania = ?) AND activo = 1", [idServicio, idCompania, idCompania]);
           servicio = (servicioRows as any[]).map(normalizeRow)[0];
         } else {
           servicio = localServicios.find(s => s.id === idServicio && s.idCompania === idCompania && s.activo);
@@ -4221,7 +4221,7 @@ async function startServer() {
         try {
           await connection.beginTransaction();
 
-          await connection.query("SELECT id FROM usuarios WHERE id = ? OR id_usuario = ? FOR UPDATE", [idUsuarioNutricionista, idUsuarioNutricionista]);
+          await connection.query("SELECT id_usuario FROM usuarios WHERE id_usuario = ? FOR UPDATE", [idUsuarioNutricionista]);
 
           const [citaRows] = await connection.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ?", [idUsuarioNutricionista, `${fecha}%`]);
           const citasDelDia = citaRows as any[];
@@ -4306,14 +4306,14 @@ async function startServer() {
               fechaNacimiento: pac.fechaNacimiento
             };
             await connection.query(
-              "UPDATE pacientes SET nombreCompleto = ?, nombre_completo = ?, correoElectronico = ?, correo_electronico = ?, telefono = ?, tipoIdentificacion = ?, fact_tipo_identificacion = ?, fechaNacimiento = ?, fecha_nacimiento = ? WHERE id = ? OR id_paciente = ?",
+              "UPDATE pacientes SET nombreCompleto = ?, nombre_completo = ?, correoElectronico = ?, correo_electronico = ?, telefono = ?, tipoIdentificacion = ?, fact_tipo_identificacion = ?, fechaNacimiento = ?, fecha_nacimiento = ? WHERE id_paciente = ?",
               [
                 contactoActualizado.nombreCompleto, contactoActualizado.nombreCompleto,
                 contactoActualizado.correoElectronico, contactoActualizado.correoElectronico,
                 contactoActualizado.telefono,
                 contactoActualizado.tipoIdentificacion, contactoActualizado.tipoIdentificacion,
                 contactoActualizado.fechaNacimiento, contactoActualizado.fechaNacimiento,
-                paciente.id, paciente.id
+                paciente.id
               ]
             );
             paciente = { ...paciente, ...contactoActualizado };
