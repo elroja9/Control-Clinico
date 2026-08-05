@@ -650,6 +650,7 @@ export default function App() {
     condicionVenta: string;
     medioPago: string;
     montoRecibido: number | null;
+    modoPrueba: boolean;
     lineas: Array<{ idServicio: number; cantidad: number }>;
   }): Promise<Factura> => {
     const res = await fetch('/api/facturas', {

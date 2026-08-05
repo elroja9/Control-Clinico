@@ -2591,6 +2591,7 @@ async function startServer() {
       const condicionVenta = body.condicionVenta || "01";
       const medioPago = body.medioPago || "01";
       const montoRecibido = body.montoRecibido != null && String(body.montoRecibido).trim() !== '' ? parseFloat(body.montoRecibido) : null;
+      const modoPrueba = body.modoPrueba === true;
       const lineasBody: Array<{ idServicio: number; cantidad: number }> = body.lineas || [];
 
       if (lineasBody.length === 0) {
@@ -2756,11 +2757,16 @@ async function startServer() {
         montoRecibido
       };
 
-      if (credenciales.ambiente === "PRUEBAS_LOCAL") {
+      if (credenciales.ambiente === "PRUEBAS_LOCAL" || modoPrueba) {
         // Modo sin envío: la factura se numera y guarda igual que siempre, pero nunca se
-        // llama a la API de Hacienda — ni para pedir token ni para enviar el XML.
+        // llama a la API de Hacienda — ni para pedir token ni para enviar el XML. Puede venir
+        // del ambiente de la empresa (PRUEBAS_LOCAL) o de marcar "Modo prueba" en esta factura
+        // puntual — en ambos casos la decisión la toma el servidor, nunca el cliente por sí
+        // solo, y jamás se simula un estado "ACEPTADA" falso.
         nuevaFactura.estado = "SIMULADA";
-        nuevaFactura.mensajeError = "Ambiente de pruebas locales — no se envió a Hacienda.";
+        nuevaFactura.mensajeError = modoPrueba && credenciales.ambiente !== "PRUEBAS_LOCAL"
+          ? "Modo prueba activado para esta factura — no se envió a Hacienda."
+          : "Ambiente de pruebas locales — no se envió a Hacienda.";
       } else {
         // Envío a Hacienda — best-effort: si Hacienda no responde o rechaza, la factura queda
         // guardada como FIRMADA/ERROR y se puede reintentar el envío después.

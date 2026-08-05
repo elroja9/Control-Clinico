@@ -17,6 +17,7 @@ interface FacturarModalProps {
     condicionVenta: string;
     medioPago: string;
     montoRecibido: number | null;
+    modoPrueba: boolean;
     lineas: Array<{ idServicio: number; cantidad: number }>;
   }) => Promise<Factura>;
   onVerificarEstadoFactura: (idFactura: number) => Promise<Factura>;
@@ -40,6 +41,7 @@ export default function FacturarModal({
   const [facturaCantidades, setFacturaCantidades] = useState<Record<number, number>>(cantidadesIniciales || {});
   const [facturaMedioPago, setFacturaMedioPago] = useState('01');
   const [facturaMontoRecibido, setFacturaMontoRecibido] = useState('');
+  const [facturaModoPrueba, setFacturaModoPrueba] = useState(false);
   const [facturaEnviando, setFacturaEnviando] = useState(false);
   const [facturaError, setFacturaError] = useState('');
   const [facturaResultado, setFacturaResultado] = useState<Factura | null>(null);
@@ -83,6 +85,7 @@ export default function FacturarModal({
         condicionVenta: '01',
         medioPago: facturaMedioPago,
         montoRecibido: facturaMontoRecibidoNum,
+        modoPrueba: facturaModoPrueba,
         lineas
       });
       setFacturaResultado(factura);
@@ -225,6 +228,19 @@ export default function FacturarModal({
                   </p>
                 )}
               </div>
+
+              <label className="flex items-start gap-2 p-2.5 bg-sky-50 border border-sky-200 rounded-xl cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={facturaModoPrueba}
+                  onChange={(e) => setFacturaModoPrueba(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span className="text-[10px] text-sky-800">
+                  <span className="font-bold block">Modo prueba (no enviar a Hacienda)</span>
+                  Esta factura se numera y guarda igual que siempre, pero no se envía a Hacienda — queda marcada como SIMULADA. Útil para probar el flujo sin generar una presentación fiscal real.
+                </span>
+              </label>
 
               <div className="flex gap-2 justify-end pt-1">
                 <button

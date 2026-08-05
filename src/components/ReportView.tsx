@@ -17,6 +17,7 @@ interface ReportViewProps {
     condicionVenta: string;
     medioPago: string;
     montoRecibido: number | null;
+    modoPrueba: boolean;
     lineas: Array<{ idServicio: number; cantidad: number }>;
   }) => Promise<Factura>;
   onVerificarEstadoFactura: (idFactura: number) => Promise<Factura>;
