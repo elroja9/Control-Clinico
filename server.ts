@@ -530,9 +530,9 @@ async function createTables() {
         direccion VARCHAR(20) NOT NULL,
         caloriaMin INT NOT NULL,
         caloriaMax INT NOT NULL,
-        carbohidratosG INT NOT NULL,
-        proteinasG INT NOT NULL,
-        grasasG INT NOT NULL,
+        carbohidratosPct INT NULL,
+        proteinasPct INT NULL,
+        grasasPct INT NULL,
         desayuno TEXT,
         meriendaManana TEXT,
         almuerzo TEXT,
@@ -541,6 +541,19 @@ async function createTables() {
         indicaciones TEXT
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+    // Macros de plantillas_dieta pasaron de gramos fijos a % de la distribución calórica
+    // (deben sumar 100 entre los que tengan valor) — la tabla se creó vacía en producción, así
+    // que el rename es seguro. CHANGE COLUMN no es idempotente como ADD COLUMN IF NOT EXISTS,
+    // así que se verifica primero si la columna vieja todavía existe (arranques posteriores ya
+    // no la encontrarán y se saltan el rename).
+    const [colCheckPlantillas] = await pool.query(
+      "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'plantillas_dieta' AND COLUMN_NAME = 'carbohidratosG'"
+    );
+    if ((colCheckPlantillas as any[]).length > 0) {
+      await pool.query(`ALTER TABLE plantillas_dieta CHANGE COLUMN carbohidratosG carbohidratosPct INT NULL`);
+      await pool.query(`ALTER TABLE plantillas_dieta CHANGE COLUMN proteinasG proteinasPct INT NULL`);
+      await pool.query(`ALTER TABLE plantillas_dieta CHANGE COLUMN grasasG grasasPct INT NULL`);
+    }
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS notification_logs (
@@ -2037,23 +2050,35 @@ async function startServer() {
       }
       p.caloriaMin = caloriaMin;
       p.caloriaMax = caloriaMax;
-      p.carbohidratosG = parseInt(p.carbohidratosG) || 0;
-      p.proteinasG = parseInt(p.proteinasG) || 0;
-      p.grasasG = parseInt(p.grasasG) || 0;
+      const parsePct = (v: any): number | null => {
+        if (v == null || String(v).trim() === '') return null;
+        const n = parseInt(v);
+        return Number.isFinite(n) ? n : null;
+      };
+      p.carbohidratosPct = parsePct(p.carbohidratosPct);
+      p.proteinasPct = parsePct(p.proteinasPct);
+      p.grasasPct = parsePct(p.grasasPct);
+      const pctValores = [p.carbohidratosPct, p.proteinasPct, p.grasasPct];
+      if (pctValores.some(v => v != null && (v < 0 || v > 100))) {
+        return res.status(400).json({ error: "Cada porcentaje debe estar entre 0 y 100." });
+      }
+      if (pctValores.every(v => v != null) && pctValores.reduce((s, v) => s + (v as number), 0) !== 100) {
+        return res.status(400).json({ error: "Carbohidratos + proteínas + grasas deben sumar 100% cuando los tres tienen valor." });
+      }
       if (dbConnected && pool) {
         if (p.id) {
           const [exists] = await pool.query("SELECT id FROM plantillas_dieta WHERE id = ? AND idCompania = ?", [p.id, parseInt(p.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE plantillas_dieta SET idCompania = ?, nombre = ?, direccion = ?, caloriaMin = ?, caloriaMax = ?, carbohidratosG = ?, proteinasG = ?, grasasG = ?, desayuno = ?, meriendaManana = ?, almuerzo = ?, meriendaTarde = ?, cena = ?, indicaciones = ? WHERE id = ?",
-              [parseInt(p.idCompania), p.nombre, p.direccion, p.caloriaMin, p.caloriaMax, p.carbohidratosG, p.proteinasG, p.grasasG, p.desayuno || '', p.meriendaManana || '', p.almuerzo || '', p.meriendaTarde || '', p.cena || '', p.indicaciones || '', p.id]
+              "UPDATE plantillas_dieta SET idCompania = ?, nombre = ?, direccion = ?, caloriaMin = ?, caloriaMax = ?, carbohidratosPct = ?, proteinasPct = ?, grasasPct = ?, desayuno = ?, meriendaManana = ?, almuerzo = ?, meriendaTarde = ?, cena = ?, indicaciones = ? WHERE id = ?",
+              [parseInt(p.idCompania), p.nombre, p.direccion, p.caloriaMin, p.caloriaMax, p.carbohidratosPct, p.proteinasPct, p.grasasPct, p.desayuno || '', p.meriendaManana || '', p.almuerzo || '', p.meriendaTarde || '', p.cena || '', p.indicaciones || '', p.id]
             );
             return res.json(p);
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO plantillas_dieta (idCompania, nombre, direccion, caloriaMin, caloriaMax, carbohidratosG, proteinasG, grasasG, desayuno, meriendaManana, almuerzo, meriendaTarde, cena, indicaciones) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(p.idCompania), p.nombre, p.direccion, p.caloriaMin, p.caloriaMax, p.carbohidratosG, p.proteinasG, p.grasasG, p.desayuno || '', p.meriendaManana || '', p.almuerzo || '', p.meriendaTarde || '', p.cena || '', p.indicaciones || '']
+          "INSERT INTO plantillas_dieta (idCompania, nombre, direccion, caloriaMin, caloriaMax, carbohidratosPct, proteinasPct, grasasPct, desayuno, meriendaManana, almuerzo, meriendaTarde, cena, indicaciones) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [parseInt(p.idCompania), p.nombre, p.direccion, p.caloriaMin, p.caloriaMax, p.carbohidratosPct, p.proteinasPct, p.grasasPct, p.desayuno || '', p.meriendaManana || '', p.almuerzo || '', p.meriendaTarde || '', p.cena || '', p.indicaciones || '']
         );
         p.id = (result as any).insertId;
         res.json(p);

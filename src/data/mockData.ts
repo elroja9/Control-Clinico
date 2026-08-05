@@ -669,9 +669,9 @@ export interface PlantillaDieta {
   direccion: DireccionPrescripcion;
   caloriaMin: number;
   caloriaMax: number;
-  carbohidratosG: number;
-  proteinasG: number;
-  grasasG: number;
+  carbohidratosPct: number | null;
+  proteinasPct: number | null;
+  grasasPct: number | null;
   desayuno: string;
   meriendaManana: string;
   almuerzo: string;

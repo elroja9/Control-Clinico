@@ -26,9 +26,9 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
   const [direccion, setDireccion] = useState<DireccionPrescripcion>('DEFICIT');
   const [caloriaMin, setCaloriaMin] = useState('1200');
   const [caloriaMax, setCaloriaMax] = useState('1500');
-  const [carbohidratosG, setCarbohidratosG] = useState('');
-  const [proteinasG, setProteinasG] = useState('');
-  const [grasasG, setGrasasG] = useState('');
+  const [carbohidratosPct, setCarbohidratosPct] = useState('');
+  const [proteinasPct, setProteinasPct] = useState('');
+  const [grasasPct, setGrasasPct] = useState('');
   const [desayuno, setDesayuno] = useState('');
   const [meriendaManana, setMeriendaManana] = useState('');
   const [almuerzo, setAlmuerzo] = useState('');
@@ -42,9 +42,9 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
     setDireccion('DEFICIT');
     setCaloriaMin('1200');
     setCaloriaMax('1500');
-    setCarbohidratosG('');
-    setProteinasG('');
-    setGrasasG('');
+    setCarbohidratosPct('');
+    setProteinasPct('');
+    setGrasasPct('');
     setDesayuno('');
     setMeriendaManana('');
     setAlmuerzo('');
@@ -64,9 +64,9 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
     setDireccion(p.direccion);
     setCaloriaMin(String(p.caloriaMin));
     setCaloriaMax(String(p.caloriaMax));
-    setCarbohidratosG(String(p.carbohidratosG));
-    setProteinasG(String(p.proteinasG));
-    setGrasasG(String(p.grasasG));
+    setCarbohidratosPct(p.carbohidratosPct != null ? String(p.carbohidratosPct) : '');
+    setProteinasPct(p.proteinasPct != null ? String(p.proteinasPct) : '');
+    setGrasasPct(p.grasasPct != null ? String(p.grasasPct) : '');
     setDesayuno(p.desayuno);
     setMeriendaManana(p.meriendaManana);
     setAlmuerzo(p.almuerzo);
@@ -87,6 +87,19 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
       alert('El rango de calorías no es válido (el máximo debe ser mayor que el mínimo).');
       return;
     }
+    const parsePct = (v: string): number | null => (v.trim() === '' ? null : parseInt(v));
+    const carbPct = parsePct(carbohidratosPct);
+    const protPct = parsePct(proteinasPct);
+    const grasaPct = parsePct(grasasPct);
+    const pctValores = [carbPct, protPct, grasaPct];
+    if (pctValores.some(v => v != null && (isNaN(v) || v < 0 || v > 100))) {
+      alert('Cada porcentaje debe estar entre 0 y 100.');
+      return;
+    }
+    if (pctValores.every(v => v != null) && pctValores.reduce((s, v) => s + (v as number), 0) !== 100) {
+      alert('Carbohidratos + proteínas + grasas deben sumar 100% cuando los tres tienen valor.');
+      return;
+    }
     onSavePlantillaDieta({
       id: editId ?? 0,
       idCompania,
@@ -94,9 +107,9 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
       direccion,
       caloriaMin: min,
       caloriaMax: max,
-      carbohidratosG: parseInt(carbohidratosG) || 0,
-      proteinasG: parseInt(proteinasG) || 0,
-      grasasG: parseInt(grasasG) || 0,
+      carbohidratosPct: carbPct,
+      proteinasPct: protPct,
+      grasasPct: grasaPct,
       desayuno,
       meriendaManana,
       almuerzo,
@@ -107,6 +120,11 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
     setIsFormOpen(false);
     limpiarFormulario();
   };
+
+  const sumaPct = (carbohidratosPct === '' ? 0 : parseInt(carbohidratosPct) || 0)
+    + (proteinasPct === '' ? 0 : parseInt(proteinasPct) || 0)
+    + (grasasPct === '' ? 0 : parseInt(grasasPct) || 0);
+  const todosLosPctLlenos = carbohidratosPct !== '' && proteinasPct !== '' && grasasPct !== '';
 
   return (
     <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-xs">
@@ -136,7 +154,7 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
             <div key={p.id} className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-2.5">
               <div>
                 <div className="font-semibold text-slate-700">{p.nombre} — {ETIQUETAS_DIRECCION[p.direccion]}</div>
-                <div className="text-[10px] text-slate-500">{p.caloriaMin}-{p.caloriaMax} kcal · Carbohidratos {p.carbohidratosG}g · Proteínas {p.proteinasG}g · Grasas {p.grasasG}g</div>
+                <div className="text-[10px] text-slate-500">{p.caloriaMin}-{p.caloriaMax} kcal · Carbohidratos {p.carbohidratosPct ?? '—'}% · Proteínas {p.proteinasPct ?? '—'}% · Grasas {p.grasasPct ?? '—'}%</div>
               </div>
               <div className="flex gap-1">
                 <button type="button" onClick={() => handleEditar(p)} className="text-slate-500 hover:text-teal-600 px-2 py-1">Editar</button>
@@ -176,19 +194,26 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="block text-slate-600 font-semibold mb-1">Carbohidratos (g)</label>
-              <input type="number" min={0} value={carbohidratosG} onChange={(e) => setCarbohidratosG(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
+          <div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-slate-600 font-semibold mb-1">Carbohidratos (%)</label>
+                <input type="number" min={0} max={100} value={carbohidratosPct} onChange={(e) => setCarbohidratosPct(e.target.value)} placeholder="ej: 40" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
+              </div>
+              <div>
+                <label className="block text-slate-600 font-semibold mb-1">Proteínas (%)</label>
+                <input type="number" min={0} max={100} value={proteinasPct} onChange={(e) => setProteinasPct(e.target.value)} placeholder="ej: 35" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
+              </div>
+              <div>
+                <label className="block text-slate-600 font-semibold mb-1">Grasas (%)</label>
+                <input type="number" min={0} max={100} value={grasasPct} onChange={(e) => setGrasasPct(e.target.value)} placeholder="ej: 25" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
+              </div>
             </div>
-            <div>
-              <label className="block text-slate-600 font-semibold mb-1">Proteínas (g)</label>
-              <input type="number" min={0} value={proteinasG} onChange={(e) => setProteinasG(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-            </div>
-            <div>
-              <label className="block text-slate-600 font-semibold mb-1">Grasas (g)</label>
-              <input type="number" min={0} value={grasasG} onChange={(e) => setGrasasG(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-            </div>
+            {(carbohidratosPct !== '' || proteinasPct !== '' || grasasPct !== '') && (
+              <p className={`text-[10px] mt-1 font-semibold ${todosLosPctLlenos && sumaPct !== 100 ? 'text-rose-600' : 'text-slate-500'}`}>
+                Suma actual: {sumaPct}% {todosLosPctLlenos ? (sumaPct === 100 ? '✓' : '(debe sumar 100%)') : '(opcional dejar campos en blanco)'}
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">

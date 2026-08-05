@@ -232,9 +232,13 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
     setMeriendaTar(plantilla.meriendaTarde);
     setCena(plantilla.cena);
     setIndicacionesDieta(plantilla.indicaciones);
-    setMacrosCarbohidratos(plantilla.carbohidratosG);
-    setMacrosProteinas(plantilla.proteinasG);
-    setMacrosGrasas(plantilla.grasasG);
+    // Las plantillas guardan % de la distribución calórica (no gramos) — se convierten a
+    // gramos usando las calorías objetivo de esta prescripción (4 kcal/g carbos y proteína,
+    // 9 kcal/g grasa).
+    const totalCalorias = prescripcionFinal ?? 0;
+    setMacrosCarbohidratos(plantilla.carbohidratosPct != null ? Math.round((plantilla.carbohidratosPct / 100) * totalCalorias / 4) : 0);
+    setMacrosProteinas(plantilla.proteinasPct != null ? Math.round((plantilla.proteinasPct / 100) * totalCalorias / 4) : 0);
+    setMacrosGrasas(plantilla.grasasPct != null ? Math.round((plantilla.grasasPct / 100) * totalCalorias / 9) : 0);
     handleAplicarPrescripcion();
   };
 
@@ -1863,7 +1867,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                                     className="p-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-left"
                                   >
                                     <div className="font-semibold text-slate-700">{pl.nombre}</div>
-                                    <div className="text-[10px] text-slate-500">{pl.caloriaMin}-{pl.caloriaMax} kcal · C:{pl.carbohidratosG}g P:{pl.proteinasG}g G:{pl.grasasG}g</div>
+                                    <div className="text-[10px] text-slate-500">{pl.caloriaMin}-{pl.caloriaMax} kcal · C:{pl.carbohidratosPct ?? '—'}% P:{pl.proteinasPct ?? '—'}% G:{pl.grasasPct ?? '—'}%</div>
                                   </button>
                                 ))}
                               </div>
