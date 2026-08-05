@@ -674,7 +674,13 @@ async function createTables() {
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS evaluacionDietetica JSON NULL`);
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS composicionSegmentada JSON NULL`);
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS estiloVida JSON NULL`);
-    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS estado VARCHAR(20) NOT NULL DEFAULT 'ABIERTA'`);
+    // NOTA: `consultas` ya traía una columna legada `estado TINYINT(1) DEFAULT 1` desde
+    // ConsultorioDB_schema.sql (flag booleano de un sistema anterior, sin relación con esto).
+    // `ADD COLUMN IF NOT EXISTS estado VARCHAR(20)...` no la recrea con el tipo nuevo — la deja
+    // intacta — así que cada intento de guardar 'ABIERTA'/'CERRADA' se truncaba silenciosamente a
+    // 0/1 y "Cerrar Consulta" nunca persistía. Se usa un nombre de columna distinto para no
+    // chocar con la legada.
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS estadoConsulta VARCHAR(20) NOT NULL DEFAULT 'ABIERTA'`);
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS activo TINYINT(1) NOT NULL DEFAULT 1`);
 
     // Catálogo global (sin idCompania) de división territorial de Costa Rica (INEC) — mismo
@@ -1876,6 +1882,9 @@ async function startServer() {
           const norm = normalizeRow(row);
           return {
             ...norm,
+            // `norm.estado` es la columna legada tinyint(1) de ConsultorioDB_schema.sql (sin
+            // relación con esto) — se pisa explícitamente con la columna real estadoConsulta.
+            estado: norm.estadoConsulta,
             antropometria: typeof norm.antropometria === 'string' ? JSON.parse(norm.antropometria) : norm.antropometria,
             dieta: typeof norm.dieta === 'string' ? JSON.parse(norm.dieta) : norm.dieta,
             fisioterapia: typeof norm.fisioterapia === 'string' ? JSON.parse(norm.fisioterapia) : norm.fisioterapia,
@@ -1905,7 +1914,7 @@ async function startServer() {
           const [exists] = await pool.query("SELECT * FROM consultas WHERE (id = ? OR id_consulta = ?) AND (idCompania = ? OR id_compania = ?)", [con.id, con.id, parseInt(con.idCompania), parseInt(con.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, dieta = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, evaluacionAntropometrica = ?, evaluacionBioquimica = ?, evaluacionDietetica = ?, composicionSegmentada = ?, estiloVida = ?, estado = ? WHERE id = ? OR id_consulta = ?",
+              "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, dieta = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, evaluacionAntropometrica = ?, evaluacionBioquimica = ?, evaluacionDietetica = ?, composicionSegmentada = ?, estiloVida = ?, estadoConsulta = ? WHERE id = ? OR id_consulta = ?",
               [
                 parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
                 JSON.stringify(con.evaluacionAntropometrica || null), JSON.stringify(con.evaluacionBioquimica || null), JSON.stringify(con.evaluacionDietetica || null), JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null), con.estado || 'ABIERTA',
@@ -1916,7 +1925,7 @@ async function startServer() {
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, antropometria, dieta, fisioterapia, anotacionesGenerales, comentarios_nutricionista, evaluacionAntropometrica, evaluacionBioquimica, evaluacionDietetica, composicionSegmentada, estiloVida, estado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, antropometria, dieta, fisioterapia, anotacionesGenerales, comentarios_nutricionista, evaluacionAntropometrica, evaluacionBioquimica, evaluacionDietetica, composicionSegmentada, estiloVida, estadoConsulta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
             JSON.stringify(con.evaluacionAntropometrica || null), JSON.stringify(con.evaluacionBioquimica || null), JSON.stringify(con.evaluacionDietetica || null), JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null), con.estado || 'ABIERTA'
@@ -1948,7 +1957,7 @@ async function startServer() {
       }
       if (dbConnected && pool) {
         const [result] = await pool.query(
-          "UPDATE consultas SET estado = ? WHERE (id = ? OR id_consulta = ?) AND (idCompania = ? OR id_compania = ?)",
+          "UPDATE consultas SET estadoConsulta = ? WHERE (id = ? OR id_consulta = ?) AND (idCompania = ? OR id_compania = ?)",
           [estado, id, id, session.idCompania, session.idCompania]
         );
         if ((result as any).affectedRows === 0) {
@@ -1960,6 +1969,9 @@ async function startServer() {
         const norm = normalizeRow(row);
         res.json({
           ...norm,
+          // `norm.estado` es la columna legada tinyint(1) de ConsultorioDB_schema.sql (sin
+          // relación con esto) — se pisa explícitamente con la columna real estadoConsulta.
+          estado: norm.estadoConsulta,
           antropometria: typeof norm.antropometria === 'string' ? JSON.parse(norm.antropometria) : norm.antropometria,
           dieta: typeof norm.dieta === 'string' ? JSON.parse(norm.dieta) : norm.dieta,
           fisioterapia: typeof norm.fisioterapia === 'string' ? JSON.parse(norm.fisioterapia) : norm.fisioterapia,
@@ -3923,8 +3935,8 @@ async function startServer() {
       if (dbConnected && pool) {
         const [citasRows] = await pool.query("SELECT idPaciente, fechaHora, estadoCita FROM citas WHERE idCompania = ?", [idCompania]);
         citas = (citasRows as any[]).map(normalizeRow);
-        const [consultasRows] = await pool.query("SELECT idPaciente, id_paciente, fecha, estado FROM consultas WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
-        consultas = (consultasRows as any[]).map(normalizeRow).map(c => ({ idPaciente: c.idPaciente, fecha: c.fecha, estado: c.estado }));
+        const [consultasRows] = await pool.query("SELECT idPaciente, id_paciente, fecha, estadoConsulta FROM consultas WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]);
+        consultas = (consultasRows as any[]).map(normalizeRow).map(c => ({ idPaciente: c.idPaciente, fecha: c.fecha, estado: c.estadoConsulta }));
         const [pacientesRows] = await pool.query("SELECT id, id_paciente, nombreCompleto FROM pacientes WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
         pacientes = (pacientesRows as any[]).map(normalizeRow).map(p => ({ id: p.id, nombreCompleto: p.nombreCompleto }));
       } else {
