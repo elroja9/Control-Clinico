@@ -282,7 +282,7 @@ export function renderFacturaEmail(params: {
     .map(
       (l) => `
     <tr>
-      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;">${escapeHtml(l.nombre)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;">${escapeHtml(l.detalle)}</td>
       <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:center;">${l.cantidad}</td>
       <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right;">${colones(l.precioUnitario)}</td>
       <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;text-align:right;">${colones(l.montoTotalLinea)}</td>

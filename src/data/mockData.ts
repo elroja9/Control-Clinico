@@ -766,7 +766,7 @@ export interface FacturaLinea {
   idServicio: number | null;
   tipo: TipoServicio; // copiado del servicio al momento de facturar — el tipo del catálogo puede cambiar después
   codigoCabys: string;
-  nombre: string;
+  detalle: string; // nombre del servicio/artículo al momento de facturar (ver calcularLineas en server/haciendaFactura.ts)
   unidadMedida: UnidadMedidaServicio;
   cantidad: number;
   precioUnitario: number;

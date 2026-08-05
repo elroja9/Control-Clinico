@@ -17,4 +17,13 @@
   .print\:shadow-none {
     box-shadow: none !important;
   }
+  .print\:static {
+    position: static !important;
+  }
+  .print\:overflow-visible {
+    overflow: visible !important;
+  }
+  .print\:bg-white {
+    background-color: white !important;
+  }
 }

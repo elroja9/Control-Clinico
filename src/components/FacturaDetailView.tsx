@@ -168,7 +168,7 @@ export default function FacturaDetailView({ factura, patient, company, onClose, 
             <tbody>
               {factura.lineas.map((l, idx) => (
                 <tr key={idx} className="border-b border-slate-50">
-                  <td className="py-2 pr-3 font-semibold text-slate-800">{l.nombre}</td>
+                  <td className="py-2 pr-3 font-semibold text-slate-800">{l.detalle}</td>
                   <td className="py-2 pr-3 text-center text-slate-600">{l.cantidad}</td>
                   <td className="py-2 pr-3 text-right text-slate-600">{colones(l.precioUnitario)}</td>
                   <td className="py-2 pr-3 text-right text-slate-600">{colones(l.montoIva)}</td>
