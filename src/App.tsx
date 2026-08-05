@@ -273,6 +273,30 @@ export default function App() {
       .catch(err => console.log("MySQL offline, no CxP history available"));
   }, [currentUser?.id]);
 
+  // Citas created externally (public online booking, src/components/PublicBooking.tsx —
+  // a separate unauthenticated endpoint) land straight in the DB with no way to notify an
+  // already-open tab. Refetch on tab refocus (fast path for "I just came back to check")
+  // plus a timer as a safety net for a tab that stays continuously visible.
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const cargarCitas = () => {
+      fetch('/api/citas')
+        .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+        .then(data => { if (data && data.length > 0) setCitas(data); })
+        .catch(err => console.log("No se pudo refrescar citas"));
+    };
+
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') cargarCitas(); };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    const intervalId = setInterval(cargarCitas, 30000);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      clearInterval(intervalId);
+    };
+  }, [currentUser?.id]);
+
   // Save state updates to LocalStorage as secondary local cache / fallback
   useEffect(() => {
     localStorage.setItem('fisio_companies', JSON.stringify(companies));
