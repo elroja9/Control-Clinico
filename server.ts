@@ -38,7 +38,7 @@ import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
 import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
-import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales } from "./src/data/mockData";
+import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales, PorcentajeDieta } from "./src/data/mockData";
 import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
@@ -52,7 +52,8 @@ import {
   defaultCalendarBlocks,
   defaultCompanyPayments,
   defaultServicios,
-  defaultFacturas
+  defaultFacturas,
+  defaultPorcentajesDieta
 } from "./src/data/mockData";
 import { COSTA_RICA_PROVINCIAS } from "./src/data/costaRicaLocations";
 
@@ -72,6 +73,7 @@ let localCitas = [...defaultCitas];
 let localSmtpConfigs = [...defaultSmtpConfigs];
 let localLogs = [...defaultNotificationLogs];
 let localCalendarBlocks = [...defaultCalendarBlocks];
+let localPorcentajesDieta: PorcentajeDieta[] = [...defaultPorcentajesDieta];
 let localCompanyPayments: CompanyPayment[] = [...defaultCompanyPayments];
 let localServicios: Servicio[] = [...defaultServicios];
 let localFacturas: Factura[] = [...defaultFacturas];
@@ -504,6 +506,14 @@ async function createTables() {
         recordatorioHorasAntes INT NOT NULL DEFAULT 24,
         activo BOOLEAN NOT NULL DEFAULT FALSE,
         UNIQUE KEY unique_compania (idCompania)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS compania_porcentajes_dieta (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        porcentaje DECIMAL(5,2) NOT NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
@@ -1888,6 +1898,71 @@ async function startServer() {
         res.json({ success: true });
       } else {
         localCalendarBlocks = localCalendarBlocks.filter(item => !(item.id === id && item.idCompania === idCompania));
+        res.json({ success: true });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/porcentajes-dieta", requireAuth, async (req, res) => {
+    try {
+      const session = sessionOf(req);
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM compania_porcentajes_dieta WHERE idCompania = ?", [session.idCompania]);
+        res.json(rows);
+      } else {
+        res.json(localPorcentajesDieta.filter(p => p.idCompania === session.idCompania));
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/porcentajes-dieta", requireAuth, async (req, res) => {
+    try {
+      const p = req.body;
+      p.idCompania = sessionOf(req).idCompania;
+      if (dbConnected && pool) {
+        if (p.id) {
+          const [exists] = await pool.query("SELECT id FROM compania_porcentajes_dieta WHERE id = ? AND idCompania = ?", [p.id, parseInt(p.idCompania)]);
+          if ((exists as any).length > 0) {
+            await pool.query(
+              "UPDATE compania_porcentajes_dieta SET idCompania = ?, porcentaje = ? WHERE id = ?",
+              [parseInt(p.idCompania), parseFloat(p.porcentaje), p.id]
+            );
+            return res.json(p);
+          }
+        }
+        const [result] = await pool.query(
+          "INSERT INTO compania_porcentajes_dieta (idCompania, porcentaje) VALUES (?, ?)",
+          [parseInt(p.idCompania), parseFloat(p.porcentaje)]
+        );
+        p.id = (result as any).insertId;
+        res.json(p);
+      } else {
+        if (p.id) {
+          localPorcentajesDieta = localPorcentajesDieta.map(item => item.id === p.id ? p : item);
+        } else {
+          p.id = Math.max(0, ...localPorcentajesDieta.map(item => item.id)) + 1;
+          localPorcentajesDieta.push(p);
+        }
+        res.json(p);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/porcentajes-dieta/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const idCompania = sessionOf(req).idCompania;
+      if (dbConnected && pool) {
+        await pool.query("DELETE FROM compania_porcentajes_dieta WHERE id = ? AND idCompania = ?", [id, idCompania]);
+        res.json({ success: true });
+      } else {
+        localPorcentajesDieta = localPorcentajesDieta.filter(item => !(item.id === id && item.idCompania === idCompania));
         res.json({ success: true });
       }
     } catch (err: any) {
