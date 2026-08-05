@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Patient, Consultation, PorcentajeDieta, PlantillaDieta } from '../data/mockData';
 import { Sparkles, Save, X, Calendar, ClipboardList, Activity, Heart, Dumbbell, ChevronRight, Calculator, TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import PainMapSelector from './PainMapSelector';
@@ -16,6 +16,12 @@ interface ConsultationFormProps {
 }
 
 export default function ConsultationForm({ patient, editingConsultation, onSave, onCancel, themeColor, perfilCompania, porcentajesDieta, plantillasDieta }: ConsultationFormProps) {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Ref (not state) because two clicks fired in the same tick both read the same
+  // stale `isSubmitting` value before React re-renders — only a ref updates synchronously
+  // in time to block the second one. Without this, a double-click created two separate
+  // consultation rows (the backend has no way to tell them apart from two real saves).
+  const isSubmittingRef = useRef(false);
   const [tipo, setTipo] = useState<'Nutrición' | 'Fisioterapia'>(() => {
     if (perfilCompania === 'Fisioterapia') return 'Fisioterapia';
     return 'Nutrición';
@@ -428,10 +434,13 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return;
     if (!motivo.trim()) {
       alert("Por favor indique el motivo de la consulta.");
       return;
     }
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
 
     const newConsultation: Consultation = {
       id: editingConsultation?.id ?? Date.now(),
@@ -2279,11 +2288,12 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
         </button>
         <button
           type="submit"
-          className="text-white font-semibold px-5 py-2 rounded-xl transition-all shadow-md flex items-center gap-1.5"
+          disabled={isSubmitting}
+          className="text-white font-semibold px-5 py-2 rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-60"
           style={{ backgroundColor: themeColor }}
         >
           <Save className="w-4 h-4" />
-          {editingConsultation ? 'Actualizar Consulta y Reporte' : 'Guardar Consulta y Reporte'}
+          {isSubmitting ? 'Guardando...' : editingConsultation ? 'Actualizar Consulta y Reporte' : 'Guardar Consulta y Reporte'}
         </button>
       </div>
     </form>
