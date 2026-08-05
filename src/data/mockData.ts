@@ -684,7 +684,7 @@ export const defaultPlantillasDieta: PlantillaDieta[] = [];
 
 export interface HaciendaConfig {
   idCompania: number;
-  ambiente: 'SANDBOX' | 'PRODUCCION';
+  ambiente: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL';
   usuarioAtv: string;
   tienePasswordAtv: boolean;
   tieneCertificado: boolean;
@@ -694,7 +694,7 @@ export interface HaciendaConfig {
 
 export type HaciendaConfigInput = {
   idCompania: number;
-  ambiente: 'SANDBOX' | 'PRODUCCION';
+  ambiente: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL';
   usuarioAtv: string;
   passwordAtv?: string; // solo cuando el usuario escribe una nueva
   certificadoP12Base64?: string; // solo cuando el usuario sube un nuevo archivo .p12
@@ -774,7 +774,7 @@ export interface FacturaLinea {
   montoTotalLinea: number; // subTotal + montoIva
 }
 
-export type EstadoFactura = 'FIRMADA' | 'ENVIADA' | 'ACEPTADA' | 'RECHAZADA' | 'ERROR' | 'ANULADA';
+export type EstadoFactura = 'FIRMADA' | 'ENVIADA' | 'ACEPTADA' | 'RECHAZADA' | 'ERROR' | 'ANULADA' | 'SIMULADA';
 export type TipoDocumentoFactura = '01' | '03'; // 01 = Factura Electrónica, 03 = Nota de Crédito Electrónica
 
 export interface Factura {
@@ -785,7 +785,7 @@ export interface Factura {
   clave: string; // 50 dígitos
   consecutivo: string; // 20 dígitos
   fechaEmision: string; // ISO 8601 con offset
-  ambiente: 'SANDBOX' | 'PRODUCCION';
+  ambiente: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL';
   lineas: FacturaLinea[];
   subtotal: number;
   totalIva: number;
@@ -797,6 +797,8 @@ export interface Factura {
   tipoDocumento: TipoDocumentoFactura;
   idFacturaReferencia: number | null; // solo en Notas de Crédito: id de la Factura que anulan
   motivoAnulacion: string | null; // solo en Notas de Crédito
+  medioPago: string; // '01' Efectivo, '02' Tarjeta, '06' SINPE Móvil — catálogo de Hacienda
+  montoRecibido: number | null; // solo informativo, para trazabilidad del vuelto entregado
 }
 
 // CXC — Cuentas por Cobrar. Se crea automáticamente al facturar con condicionVenta='02'
