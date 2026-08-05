@@ -1829,8 +1829,8 @@ export default function App() {
                       const isNut = c.tipo === 'Nutrición';
                       return (
                         <div key={c.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:border-slate-300 transition-all">
-                          <div className="flex justify-between items-start gap-4">
-                            <div className="flex gap-4">
+                          <div className="flex flex-wrap justify-between items-start gap-4">
+                            <div className="flex gap-4 min-w-0">
                               <span className={`px-2.5 py-1.5 rounded-xl font-bold text-xs uppercase tracking-wider shrink-0 text-center flex flex-col justify-center ${
                                 isNut ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
                               }`}>

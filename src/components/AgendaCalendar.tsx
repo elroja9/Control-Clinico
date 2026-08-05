@@ -1011,7 +1011,7 @@ export default function AgendaCalendar({
       {/* SCHEDULING FORM MODAL */}
       {isFormOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
-          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 overflow-hidden">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[85vh] overflow-y-auto">
             <div className="p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
               <div className="flex items-center gap-2">
                 <Clock className="w-5 h-5 text-teal-400" />
@@ -1266,7 +1266,7 @@ export default function AgendaCalendar({
 
       {isBlockFormOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
-          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 overflow-hidden">
+          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[85vh] overflow-y-auto">
             <div className="p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
               <div className="flex items-center gap-2">
                 <Lock className="w-5 h-5 text-teal-400" />

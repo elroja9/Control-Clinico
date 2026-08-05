@@ -1865,7 +1865,7 @@ export default function CompanySettings({
             </div>
             {logoError && <p className="text-[10px] text-rose-600 mb-2">{logoError}</p>}
             <span className="text-[10px] text-slate-400 block mb-1">O elija un logo predeterminado:</span>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {presetLogos.map((pl, idx) => (
                 <button
                   key={idx}

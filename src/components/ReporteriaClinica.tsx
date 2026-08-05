@@ -110,7 +110,7 @@ export default function ReporteriaClinica({ company }: ReporteriaClinicaProps) {
             className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs"
           />
         ) : (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs" />
             <span className="text-xs text-slate-400">a</span>
             <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs" />

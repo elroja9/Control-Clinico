@@ -1808,7 +1808,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
                           <div>
                             <label className="block text-slate-600 font-semibold mb-1.5">3. Dirección y porcentaje</label>
-                            <div className="flex gap-2 mb-2">
+                            <div className="flex flex-wrap gap-2 mb-2">
                               {(['DEFICIT', 'MANTENIMIENTO', 'SUPERAVIT'] as DireccionPrescripcion[]).map(d => (
                                 <button
                                   type="button"
