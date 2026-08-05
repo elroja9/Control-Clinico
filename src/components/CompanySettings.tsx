@@ -65,7 +65,10 @@ export default function CompanySettings({
 
   const handleAgregarPorcentaje = () => {
     const valor = parseFloat(nuevoPorcentaje);
-    if (isNaN(valor) || valor < 0) return;
+    if (isNaN(valor) || valor < 0 || valor > 100) {
+      alert('Ingrese un porcentaje entre 0 y 100.');
+      return;
+    }
     onSavePorcentajeDieta({ id: 0, idCompania: currentCompany.id, porcentaje: valor });
     setNuevoPorcentaje('');
   };

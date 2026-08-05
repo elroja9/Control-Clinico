@@ -1923,20 +1923,25 @@ async function startServer() {
     try {
       const p = req.body;
       p.idCompania = sessionOf(req).idCompania;
+      const porcentajeNum = parseFloat(p.porcentaje);
+      if (!Number.isFinite(porcentajeNum) || porcentajeNum < 0 || porcentajeNum > 100) {
+        return res.status(400).json({ error: "porcentaje debe ser un número entre 0 y 100" });
+      }
+      p.porcentaje = porcentajeNum;
       if (dbConnected && pool) {
         if (p.id) {
           const [exists] = await pool.query("SELECT id FROM compania_porcentajes_dieta WHERE id = ? AND idCompania = ?", [p.id, parseInt(p.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
               "UPDATE compania_porcentajes_dieta SET idCompania = ?, porcentaje = ? WHERE id = ?",
-              [parseInt(p.idCompania), parseFloat(p.porcentaje), p.id]
+              [parseInt(p.idCompania), p.porcentaje, p.id]
             );
             return res.json(p);
           }
         }
         const [result] = await pool.query(
           "INSERT INTO compania_porcentajes_dieta (idCompania, porcentaje) VALUES (?, ?)",
-          [parseInt(p.idCompania), parseFloat(p.porcentaje)]
+          [parseInt(p.idCompania), p.porcentaje]
         );
         p.id = (result as any).insertId;
         res.json(p);

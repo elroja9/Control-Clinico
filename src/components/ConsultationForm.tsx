@@ -173,6 +173,13 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
   const [factorActividadEntreno, setFactorActividadEntreno] = useState<number>(FACTORES_ACTIVIDAD.LIGERA);
   const [direccionPrescripcion, setDireccionPrescripcion] = useState<DireccionPrescripcion>('DEFICIT');
   const [porcentajePrescripcion, setPorcentajePrescripcion] = useState<number>(0);
+  const [tmbRestaurado, setTmbRestaurado] = useState<number | null>(null);
+  const [promedioRestaurado, setPromedioRestaurado] = useState<number | null>(null);
+
+  const invalidarRestaurado = () => {
+    setTmbRestaurado(null);
+    setPromedioRestaurado(null);
+  };
 
   const tmbPorFormula = patient.sexo ? {
     HARRIS_BENEDICT_OBESOS: calcularTMB('HARRIS_BENEDICT_OBESOS', patient.sexo, peso, talla, patient.edad),
@@ -180,11 +187,13 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
     MULLER: calcularTMB('MULLER', patient.sexo, peso, talla, patient.edad),
   } : null;
 
-  const tmbSeleccionado = formulaSeleccionada && tmbPorFormula ? tmbPorFormula[formulaSeleccionada] : null;
+  const tmbCalculadoEnVivo = formulaSeleccionada && tmbPorFormula ? tmbPorFormula[formulaSeleccionada] : null;
+  const tmbSeleccionado = tmbRestaurado ?? tmbCalculadoEnVivo;
 
-  const promedioMantenimiento = tmbSeleccionado != null
-    ? calcularPromedioSemanal(tmbSeleccionado, factorActividadDescanso, diasDescanso, factorActividadEntreno, diasEntrenamiento)
+  const promedioCalculadoEnVivo = tmbCalculadoEnVivo != null
+    ? calcularPromedioSemanal(tmbCalculadoEnVivo, factorActividadDescanso, diasDescanso, factorActividadEntreno, diasEntrenamiento)
     : null;
+  const promedioMantenimiento = promedioRestaurado ?? promedioCalculadoEnVivo;
 
   const prescripcionFinal = promedioMantenimiento != null
     ? aplicarPorcentaje(promedioMantenimiento, direccionPrescripcion, porcentajePrescripcion)
@@ -304,6 +313,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
         setFactorActividadEntreno(pc.factorActividadEntreno);
         setDireccionPrescripcion(pc.direccion);
         setPorcentajePrescripcion(pc.porcentaje);
+        setTmbRestaurado(pc.tmb);
+        setPromedioRestaurado(pc.promedioMantenimiento);
       }
     }
     if (cs?.grasa) {
@@ -1668,7 +1679,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                               <button
                                 type="button"
                                 key={f}
-                                onClick={() => setFormulaSeleccionada(f)}
+                                onClick={() => { setFormulaSeleccionada(f); invalidarRestaurado(); }}
                                 className={`p-2.5 rounded-lg border text-left ${seleccionada ? 'border-teal-500 bg-teal-50' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
                               >
                                 <div className="font-semibold text-slate-700">{etiquetas[f]}</div>
@@ -1689,12 +1700,12 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                                 min={0}
                                 max={7}
                                 value={diasDescanso}
-                                onChange={(e) => setDiasDescanso(parseInt(e.target.value) || 0)}
+                                onChange={(e) => { setDiasDescanso(parseInt(e.target.value) || 0); invalidarRestaurado(); }}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs"
                               />
                               <select
                                 value={factorActividadDescanso}
-                                onChange={(e) => setFactorActividadDescanso(parseFloat(e.target.value))}
+                                onChange={(e) => { setFactorActividadDescanso(parseFloat(e.target.value)); invalidarRestaurado(); }}
                                 className="w-full mt-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs"
                               >
                                 <option value={FACTORES_ACTIVIDAD.SEDENTARIO}>Sedentario (1.2)</option>
@@ -1711,12 +1722,12 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                                 min={0}
                                 max={7}
                                 value={diasEntrenamiento}
-                                onChange={(e) => setDiasEntrenamiento(parseInt(e.target.value) || 0)}
+                                onChange={(e) => { setDiasEntrenamiento(parseInt(e.target.value) || 0); invalidarRestaurado(); }}
                                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs"
                               />
                               <select
                                 value={factorActividadEntreno}
-                                onChange={(e) => setFactorActividadEntreno(parseFloat(e.target.value))}
+                                onChange={(e) => { setFactorActividadEntreno(parseFloat(e.target.value)); invalidarRestaurado(); }}
                                 className="w-full mt-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs"
                               >
                                 <option value={FACTORES_ACTIVIDAD.SEDENTARIO}>Sedentario (1.2)</option>
