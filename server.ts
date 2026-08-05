@@ -1259,20 +1259,25 @@ async function startServer() {
         return res.json(respuestaGenerica);
       }
 
+      // El correo se envía SIEMPRE a través del SMTP de la empresa 7 (la empresa de la
+      // plataforma) — no del SMTP de la empresa del usuario, que en la práctica casi nunca
+      // está configurado por cada clínica. `company` (la empresa real del usuario) se sigue
+      // usando para el nombre que aparece en el correo, solo cambia el transporte SMTP.
+      const SMTP_COMPANIA_PLATAFORMA = 7;
       const company = await fetchCompanyById(user.idCompania);
       let smtpConfig: CompaniaSmtpConfig | undefined;
       if (dbConnected && pool) {
-        const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [user.idCompania]);
+        const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [SMTP_COMPANIA_PLATAFORMA]);
         const smtpRow = (smtpRows as any[])[0];
         smtpConfig = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
       } else {
-        smtpConfig = localSmtpConfigs.find(s => s.idCompania === user.idCompania);
+        smtpConfig = localSmtpConfigs.find(s => s.idCompania === SMTP_COMPANIA_PLATAFORMA);
       }
 
       if (!company || !smtpConfig || !smtpConfig.activo) {
         // No hay forma de avisarle a esta cuenta por correo — no se revela esto al cliente
         // (evitaría la protección contra enumeración de arriba), solo se registra en el servidor.
-        console.error(`[ForgotPassword] No se pudo enviar contraseña temporal a "${user.usuario}": SMTP no configurado/activo para idCompania=${user.idCompania}.`);
+        console.error(`[ForgotPassword] No se pudo enviar contraseña temporal a "${user.usuario}": SMTP no configurado/activo para la empresa de plataforma (idCompania=${SMTP_COMPANIA_PLATAFORMA}).`);
         return res.json(respuestaGenerica);
       }
 
