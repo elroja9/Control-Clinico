@@ -10,6 +10,7 @@ interface ReportViewProps {
   servicios: Servicio[];
   onClose: () => void;
   onNotificationSent: (log: NotificationLog) => void;
+  onConsultationUpdated: (consulta: Consultation) => void;
   onCrearFactura: (payload: {
     idCompania: number;
     idCita: number | null;
@@ -35,12 +36,34 @@ const DIRECCION_LABEL: Record<string, string> = {
   SUPERAVIT: 'Superávit'
 };
 
-export default function ReportView({ consultation, patient, company, servicios, onClose, onNotificationSent, onCrearFactura, onVerificarEstadoFactura }: ReportViewProps) {
+export default function ReportView({ consultation, patient, company, servicios, onClose, onNotificationSent, onConsultationUpdated, onCrearFactura, onVerificarEstadoFactura }: ReportViewProps) {
   const [emailSent, setEmailSent] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [facturando, setFacturando] = useState(false);
+  const [estadoActual, setEstadoActual] = useState<'ABIERTA' | 'CERRADA'>(consultation.estado ?? 'ABIERTA');
+  const [cambiandoEstado, setCambiandoEstado] = useState(false);
 
   const companyServicios = servicios.filter(s => s.idCompania === company.id && s.activo);
+
+  const handleToggleEstado = async () => {
+    const nuevoEstado = estadoActual === 'CERRADA' ? 'ABIERTA' : 'CERRADA';
+    setCambiandoEstado(true);
+    try {
+      const res = await fetch(`/api/consultations/${consultation.id}/estado`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: nuevoEstado })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo actualizar el estado de la consulta.');
+      setEstadoActual(nuevoEstado);
+      onConsultationUpdated(data);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'No se pudo actualizar el estado de la consulta.');
+    } finally {
+      setCambiandoEstado(false);
+    }
+  };
 
   const triggerPrint = () => {
     window.print();
@@ -86,7 +109,22 @@ export default function ReportView({ consultation, patient, company, servicios, 
           <h3 className="text-sm font-bold text-slate-800">Visualizador de Reportes Clínicos</h3>
           <p className="text-[11px] text-slate-500">Imprime, descarga o envía la ficha del paciente</p>
         </div>
-        <div className="flex gap-2 text-xs">
+        <div className="flex gap-2 text-xs items-center">
+          <span className={`font-bold px-2.5 py-1.5 rounded-xl border ${
+            estadoActual === 'CERRADA'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+              : 'bg-amber-50 border-amber-200 text-amber-700'
+          }`}>
+            {estadoActual}
+          </span>
+          <button
+            onClick={handleToggleEstado}
+            disabled={cambiandoEstado}
+            className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 px-3 rounded-xl border border-slate-200 transition-all flex items-center gap-1.5 disabled:opacity-60"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            {cambiandoEstado ? 'Guardando...' : estadoActual === 'CERRADA' ? 'Reabrir Consulta' : 'Cerrar Consulta'}
+          </button>
           <button
             onClick={sendClientEmail}
             disabled={isSending}

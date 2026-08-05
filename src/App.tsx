@@ -511,6 +511,11 @@ export default function App() {
     setEditingConsultation(null);
   };
 
+  const handleConsultationUpdated = (consulta: Consultation) => {
+    setConsultations(prev => prev.map(c => c.id === consulta.id ? consulta : c));
+    setSelectedReportConsultation(consulta);
+  };
+
   const handleDeleteConsultation = (id: number) => {
     if (confirm("¿Eliminar este registro de consulta?")) {
       setConsultations(prev => prev.filter(c => c.id !== id));
@@ -1263,6 +1268,7 @@ export default function App() {
           servicios={servicios}
           onClose={() => setSelectedReportConsultation(null)}
           onNotificationSent={handleAddNotificationLog}
+          onConsultationUpdated={handleConsultationUpdated}
           onCrearFactura={handleCrearFactura}
           onVerificarEstadoFactura={handleVerificarEstadoFactura}
         />
