@@ -448,8 +448,23 @@ export default function AgendaCalendar({
     }
   };
 
+  // Una cita COMPLETADA que ya tiene una factura real (no simulada/anulada) asociada es
+  // historial fiscal — cambiarle el estado no anula esa factura, así que se advierte antes
+  // de dejar seguir, en vez de bloquear (el personal puede necesitar corregir un estado
+  // marcado por error).
+  const facturaVigenteDeCita = (citaId: number) =>
+    facturas.find(f => f.idCita === citaId && (f.estado === 'ACEPTADA' || f.estado === 'ENVIADA'));
+
+  const confirmarCambioEstadoFacturada = (cita: Cita | null, nuevoEstado: Cita['estadoCita']): boolean => {
+    if (!cita || cita.estadoCita !== 'COMPLETADA' || cita.estadoCita === nuevoEstado) return true;
+    const factura = facturaVigenteDeCita(cita.id);
+    if (!factura) return true;
+    return confirm(`Esta cita ya fue facturada (factura ${factura.consecutivo}, estado ${factura.estado}). Cambiar el estado de la cita NO anula esa factura. ¿Deseas continuar de todos modos?`);
+  };
+
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!confirmarCambioEstadoFacturada(selectedCita, formStatus)) return;
     guardarCita(formStatus);
   };
 
@@ -457,6 +472,8 @@ export default function AgendaCalendar({
   // CANCELADA (conserva el historial y dispara la notificación de
   // cancelación al paciente, igual que si se cambiara el estado a mano).
   const handleCancelarCita = () => {
+    if (!selectedCita) return;
+    if (!confirmarCambioEstadoFacturada(selectedCita, 'CANCELADA')) return;
     if (confirm('¿Está seguro de que desea cancelar esta cita? No se elimina, solo cambia su estado a CANCELADA.')) {
       guardarCita('CANCELADA');
     }
