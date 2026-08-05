@@ -1366,6 +1366,16 @@ async function startServer() {
     try {
       const con = req.body;
       con.idCompania = sessionOf(req).idCompania;
+      if (con.dieta?.macros) {
+        const m = con.dieta.macros;
+        const pctValores = [m.carbohidratosPct, m.proteinasPct, m.grasasPct];
+        if (pctValores.some(v => v != null && (v < 0 || v > 100))) {
+          return res.status(400).json({ error: "Cada porcentaje de macronutrientes debe estar entre 0 y 100." });
+        }
+        if (pctValores.every(v => v != null) && pctValores.reduce((s, v) => s + (v as number), 0) !== 100) {
+          return res.status(400).json({ error: "Carbohidratos + proteínas + grasas deben sumar 100% cuando los tres tienen valor." });
+        }
+      }
       if (dbConnected && pool) {
         if (con.id) {
           // Scoped by idCompania too — see comment on the equivalent usuarios check above.

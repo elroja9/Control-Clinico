@@ -196,9 +196,13 @@ export interface Consultation {
       porcentaje: number;
     };
     macros?: {
-      carbohidratosG: number;
-      proteinasG: number;
-      grasasG: number;
+      // Porcentaje de distribución calórica (no gramos) — igual convención que PlantillaDieta.
+      // Individualmente opcional; cuando los 3 tienen valor deben sumar 100 (ver POST
+      // /api/consultations en server.ts). Los gramos se calculan al mostrar, a partir de
+      // totalCalorias (4 kcal/g carbohidratos y proteína, 9 kcal/g grasa).
+      carbohidratosPct: number | null;
+      proteinasPct: number | null;
+      grasasPct: number | null;
     };
   };
   evaluacionAntropometrica?: {

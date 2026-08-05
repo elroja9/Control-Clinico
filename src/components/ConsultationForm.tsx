@@ -182,9 +182,16 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
   const [porcentajePrescripcion, setPorcentajePrescripcion] = useState<number>(0);
   const [tmbRestaurado, setTmbRestaurado] = useState<number | null>(null);
   const [promedioRestaurado, setPromedioRestaurado] = useState<number | null>(null);
-  const [macrosCarbohidratos, setMacrosCarbohidratos] = useState(0);
-  const [macrosProteinas, setMacrosProteinas] = useState(0);
-  const [macrosGrasas, setMacrosGrasas] = useState(0);
+  const [macrosCarbohidratosPct, setMacrosCarbohidratosPct] = useState('');
+  const [macrosProteinasPct, setMacrosProteinasPct] = useState('');
+  const [macrosGrasasPct, setMacrosGrasasPct] = useState('');
+
+  // Mismo patrón que PlantillaDietaManager: individualmente opcional, pero si los 3 tienen
+  // valor deben sumar 100 — validado aquí antes de enviar y de nuevo en POST /api/consultations.
+  const sumaMacrosPct = (macrosCarbohidratosPct === '' ? 0 : parseInt(macrosCarbohidratosPct) || 0)
+    + (macrosProteinasPct === '' ? 0 : parseInt(macrosProteinasPct) || 0)
+    + (macrosGrasasPct === '' ? 0 : parseInt(macrosGrasasPct) || 0);
+  const todosLosMacrosPctLlenos = macrosCarbohidratosPct !== '' && macrosProteinasPct !== '' && macrosGrasasPct !== '';
 
   const [prescripcionAplicada, setPrescripcionAplicada] = useState(false);
 
@@ -238,13 +245,11 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
     setMeriendaTar(plantilla.meriendaTarde);
     setCena(plantilla.cena);
     setIndicacionesDieta(plantilla.indicaciones);
-    // Las plantillas guardan % de la distribución calórica (no gramos) — se convierten a
-    // gramos usando las calorías objetivo de esta prescripción (4 kcal/g carbos y proteína,
-    // 9 kcal/g grasa).
-    const totalCalorias = prescripcionFinal ?? 0;
-    setMacrosCarbohidratos(plantilla.carbohidratosPct != null ? Math.round((plantilla.carbohidratosPct / 100) * totalCalorias / 4) : 0);
-    setMacrosProteinas(plantilla.proteinasPct != null ? Math.round((plantilla.proteinasPct / 100) * totalCalorias / 4) : 0);
-    setMacrosGrasas(plantilla.grasasPct != null ? Math.round((plantilla.grasasPct / 100) * totalCalorias / 9) : 0);
+    // Las plantillas ya guardan % de la distribución calórica, igual que estos campos — copia
+    // directa, sin conversión.
+    setMacrosCarbohidratosPct(plantilla.carbohidratosPct != null ? String(plantilla.carbohidratosPct) : '');
+    setMacrosProteinasPct(plantilla.proteinasPct != null ? String(plantilla.proteinasPct) : '');
+    setMacrosGrasasPct(plantilla.grasasPct != null ? String(plantilla.grasasPct) : '');
     handleAplicarPrescripcion();
   };
 
@@ -369,9 +374,9 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
         setPromedioRestaurado(pc.promedioMantenimiento);
       }
       if (d.macros) {
-        setMacrosCarbohidratos(d.macros.carbohidratosG);
-        setMacrosProteinas(d.macros.proteinasG);
-        setMacrosGrasas(d.macros.grasasG);
+        setMacrosCarbohidratosPct(d.macros.carbohidratosPct != null ? String(d.macros.carbohidratosPct) : '');
+        setMacrosProteinasPct(d.macros.proteinasPct != null ? String(d.macros.proteinasPct) : '');
+        setMacrosGrasasPct(d.macros.grasasPct != null ? String(d.macros.grasasPct) : '');
       }
     }
     if (cs?.grasa) {
@@ -439,6 +444,10 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
       alert("Por favor indique el motivo de la consulta.");
       return;
     }
+    if (todosLosMacrosPctLlenos && sumaMacrosPct !== 100) {
+      alert("La distribución de macronutrientes (carbohidratos + proteínas + grasas) debe sumar 100% cuando los tres campos tienen valor.");
+      return;
+    }
     isSubmittingRef.current = true;
     setIsSubmitting(true);
 
@@ -486,11 +495,11 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
               porcentaje: porcentajePrescripcion
             }
           } : {}),
-          ...(macrosCarbohidratos > 0 || macrosProteinas > 0 || macrosGrasas > 0 ? {
+          ...(macrosCarbohidratosPct !== '' || macrosProteinasPct !== '' || macrosGrasasPct !== '' ? {
             macros: {
-              carbohidratosG: macrosCarbohidratos,
-              proteinasG: macrosProteinas,
-              grasasG: macrosGrasas
+              carbohidratosPct: macrosCarbohidratosPct === '' ? null : parseInt(macrosCarbohidratosPct),
+              proteinasPct: macrosProteinasPct === '' ? null : parseInt(macrosProteinasPct),
+              grasasPct: macrosGrasasPct === '' ? null : parseInt(macrosGrasasPct)
             }
           } : {})
         },
@@ -1912,14 +1921,17 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60">
-                    <label className="block text-slate-600 font-bold mb-1">Macronutrientes (g/día)</label>
+                    <label className="block text-slate-600 font-bold mb-1">Distribución de Macronutrientes (%)</label>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                       <div>
                         <label className="block text-slate-500 text-[10px] mb-0.5">Carbohidratos</label>
                         <input
                           type="number"
-                          value={macrosCarbohidratos}
-                          onChange={(e) => setMacrosCarbohidratos(parseInt(e.target.value) || 0)}
+                          min={0}
+                          max={100}
+                          value={macrosCarbohidratosPct}
+                          onChange={(e) => setMacrosCarbohidratosPct(e.target.value)}
+                          placeholder="ej: 40"
                           className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-800"
                         />
                       </div>
@@ -1927,8 +1939,11 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                         <label className="block text-slate-500 text-[10px] mb-0.5">Proteínas</label>
                         <input
                           type="number"
-                          value={macrosProteinas}
-                          onChange={(e) => setMacrosProteinas(parseInt(e.target.value) || 0)}
+                          min={0}
+                          max={100}
+                          value={macrosProteinasPct}
+                          onChange={(e) => setMacrosProteinasPct(e.target.value)}
+                          placeholder="ej: 35"
                           className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-800"
                         />
                       </div>
@@ -1936,12 +1951,20 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                         <label className="block text-slate-500 text-[10px] mb-0.5">Grasas</label>
                         <input
                           type="number"
-                          value={macrosGrasas}
-                          onChange={(e) => setMacrosGrasas(parseInt(e.target.value) || 0)}
+                          min={0}
+                          max={100}
+                          value={macrosGrasasPct}
+                          onChange={(e) => setMacrosGrasasPct(e.target.value)}
+                          placeholder="ej: 25"
                           className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-800"
                         />
                       </div>
                     </div>
+                    {(macrosCarbohidratosPct !== '' || macrosProteinasPct !== '' || macrosGrasasPct !== '') && (
+                      <p className={`text-[10px] mt-1.5 font-semibold ${todosLosMacrosPctLlenos && sumaMacrosPct !== 100 ? 'text-rose-600' : 'text-slate-500'}`}>
+                        Suma actual: {sumaMacrosPct}% {todosLosMacrosPctLlenos ? (sumaMacrosPct === 100 ? '✓' : '(debe sumar 100%)') : '(opcional dejar campos en blanco)'}
+                      </p>
+                    )}
                   </div>
                 </div>
 

@@ -36,6 +36,14 @@ const DIRECCION_LABEL: Record<string, string> = {
   SUPERAVIT: 'Superávit'
 };
 
+// 4 kcal/g carbohidratos y proteína, 9 kcal/g grasa — misma conversión que antes usaba
+// ConsultationForm al aplicar una plantilla (ahora movida aquí, que es el único lugar que
+// todavía necesita gramos: el dato guardado es % de la distribución calórica).
+function gramosDesdeMacroPct(pct: number | null, totalCalorias: number, kcalPorGramo: 4 | 9): number | null {
+  if (pct == null) return null;
+  return Math.round((pct / 100) * totalCalorias / kcalPorGramo);
+}
+
 export default function ReportView({ consultation, patient, company, servicios, onClose, onNotificationSent, onConsultationUpdated, onCrearFactura, onVerificarEstadoFactura }: ReportViewProps) {
   const [emailSent, setEmailSent] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -296,15 +304,24 @@ export default function ReportView({ consultation, patient, company, servicios, 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
                       <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
                         <span className="text-[9.5px] text-slate-500 block">Carbohidratos</span>
-                        <span className="text-sm font-semibold text-slate-800 block">{consultation.dieta.macros.carbohidratosG} g</span>
+                        <span className="text-sm font-semibold text-slate-800 block">
+                          {consultation.dieta.macros.carbohidratosPct != null ? `${consultation.dieta.macros.carbohidratosPct}%` : '—'}
+                          {consultation.dieta.macros.carbohidratosPct != null && ` (${gramosDesdeMacroPct(consultation.dieta.macros.carbohidratosPct, consultation.dieta.totalCalorias, 4)} g)`}
+                        </span>
                       </div>
                       <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
                         <span className="text-[9.5px] text-slate-500 block">Proteínas</span>
-                        <span className="text-sm font-semibold text-slate-800 block">{consultation.dieta.macros.proteinasG} g</span>
+                        <span className="text-sm font-semibold text-slate-800 block">
+                          {consultation.dieta.macros.proteinasPct != null ? `${consultation.dieta.macros.proteinasPct}%` : '—'}
+                          {consultation.dieta.macros.proteinasPct != null && ` (${gramosDesdeMacroPct(consultation.dieta.macros.proteinasPct, consultation.dieta.totalCalorias, 4)} g)`}
+                        </span>
                       </div>
                       <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
                         <span className="text-[9.5px] text-slate-500 block">Grasas</span>
-                        <span className="text-sm font-semibold text-slate-800 block">{consultation.dieta.macros.grasasG} g</span>
+                        <span className="text-sm font-semibold text-slate-800 block">
+                          {consultation.dieta.macros.grasasPct != null ? `${consultation.dieta.macros.grasasPct}%` : '—'}
+                          {consultation.dieta.macros.grasasPct != null && ` (${gramosDesdeMacroPct(consultation.dieta.macros.grasasPct, consultation.dieta.totalCalorias, 9)} g)`}
+                        </span>
                       </div>
                     </div>
                   )}

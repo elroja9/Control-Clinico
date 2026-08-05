@@ -18,6 +18,13 @@ const DIRECCION_LABEL: Record<string, string> = {
   SUPERAVIT: "Superávit"
 };
 
+// 4 kcal/g carbohidratos y proteína, 9 kcal/g grasa — el dato guardado es % de la
+// distribución calórica; los gramos se calculan solo para mostrar en el correo.
+function gramosDesdeMacroPct(pct: number | null, totalCalorias: number, kcalPorGramo: 4 | 9): number | null {
+  if (pct == null) return null;
+  return Math.round((pct / 100) * totalCalorias / kcalPorGramo);
+}
+
 function escapeHtml(value: string | number | null | undefined): string {
   const str = String(value ?? "");
   return str
@@ -198,9 +205,9 @@ export function renderConsultaEmail(params: {
           ${infoCard("TMB", `${pc.tmb} kcal`)}
           ${infoCard("Objetivo", `${escapeHtml(direccionLabel)} ${pc.porcentaje}%`)}
           ${infoCard("Presupuesto Calórico", `${d.totalCalorias} kcal`)}
-          ${d.macros ? infoCard("Macronutrientes", `Carbohidratos ${d.macros.carbohidratosG}g &middot; Proteínas ${d.macros.proteinasG}g &middot; Grasas ${d.macros.grasasG}g`) : ""}
+          ${d.macros ? infoCard("Macronutrientes", `Carbohidratos ${d.macros.carbohidratosPct}% (${gramosDesdeMacroPct(d.macros.carbohidratosPct, d.totalCalorias, 4)}g) &middot; Proteínas ${d.macros.proteinasPct}% (${gramosDesdeMacroPct(d.macros.proteinasPct, d.totalCalorias, 4)}g) &middot; Grasas ${d.macros.grasasPct}% (${gramosDesdeMacroPct(d.macros.grasasPct, d.totalCalorias, 9)}g)`) : ""}
         `;
-        sectionText += `Prescripción Calórica\nFórmula: ${formulaLabel} | TMB: ${pc.tmb} kcal | Objetivo: ${direccionLabel} ${pc.porcentaje}% | Presupuesto: ${d.totalCalorias} kcal\n${d.macros ? `Macronutrientes: Carbohidratos ${d.macros.carbohidratosG}g, Proteínas ${d.macros.proteinasG}g, Grasas ${d.macros.grasasG}g\n` : ""}\n`;
+        sectionText += `Prescripción Calórica\nFórmula: ${formulaLabel} | TMB: ${pc.tmb} kcal | Objetivo: ${direccionLabel} ${pc.porcentaje}% | Presupuesto: ${d.totalCalorias} kcal\n${d.macros ? `Macronutrientes: Carbohidratos ${d.macros.carbohidratosPct}% (${gramosDesdeMacroPct(d.macros.carbohidratosPct, d.totalCalorias, 4)}g), Proteínas ${d.macros.proteinasPct}% (${gramosDesdeMacroPct(d.macros.proteinasPct, d.totalCalorias, 4)}g), Grasas ${d.macros.grasasPct}% (${gramosDesdeMacroPct(d.macros.grasasPct, d.totalCalorias, 9)}g)\n` : ""}\n`;
       }
 
       sectionHtml += `
