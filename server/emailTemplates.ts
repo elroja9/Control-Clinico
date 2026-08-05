@@ -206,9 +206,9 @@ export function renderConsultaEmail(params: {
       sectionHtml += `
         <h2 style="color:${escapeHtml(company.colorPrimario)};font-size:13px;text-transform:uppercase;margin-top:20px;">Plan Alimentario Recomendado (${d.totalCalorias} kcal)</h2>
         ${infoCard("Desayuno", escapeHtml(d.desayuno))}
-        ${d.meriendaManana ? infoCard("Colación AM", escapeHtml(d.meriendaManana)) : ""}
+        ${d.meriendaManana ? infoCard("Merienda AM", escapeHtml(d.meriendaManana)) : ""}
         ${infoCard("Almuerzo", escapeHtml(d.almuerzo))}
-        ${d.meriendaTarde ? infoCard("Colación PM", escapeHtml(d.meriendaTarde)) : ""}
+        ${d.meriendaTarde ? infoCard("Merienda PM", escapeHtml(d.meriendaTarde)) : ""}
         ${infoCard("Cena", escapeHtml(d.cena))}
         ${d.indicaciones ? infoCard("Indicaciones", escapeHtml(d.indicaciones)) : ""}
       `;
