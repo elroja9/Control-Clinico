@@ -38,7 +38,7 @@ import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
 import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
-import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales, PorcentajeDieta } from "./src/data/mockData";
+import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales, PorcentajeDieta, PlantillaDieta } from "./src/data/mockData";
 import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
@@ -53,7 +53,8 @@ import {
   defaultCompanyPayments,
   defaultServicios,
   defaultFacturas,
-  defaultPorcentajesDieta
+  defaultPorcentajesDieta,
+  defaultPlantillasDieta
 } from "./src/data/mockData";
 import { COSTA_RICA_PROVINCIAS } from "./src/data/costaRicaLocations";
 
@@ -74,6 +75,7 @@ let localSmtpConfigs = [...defaultSmtpConfigs];
 let localLogs = [...defaultNotificationLogs];
 let localCalendarBlocks = [...defaultCalendarBlocks];
 let localPorcentajesDieta: PorcentajeDieta[] = [...defaultPorcentajesDieta];
+let localPlantillasDieta: PlantillaDieta[] = [...defaultPlantillasDieta];
 let localCompanyPayments: CompanyPayment[] = [...defaultCompanyPayments];
 let localServicios: Servicio[] = [...defaultServicios];
 let localFacturas: Factura[] = [...defaultFacturas];
@@ -514,6 +516,26 @@ async function createTables() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         idCompania INT NOT NULL,
         porcentaje DECIMAL(5,2) NOT NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS plantillas_dieta (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        idCompania INT NOT NULL,
+        nombre VARCHAR(150) NOT NULL,
+        direccion VARCHAR(20) NOT NULL,
+        caloriaMin INT NOT NULL,
+        caloriaMax INT NOT NULL,
+        carbohidratosG INT NOT NULL,
+        proteinasG INT NOT NULL,
+        grasasG INT NOT NULL,
+        desayuno TEXT,
+        meriendaManana TEXT,
+        almuerzo TEXT,
+        meriendaTarde TEXT,
+        cena TEXT,
+        indicaciones TEXT
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
@@ -1976,6 +1998,89 @@ async function startServer() {
         res.json({ success: true });
       } else {
         localPorcentajesDieta = localPorcentajesDieta.filter(item => !(item.id === id && item.idCompania === idCompania));
+        res.json({ success: true });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/plantillas-dieta", requireAuth, async (req, res) => {
+    try {
+      const session = sessionOf(req);
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM plantillas_dieta WHERE idCompania = ?", [session.idCompania]);
+        res.json(rows);
+      } else {
+        res.json(localPlantillasDieta.filter(p => p.idCompania === session.idCompania));
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/plantillas-dieta", requireAuth, async (req, res) => {
+    try {
+      const session = sessionOf(req);
+      if (session.rol !== "Administrador" && !isSaasAdmin(session)) {
+        return res.status(403).json({ error: "Solo un Administrador puede modificar las plantillas de dieta de la empresa." });
+      }
+      const p = req.body;
+      p.idCompania = session.idCompania;
+      const caloriaMin = parseInt(p.caloriaMin);
+      const caloriaMax = parseInt(p.caloriaMax);
+      if (!Number.isFinite(caloriaMin) || !Number.isFinite(caloriaMax) || caloriaMin < 0 || caloriaMax <= caloriaMin) {
+        return res.status(400).json({ error: "El rango de calorías no es válido (el máximo debe ser mayor que el mínimo)." });
+      }
+      p.caloriaMin = caloriaMin;
+      p.caloriaMax = caloriaMax;
+      p.carbohidratosG = parseInt(p.carbohidratosG) || 0;
+      p.proteinasG = parseInt(p.proteinasG) || 0;
+      p.grasasG = parseInt(p.grasasG) || 0;
+      if (dbConnected && pool) {
+        if (p.id) {
+          const [exists] = await pool.query("SELECT id FROM plantillas_dieta WHERE id = ? AND idCompania = ?", [p.id, parseInt(p.idCompania)]);
+          if ((exists as any).length > 0) {
+            await pool.query(
+              "UPDATE plantillas_dieta SET idCompania = ?, nombre = ?, direccion = ?, caloriaMin = ?, caloriaMax = ?, carbohidratosG = ?, proteinasG = ?, grasasG = ?, desayuno = ?, meriendaManana = ?, almuerzo = ?, meriendaTarde = ?, cena = ?, indicaciones = ? WHERE id = ?",
+              [parseInt(p.idCompania), p.nombre, p.direccion, p.caloriaMin, p.caloriaMax, p.carbohidratosG, p.proteinasG, p.grasasG, p.desayuno || '', p.meriendaManana || '', p.almuerzo || '', p.meriendaTarde || '', p.cena || '', p.indicaciones || '', p.id]
+            );
+            return res.json(p);
+          }
+        }
+        const [result] = await pool.query(
+          "INSERT INTO plantillas_dieta (idCompania, nombre, direccion, caloriaMin, caloriaMax, carbohidratosG, proteinasG, grasasG, desayuno, meriendaManana, almuerzo, meriendaTarde, cena, indicaciones) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [parseInt(p.idCompania), p.nombre, p.direccion, p.caloriaMin, p.caloriaMax, p.carbohidratosG, p.proteinasG, p.grasasG, p.desayuno || '', p.meriendaManana || '', p.almuerzo || '', p.meriendaTarde || '', p.cena || '', p.indicaciones || '']
+        );
+        p.id = (result as any).insertId;
+        res.json(p);
+      } else {
+        if (p.id) {
+          localPlantillasDieta = localPlantillasDieta.map(item => item.id === p.id ? p : item);
+        } else {
+          p.id = Math.max(0, ...localPlantillasDieta.map(item => item.id)) + 1;
+          localPlantillasDieta.push(p);
+        }
+        res.json(p);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/plantillas-dieta/:id", requireAuth, async (req, res) => {
+    try {
+      const session = sessionOf(req);
+      if (session.rol !== "Administrador" && !isSaasAdmin(session)) {
+        return res.status(403).json({ error: "Solo un Administrador puede modificar las plantillas de dieta de la empresa." });
+      }
+      const id = parseInt(req.params.id);
+      const idCompania = session.idCompania;
+      if (dbConnected && pool) {
+        await pool.query("DELETE FROM plantillas_dieta WHERE id = ? AND idCompania = ?", [id, idCompania]);
+        res.json({ success: true });
+      } else {
+        localPlantillasDieta = localPlantillasDieta.filter(item => !(item.id === id && item.idCompania === idCompania));
         res.json({ success: true });
       }
     } catch (err: any) {
