@@ -2801,12 +2801,21 @@ async function startServer() {
       }
 
       const cert = await cargarCertificadoEmpresa(idCompania);
-      if (!cert) {
-        return res.status(400).json({ error: "Configure primero la Firma Digital de Hacienda (certificado .p12) en Configuración de Empresa." });
-      }
       const credenciales = await cargarCredencialesAtv(idCompania);
-      if (!credenciales) {
-        return res.status(400).json({ error: "Configure primero el usuario y contraseña ATV de Hacienda en Configuración de Empresa." });
+
+      // El modo prueba (por factura, o por ambiente de empresa PRUEBAS_LOCAL) nunca firma ni
+      // envía nada a Hacienda — así que tampoco debe exigir tener configurados el certificado
+      // .p12 ni las credenciales ATV, que solo hacen falta cuando la factura realmente va a
+      // procesarse contra Hacienda.
+      const omitirEnvioHacienda = modoPrueba || credenciales?.ambiente === "PRUEBAS_LOCAL";
+
+      if (!omitirEnvioHacienda) {
+        if (!cert) {
+          return res.status(400).json({ error: "Configure primero la Firma Digital de Hacienda (certificado .p12) en Configuración de Empresa." });
+        }
+        if (!credenciales) {
+          return res.status(400).json({ error: "Configure primero el usuario y contraseña ATV de Hacienda en Configuración de Empresa." });
+        }
       }
 
       const lineasInput = [];
@@ -2912,8 +2921,6 @@ async function startServer() {
         resumen
       });
 
-      const xmlFirmado = await firmarXadesEpes(xml, cert.p12Base64, cert.pin);
-
       const nuevaFactura: any = {
         idCompania,
         idCita,
@@ -2921,7 +2928,7 @@ async function startServer() {
         clave,
         consecutivo,
         fechaEmision: fechaEmisionCR(fechaEmision),
-        ambiente: credenciales.ambiente,
+        ambiente: credenciales?.ambiente ?? "PRUEBAS_LOCAL",
         lineas: lineasCalculadas,
         subtotal: resumen.totalVenta,
         totalIva: resumen.totalImpuesto,
@@ -2937,23 +2944,27 @@ async function startServer() {
         montoRecibido
       };
 
-      if (credenciales.ambiente === "PRUEBAS_LOCAL" || modoPrueba) {
-        // Modo sin envío: la factura se numera y guarda igual que siempre, pero nunca se
-        // llama a la API de Hacienda — ni para pedir token ni para enviar el XML. Puede venir
-        // del ambiente de la empresa (PRUEBAS_LOCAL) o de marcar "Modo prueba" en esta factura
-        // puntual — en ambos casos la decisión la toma el servidor, nunca el cliente por sí
-        // solo, y jamás se simula un estado "ACEPTADA" falso.
+      if (omitirEnvioHacienda) {
+        // Modo sin envío: la factura se numera y guarda igual que siempre, pero nunca se firma
+        // ni se llama a la API de Hacienda — ni para pedir token ni para enviar el XML. Puede
+        // venir del ambiente de la empresa (PRUEBAS_LOCAL) o de marcar "Modo prueba" en esta
+        // factura puntual — en ambos casos la decisión la toma el servidor, nunca el cliente
+        // por sí solo, y jamás se simula un estado "ACEPTADA" falso. Por eso tampoco exige
+        // certificado .p12 ni credenciales ATV configurados (ver checks arriba).
         nuevaFactura.estado = "SIMULADA";
-        nuevaFactura.mensajeError = modoPrueba && credenciales.ambiente !== "PRUEBAS_LOCAL"
+        nuevaFactura.mensajeError = modoPrueba && credenciales?.ambiente !== "PRUEBAS_LOCAL"
           ? "Modo prueba activado para esta factura — no se envió a Hacienda."
           : "Ambiente de pruebas locales — no se envió a Hacienda.";
       } else {
-        // Envío a Hacienda — best-effort: si Hacienda no responde o rechaza, la factura queda
-        // guardada como FIRMADA/ERROR y se puede reintentar el envío después.
+        // Envío a Hacienda — best-effort: si la firma o Hacienda fallan, la factura queda
+        // guardada como ERROR (en vez de perderse junto con la numeración/stock ya
+        // reservados arriba) y se puede reintentar el envío después. cert/credenciales ya se
+        // validaron no-nulos arriba (omitirEnvioHacienda es false en este branch).
         try {
-          const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
+          const xmlFirmado = await firmarXadesEpes(xml, cert!.p12Base64, cert!.pin);
+          const token = await obtenerTokenHacienda(credenciales!.ambiente, credenciales!.usuarioAtv, credenciales!.passwordAtv);
           const envio = await enviarFacturaHacienda({
-            ambiente: credenciales.ambiente,
+            ambiente: credenciales!.ambiente,
             token,
             clave,
             fechaEmisionIso: fechaEmisionCR(fechaEmision),
