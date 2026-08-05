@@ -24,6 +24,7 @@ export default function PatientForm({
   const [nombre, setNombre] = useState('');
   const [fechaNac, setFechaNac] = useState('1995-01-01');
   const [edad, setEdad] = useState(30);
+  const [sexo, setSexo] = useState<'M' | 'F' | ''>('');
   const [ocupacion, setOcupacion] = useState('');
   const [correo, setCorreo] = useState('');
   const [situacion, setSituacion] = useState<'SOLO' | 'ACOMPAÑADO' | 'FAMILIAR'>('ACOMPAÑADO');
@@ -52,6 +53,7 @@ export default function PatientForm({
       setNombre(editingPatient.nombreCompleto);
       setFechaNac(editingPatient.fechaNacimiento);
       setEdad(editingPatient.edad);
+      setSexo(editingPatient.sexo || '');
       setOcupacion(editingPatient.ocupacion);
       setCorreo(editingPatient.correoElectronico);
       setSituacion(editingPatient.situacionVivienda);
@@ -104,6 +106,7 @@ export default function PatientForm({
       nombreCompleto: nombre,
       fechaNacimiento: fechaNac,
       edad: edad,
+      sexo: sexo || undefined,
       ocupacion: ocupacion,
       correoElectronico: correo,
       situacionVivienda: situacion,
@@ -180,7 +183,7 @@ export default function PatientForm({
             <User className="w-4 h-4 text-slate-500" />
             1. Datos Personales y Demográficos
           </h4>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div>
               <label className="block text-slate-600 font-medium mb-1">Nombre Completo *</label>
               <input
@@ -209,6 +212,18 @@ export default function PatientForm({
                 disabled
                 className="w-full bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-500 font-bold"
               />
+            </div>
+            <div>
+              <label className="block text-slate-600 font-medium mb-1">Sexo</label>
+              <select
+                value={sexo}
+                onChange={(e) => setSexo(e.target.value as 'M' | 'F' | '')}
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+              >
+                <option value="">Sin especificar</option>
+                <option value="M">Masculino</option>
+                <option value="F">Femenino</option>
+              </select>
             </div>
           </div>
 
