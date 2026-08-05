@@ -435,6 +435,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
     const newConsultation: Consultation = {
       id: editingConsultation?.id ?? Date.now(),
+      estado: editingConsultation?.estado ?? 'ABIERTA',
       idPaciente: patient.id,
       idCompania: patient.idCompania,
       fecha,

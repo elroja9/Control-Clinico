@@ -673,6 +673,7 @@ async function createTables() {
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS evaluacionDietetica JSON NULL`);
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS composicionSegmentada JSON NULL`);
     await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS estiloVida JSON NULL`);
+    await pool.query(`ALTER TABLE consultas ADD COLUMN IF NOT EXISTS estado VARCHAR(20) NOT NULL DEFAULT 'ABIERTA'`);
 
     // Catálogo global (sin idCompania) de división territorial de Costa Rica (INEC) — mismo
     // diseño que en POS-RESTAURANTE (id compuesto: cantón = provincia+código, distrito =
@@ -1793,10 +1794,10 @@ async function startServer() {
           const [exists] = await pool.query("SELECT * FROM consultas WHERE (id = ? OR id_consulta = ?) AND (idCompania = ? OR id_compania = ?)", [con.id, con.id, parseInt(con.idCompania), parseInt(con.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, dieta = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, evaluacionAntropometrica = ?, evaluacionBioquimica = ?, evaluacionDietetica = ?, composicionSegmentada = ?, estiloVida = ? WHERE id = ? OR id_consulta = ?",
+              "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, dieta = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, evaluacionAntropometrica = ?, evaluacionBioquimica = ?, evaluacionDietetica = ?, composicionSegmentada = ?, estiloVida = ?, estado = ? WHERE id = ? OR id_consulta = ?",
               [
                 parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
-                JSON.stringify(con.evaluacionAntropometrica || null), JSON.stringify(con.evaluacionBioquimica || null), JSON.stringify(con.evaluacionDietetica || null), JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null),
+                JSON.stringify(con.evaluacionAntropometrica || null), JSON.stringify(con.evaluacionBioquimica || null), JSON.stringify(con.evaluacionDietetica || null), JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null), con.estado || 'ABIERTA',
                 con.id, con.id
               ]
             );
@@ -1804,10 +1805,10 @@ async function startServer() {
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, antropometria, dieta, fisioterapia, anotacionesGenerales, comentarios_nutricionista, evaluacionAntropometrica, evaluacionBioquimica, evaluacionDietetica, composicionSegmentada, estiloVida) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, antropometria, dieta, fisioterapia, anotacionesGenerales, comentarios_nutricionista, evaluacionAntropometrica, evaluacionBioquimica, evaluacionDietetica, composicionSegmentada, estiloVida, estado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
-            JSON.stringify(con.evaluacionAntropometrica || null), JSON.stringify(con.evaluacionBioquimica || null), JSON.stringify(con.evaluacionDietetica || null), JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null)
+            JSON.stringify(con.evaluacionAntropometrica || null), JSON.stringify(con.evaluacionBioquimica || null), JSON.stringify(con.evaluacionDietetica || null), JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null), con.estado || 'ABIERTA'
           ]
         );
         con.id = (result as any).insertId;

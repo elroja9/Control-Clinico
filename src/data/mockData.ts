@@ -160,7 +160,8 @@ export interface Consultation {
   motivo: string;
   horasSueno: number;
   compromiso: number; // 1-10
-  
+  estado?: 'ABIERTA' | 'CERRADA'; // Nace ABIERTA; CERRADA cuando el nutricionista finaliza la sesión. Sigue siendo editable en ambos estados.
+
   // Nutrición específica
   antropometria?: {
     peso: number; // kg
