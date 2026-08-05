@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION, Servicio } from '../data/mockData';
+import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION, Servicio, PorcentajeDieta } from '../data/mockData';
 import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
-import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit } from 'lucide-react';
+import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X } from 'lucide-react';
 
 interface CompanySettingsProps {
   companies: Company[];
@@ -18,6 +18,9 @@ interface CompanySettingsProps {
   onSaveServicio: (servicio: Servicio) => void;
   onCargarServiciosDefecto: (idCompania: number) => Promise<Servicio[]>;
   onAjustarStock: (idServicio: number, nuevoStock: number, notas: string) => Promise<void>;
+  porcentajesDieta: PorcentajeDieta[];
+  onSavePorcentajeDieta: (porcentaje: PorcentajeDieta) => void;
+  onDeletePorcentajeDieta: (id: number) => void;
 }
 
 export default function CompanySettings({
@@ -34,7 +37,10 @@ export default function CompanySettings({
   servicios,
   onSaveServicio,
   onCargarServiciosDefecto,
-  onAjustarStock
+  onAjustarStock,
+  porcentajesDieta,
+  onSavePorcentajeDieta,
+  onDeletePorcentajeDieta
 }: CompanySettingsProps) {
   const currentCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
@@ -52,6 +58,17 @@ export default function CompanySettings({
 
   const [horario, setHorario] = useState<HorarioAtencion>(currentCompany.horarioAtencion || DEFAULT_HORARIO_ATENCION);
   const [horarioGuardado, setHorarioGuardado] = useState(false);
+
+  // Porcentajes de Déficit/Superávit para Dietas
+  const [nuevoPorcentaje, setNuevoPorcentaje] = useState('');
+  const porcentajesDeEstaEmpresa = porcentajesDieta.filter(p => p.idCompania === currentCompany.id);
+
+  const handleAgregarPorcentaje = () => {
+    const valor = parseFloat(nuevoPorcentaje);
+    if (isNaN(valor) || valor < 0) return;
+    onSavePorcentajeDieta({ id: 0, idCompania: currentCompany.id, porcentaje: valor });
+    setNuevoPorcentaje('');
+  };
 
   // Servicios / Artículos section (catálogo único — ver tipo TipoServicio en mockData.ts)
   const [isServicioFormOpen, setIsServicioFormOpen] = useState(false);
@@ -1556,6 +1573,57 @@ export default function CompanySettings({
                 <Check className="w-3.5 h-3.5" /> Horario guardado
               </span>
             )}
+          </div>
+        </div>
+      )}
+
+      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
+        <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-xs">
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
+            <Sparkles className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
+            <div>
+              <h4 className="font-bold text-slate-800">Porcentajes de Déficit/Superávit para Dietas</h4>
+              <p className="text-[10px] text-slate-500">Los nutricionistas de esta empresa eligen entre estos porcentajes al calcular la prescripción calórica de una dieta. Puede incluir 0% (mantenimiento).</p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {porcentajesDeEstaEmpresa.length === 0 && (
+              <span className="text-slate-400">Sin porcentajes configurados — se usará el respaldo 10% / 15% / 20%.</span>
+            )}
+            {porcentajesDeEstaEmpresa.map(p => (
+              <span key={p.id} className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-full pl-3 pr-1.5 py-1">
+                {Number(p.porcentaje)}%
+                <button
+                  type="button"
+                  onClick={() => onDeletePorcentajeDieta(p.id)}
+                  className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-full p-0.5"
+                  title="Eliminar"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              step="0.5"
+              value={nuevoPorcentaje}
+              onChange={(e) => setNuevoPorcentaje(e.target.value)}
+              placeholder="ej: 25"
+              className="w-28 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5"
+            />
+            <button
+              type="button"
+              onClick={handleAgregarPorcentaje}
+              className="text-white px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1"
+              style={{ backgroundColor: currentCompany.colorPrimario }}
+            >
+              <Plus className="w-3.5 h-3.5" /> Agregar
+            </button>
           </div>
         </div>
       )}
