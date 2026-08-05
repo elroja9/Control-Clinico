@@ -1827,6 +1827,48 @@ async function startServer() {
     }
   });
 
+  app.post("/api/consultations/:id/estado", requireAuth, async (req, res) => {
+    try {
+      const session = sessionOf(req);
+      const id = parseInt(req.params.id);
+      const estado = req.body.estado;
+      if (estado !== 'ABIERTA' && estado !== 'CERRADA') {
+        return res.status(400).json({ error: "Estado inválido. Use 'ABIERTA' o 'CERRADA'." });
+      }
+      if (dbConnected && pool) {
+        const [result] = await pool.query(
+          "UPDATE consultas SET estado = ? WHERE (id = ? OR id_consulta = ?) AND (idCompania = ? OR id_compania = ?)",
+          [estado, id, id, session.idCompania, session.idCompania]
+        );
+        if ((result as any).affectedRows === 0) {
+          return res.status(404).json({ error: "Consulta no encontrada." });
+        }
+        const [rows] = await pool.query("SELECT * FROM consultas WHERE id = ? OR id_consulta = ?", [id, id]);
+        const row = (rows as any[])[0];
+        if (!row) return res.status(404).json({ error: "Consulta no encontrada." });
+        const norm = normalizeRow(row);
+        res.json({
+          ...norm,
+          antropometria: typeof norm.antropometria === 'string' ? JSON.parse(norm.antropometria) : norm.antropometria,
+          dieta: typeof norm.dieta === 'string' ? JSON.parse(norm.dieta) : norm.dieta,
+          fisioterapia: typeof norm.fisioterapia === 'string' ? JSON.parse(norm.fisioterapia) : norm.fisioterapia,
+          evaluacionAntropometrica: typeof norm.evaluacionAntropometrica === 'string' ? JSON.parse(norm.evaluacionAntropometrica) : norm.evaluacionAntropometrica,
+          evaluacionBioquimica: typeof norm.evaluacionBioquimica === 'string' ? JSON.parse(norm.evaluacionBioquimica) : norm.evaluacionBioquimica,
+          evaluacionDietetica: typeof norm.evaluacionDietetica === 'string' ? JSON.parse(norm.evaluacionDietetica) : norm.evaluacionDietetica,
+          composicionSegmentada: typeof norm.composicionSegmentada === 'string' ? JSON.parse(norm.composicionSegmentada) : norm.composicionSegmentada,
+          estiloVida: typeof norm.estiloVida === 'string' ? JSON.parse(norm.estiloVida) : norm.estiloVida
+        });
+      } else {
+        const idx = localConsultations.findIndex(c => c.id === id && c.idCompania === session.idCompania);
+        if (idx === -1) return res.status(404).json({ error: "Consulta no encontrada." });
+        localConsultations[idx] = { ...localConsultations[idx], estado };
+        res.json(localConsultations[idx]);
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // 5. Citas (Appointments)
   app.get("/api/citas", requireAuth, async (req, res) => {
     try {
