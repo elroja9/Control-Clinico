@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
-import { Factura, Patient } from '../data/mockData';
-import { Receipt, XCircle, FileMinus, AlertCircle, RefreshCw } from 'lucide-react';
+import { Factura, Patient, Company, NotificationLog } from '../data/mockData';
+import { Receipt, XCircle, FileMinus, AlertCircle, RefreshCw, Eye } from 'lucide-react';
+import FacturaDetailView from './FacturaDetailView';
 
 interface FacturacionManagerProps {
   facturas: Factura[];
   patients: Patient[];
+  company: Company;
   onAnularFactura: (idFactura: number, motivo: string) => Promise<Factura>;
   onVerificarEstadoFactura: (idFactura: number) => Promise<Factura>;
+  onReenviarCorreo: (idFactura: number) => Promise<NotificationLog>;
 }
 
 const ESTADO_ESTILO: Record<string, string> = {
@@ -25,12 +28,13 @@ const MEDIO_PAGO_LABEL: Record<string, string> = {
   '06': 'SINPE Móvil'
 };
 
-export default function FacturacionManager({ facturas, patients, onAnularFactura, onVerificarEstadoFactura }: FacturacionManagerProps) {
+export default function FacturacionManager({ facturas, patients, company, onAnularFactura, onVerificarEstadoFactura, onReenviarCorreo }: FacturacionManagerProps) {
   const [anulandoId, setAnulandoId] = useState<number | null>(null);
   const [motivoAnulacion, setMotivoAnulacion] = useState('');
   const [anulando, setAnulando] = useState(false);
   const [error, setError] = useState('');
   const [verificandoId, setVerificandoId] = useState<number | null>(null);
+  const [viewingFactura, setViewingFactura] = useState<Factura | null>(null);
 
   const handleVerificarEstado = async (id: number) => {
     setVerificandoId(id);
@@ -113,6 +117,13 @@ export default function FacturacionManager({ facturas, patients, onAnularFactura
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ESTADO_ESTILO[f.estado] || 'bg-slate-100 text-slate-600'}`}>
                     {f.estado}
                   </span>
+                  <button
+                    onClick={() => setViewingFactura(f)}
+                    title="Ver / Imprimir / Reenviar"
+                    className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                  </button>
                   {f.estado === 'ENVIADA' && (
                     <button
                       onClick={() => handleVerificarEstado(f.id)}
@@ -179,6 +190,20 @@ export default function FacturacionManager({ facturas, patients, onAnularFactura
           );
         })}
       </div>
+
+      {viewingFactura && (() => {
+        const pacienteFactura = patients.find(p => p.id === viewingFactura.idPaciente);
+        if (!pacienteFactura) return null;
+        return (
+          <FacturaDetailView
+            factura={viewingFactura}
+            patient={pacienteFactura}
+            company={company}
+            onClose={() => setViewingFactura(null)}
+            onReenviarCorreo={onReenviarCorreo}
+          />
+        );
+      })()}
     </div>
   );
 }

@@ -732,6 +732,14 @@ export default function App() {
     return facturaActualizada;
   };
 
+  const handleReenviarFacturaCorreo = async (idFactura: number): Promise<NotificationLog> => {
+    const res = await fetch(`/api/facturas/${idFactura}/reenviar-correo`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo reenviar la factura por correo.');
+    handleAddNotificationLog(data);
+    return data;
+  };
+
   const handleRegistrarPagoCxc = async (idCuentaCobrar: number, monto: number, medioPago: string, referencia: string): Promise<void> => {
     const res = await fetch(`/api/cxc/${idCuentaCobrar}/pagos`, {
       method: 'POST',
@@ -1955,8 +1963,10 @@ export default function App() {
                 <FacturacionManager
                   facturas={facturas.filter(f => f.idCompania === selectedCompanyId)}
                   patients={filteredPatientsByCompany}
+                  company={activeCompany}
                   onAnularFactura={handleAnularFactura}
                   onVerificarEstadoFactura={handleVerificarEstadoFactura}
+                  onReenviarCorreo={handleReenviarFacturaCorreo}
                 />
                 <CxCManager
                   cxc={cxc.filter(c => c.idCompania === selectedCompanyId)}
