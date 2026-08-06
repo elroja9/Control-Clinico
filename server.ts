@@ -259,8 +259,8 @@ async function seedDefaultData() {
     console.log("[MySQL] Seeding default consultations...");
     for (const con of defaultConsultations) {
       await pool.query(
-        "INSERT INTO consultas (id, idPaciente, idCompania, fecha, tipo, motivo, horasSueno, compromiso, antropometria, fisioterapia, anotacionesGenerales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [con.id, con.idPaciente, con.idCompania, con.fecha, con.tipo, con.motivo, con.horasSueno, con.compromiso, JSON.stringify(con.antropometria || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales]
+        "INSERT INTO consultas (id, idPaciente, idCompania, fecha, tipo, motivo, horasSueno, compromiso, antropometria, anotacionesGenerales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [con.id, con.idPaciente, con.idCompania, con.fecha, con.tipo, con.motivo, con.horasSueno, con.compromiso, JSON.stringify(con.antropometria || null), con.anotacionesGenerales]
       );
     }
   }
@@ -402,9 +402,6 @@ function normalizeRow(row: any, ownIdColumn: string): any {
   if (copy.color_sidebar != null && copy.colorSidebar == null) copy.colorSidebar = copy.color_sidebar;
   if (copy.logo_url != null && copy.logoUrl == null) copy.logoUrl = copy.logo_url;
   if (copy.cod_actividad_economica != null && copy.actividadEconomica == null) copy.actividadEconomica = copy.cod_actividad_economica;
-  if (typeof copy.horarioAtencion === "string") {
-    try { copy.horarioAtencion = JSON.parse(copy.horarioAtencion); } catch { /* deja el valor crudo si no es JSON válido */ }
-  }
 
   // usuarios
   if (copy.id_compania != null && copy.idCompania == null) copy.idCompania = copy.id_compania;
@@ -480,6 +477,21 @@ const DIETA_MACRO_MAP: [string, string][] = [
   ['carbohidratosPct', 'macro_carbohidratos_pct'], ['proteinasPct', 'macro_proteinas_pct'], ['grasasPct', 'macro_grasas_pct']
 ];
 
+// --- Normalización Fase 2e: fisioterapia_evaluaciones ---
+// Sin tabla legada equivalente — se creó una tabla nueva (ver .scratch/apply_fase2e.cjs). A
+// diferencia de las 3 evaluaciones de Fase 2 (mismo nombre de campo), aquí sí hay que traducir
+// camelCase → snake_case porque es una tabla propia de esta app, no heredada.
+const FISIOTERAPIA_MAP: [string, string][] = [
+  ['mecanismoLesion', 'mecanismo_lesion'], ['diagnosticoMedico', 'diagnostico_medico'], ['evaDolor', 'eva_dolor'],
+  ['zonaDolor', 'zona_dolor'], ['tipoDolor', 'tipo_dolor'], ['factoresAgravantes', 'factores_agravantes'],
+  ['factoresAtenuantes', 'factores_atenuantes'], ['posturaObservaciones', 'postura_observaciones'],
+  ['palpacionHallazgos', 'palpacion_hallazgos'], ['romMedido', 'rom_medido'], ['fuerzaDaniels', 'fuerza_daniels'],
+  ['pruebasEspeciales', 'pruebas_especiales'], ['agentesFisicos', 'agentes_fisicos'], ['terapiaManual', 'terapia_manual'],
+  ['ejercicioTerapeutico', 'ejercicio_terapeutico'], ['sesionesSugeridas', 'sesiones_sugeridas'],
+  ['soapSubjetivo', 'soap_subjetivo'], ['soapObjetivo', 'soap_objetivo'], ['soapAnalisis', 'soap_analisis'],
+  ['soapPlan', 'soap_plan']
+];
+
 const CONSULTA_EVAL_SELECT = [
   'c.*',
   ...EVAL_ANTROPOMETRICA_COLS.map(col => `ea.${col} AS ea_${col}`),
@@ -488,7 +500,8 @@ const CONSULTA_EVAL_SELECT = [
   ...COMPOSICION_COLS.map(col => `cg.${col} AS cg_${col}`), 'cg.calificacion_grasa AS cg_calificacion_grasa',
   ...COMPOSICION_COLS.map(col => `cm.${col} AS cm_${col}`),
   ...ESTILO_VIDA_COLS.map(col => `ev.${col} AS ev_${col}`),
-  ...[...DIETA_COMIDA_MAP, ...DIETA_PRESCRIPCION_MAP, ...DIETA_MACRO_MAP].map(([, col]) => `dr.${col} AS dr_${col}`)
+  ...[...DIETA_COMIDA_MAP, ...DIETA_PRESCRIPCION_MAP, ...DIETA_MACRO_MAP].map(([, col]) => `dr.${col} AS dr_${col}`),
+  ...FISIOTERAPIA_MAP.map(([, col]) => `fi.${col} AS fi_${col}`)
 ].join(', ');
 
 const CONSULTA_EVAL_JOIN = "LEFT JOIN evaluacion_antropometrica ea ON ea.id_consulta = c.id_consulta " +
@@ -497,14 +510,15 @@ const CONSULTA_EVAL_JOIN = "LEFT JOIN evaluacion_antropometrica ea ON ea.id_cons
   "LEFT JOIN composicion_segmentada cg ON cg.id_consulta = c.id_consulta AND cg.tipo_medicion = 'Grasa' " +
   "LEFT JOIN composicion_segmentada cm ON cm.id_consulta = c.id_consulta AND cm.tipo_medicion = 'Musculo' " +
   "LEFT JOIN estilo_vida ev ON ev.id_consulta = c.id_consulta " +
-  "LEFT JOIN dietas_recetas dr ON dr.id_consulta = c.id_consulta";
+  "LEFT JOIN dietas_recetas dr ON dr.id_consulta = c.id_consulta " +
+  "LEFT JOIN fisioterapia_evaluaciones fi ON fi.id_consulta = c.id_consulta";
 
 // Reconstruye los objetos anidados que el frontend espera a partir de las columnas con
-// prefijo (ea_/eb_/ed_/cg_/cm_/ev_/dr_) que trae una fila leída con CONSULTA_EVAL_SELECT + CONSULTA_EVAL_JOIN.
+// prefijo (ea_/eb_/ed_/cg_/cm_/ev_/dr_/fi_) que trae una fila leída con CONSULTA_EVAL_SELECT + CONSULTA_EVAL_JOIN.
 // Devuelve `undefined` para el objeto completo si la consulta no tiene fila en esa tabla hija
 // (LEFT JOIN sin match trae todas sus columnas en NULL) — mismo comportamiento que un JSON `null`.
 function reconstruirEvaluaciones(row: any): {
-  evaluacionAntropometrica: any; evaluacionBioquimica: any; evaluacionDietetica: any; composicionSegmentada: any; estiloVida: any; dieta: any;
+  evaluacionAntropometrica: any; evaluacionBioquimica: any; evaluacionDietetica: any; composicionSegmentada: any; estiloVida: any; dieta: any; fisioterapia: any;
 } {
   const pick = (prefix: string, cols: string[], boolCols?: Set<string>) => {
     const hasAny = cols.some(c => row[`${prefix}_${c}`] != null);
@@ -519,18 +533,18 @@ function reconstruirEvaluaciones(row: any): {
   const grasa = pick('cg', [...COMPOSICION_COLS, 'calificacion_grasa']);
   const musculo = pick('cm', COMPOSICION_COLS);
 
-  const pickMapped = (map: [string, string][]) => {
-    const hasAny = map.some(([, col]) => row[`dr_${col}`] != null);
+  const pickMapped = (prefix: string, map: [string, string][]) => {
+    const hasAny = map.some(([, col]) => row[`${prefix}_${col}`] != null);
     if (!hasAny) return undefined;
     const obj: any = {};
-    for (const [jsonKey, col] of map) obj[jsonKey] = row[`dr_${col}`];
+    for (const [jsonKey, col] of map) obj[jsonKey] = row[`${prefix}_${col}`];
     return obj;
   };
-  const dietaBase = pickMapped(DIETA_COMIDA_MAP);
+  const dietaBase = pickMapped('dr', DIETA_COMIDA_MAP);
   const dieta = dietaBase ? {
     ...dietaBase,
-    prescripcionCalorica: pickMapped(DIETA_PRESCRIPCION_MAP),
-    macros: pickMapped(DIETA_MACRO_MAP)
+    prescripcionCalorica: pickMapped('dr', DIETA_PRESCRIPCION_MAP),
+    macros: pickMapped('dr', DIETA_MACRO_MAP)
   } : undefined;
 
   return {
@@ -539,7 +553,8 @@ function reconstruirEvaluaciones(row: any): {
     evaluacionDietetica: pick('ed', EVAL_DIETETICA_COLS, EVAL_DIETETICA_BOOL_COLS),
     composicionSegmentada: (grasa || musculo) ? { grasa, musculo } : undefined,
     estiloVida: pick('ev', ESTILO_VIDA_COLS, ESTILO_VIDA_BOOL_COLS),
-    dieta
+    dieta,
+    fisioterapia: pickMapped('fi', FISIOTERAPIA_MAP)
   };
 }
 
@@ -644,6 +659,57 @@ async function guardarEvaluacionesConsulta(connection: any, idConsulta: number, 
   } else {
     await connection.query("DELETE FROM dietas_recetas WHERE id_consulta = ?", [idConsulta]);
   }
+
+  const fisio = con.fisioterapia;
+  if (fisio) {
+    const cols = FISIOTERAPIA_MAP.map(([, col]) => col);
+    const valores = FISIOTERAPIA_MAP.map(([jsonKey]) => fisio[jsonKey] ?? null);
+    await connection.query(
+      `INSERT INTO fisioterapia_evaluaciones (id_consulta, ${cols.join(', ')})
+       VALUES (?, ${cols.map(() => '?').join(', ')})
+       ON DUPLICATE KEY UPDATE ${cols.map(c => `${c} = VALUES(${c})`).join(', ')}`,
+      [idConsulta, ...valores]
+    );
+  } else {
+    await connection.query("DELETE FROM fisioterapia_evaluaciones WHERE id_consulta = ?", [idConsulta]);
+  }
+}
+
+// --- Normalización Fase 2e: compania_horario_atencion ---
+// Sin tabla legada. A diferencia de las tablas de consultas, `companias` se lee en 17 sitios
+// distintos de este archivo pero solo 2 consumen horarioAtencion — por eso esto NO se integra al
+// JOIN genérico de consultas; es un fetch puntual que se llama solo donde hace falta.
+const HORARIO_DIAS = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'] as const;
+
+async function fetchHorarioAtencionCompania(idCompania: number): Promise<any> {
+  if (!pool) return undefined;
+  const [rows] = await pool.query("SELECT * FROM compania_horario_atencion WHERE id_compania = ?", [idCompania]);
+  const row = (rows as any[])[0];
+  if (!row) return undefined;
+  const horario: any = {};
+  for (const dia of HORARIO_DIAS) {
+    horario[dia] = { abre: row[`${dia}_abre`], cierra: row[`${dia}_cierra`] };
+  }
+  return horario;
+}
+
+async function guardarHorarioAtencionCompania(connection: any, idCompania: number, horario: any): Promise<void> {
+  if (!horario) {
+    await connection.query("DELETE FROM compania_horario_atencion WHERE id_compania = ?", [idCompania]);
+    return;
+  }
+  const cols: string[] = [];
+  const valores: any[] = [];
+  for (const dia of HORARIO_DIAS) {
+    cols.push(`${dia}_abre`, `${dia}_cierra`);
+    valores.push(horario[dia]?.abre ?? null, horario[dia]?.cierra ?? null);
+  }
+  await connection.query(
+    `INSERT INTO compania_horario_atencion (id_compania, ${cols.join(', ')})
+     VALUES (?, ${cols.map(() => '?').join(', ')})
+     ON DUPLICATE KEY UPDATE ${cols.map(c => `${c} = VALUES(${c})`).join(', ')}`,
+    [idCompania, ...valores]
+  );
 }
 
 // --- Normalización Fase 2: factura_lineas ---
@@ -963,7 +1029,9 @@ async function startServer() {
   async function fetchCompanyById(id: number): Promise<Company | undefined> {
     if (dbConnected && pool) {
       const [rows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [id]);
-      return (rows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
+      const company = (rows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
+      if (company) company.horarioAtencion = await fetchHorarioAtencionCompania(company.id);
+      return company;
     }
     return localCompanies.find(c => c.id === id);
   }
@@ -1170,7 +1238,9 @@ async function startServer() {
         const [rows] = isSaasAdmin(session)
           ? await pool.query("SELECT * FROM companias")
           : await pool.query("SELECT * FROM companias WHERE id_compania = ?", [session.idCompania]);
-        res.json((rows as any[]).map(row => normalizeRow(row, 'id_compania')));
+        const companias = (rows as any[]).map(row => normalizeRow(row, 'id_compania'));
+        await Promise.all(companias.map(async c => { c.horarioAtencion = await fetchHorarioAtencionCompania(c.id); }));
+        res.json(companias);
       } else {
         res.json(isSaasAdmin(session) ? localCompanies : localCompanies.filter(c => c.id === session.idCompania));
       }
@@ -1198,28 +1268,30 @@ async function startServer() {
           const [exists] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [c.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, horarioAtencion = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, regimenSimplificado = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id_compania = ?",
+              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, regimenSimplificado = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id_compania = ?",
               [
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
-                c.estadoSaas, c.maxUsuarios, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, JSON.stringify(c.horarioAtencion || null), c.requiereConfirmacionCitas ? 1 : 0,
+                c.estadoSaas, c.maxUsuarios, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, c.requiereConfirmacionCitas ? 1 : 0,
                 c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0,
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl,
                 c.id
               ]
             );
+            await guardarHorarioAtencionCompania(pool, c.id, c.horarioAtencion);
             return res.json(c);
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, horarioAtencion, requiereConfirmacionCitas, provincia, canton, distrito, otrasSenas, regimenSimplificado, nombre_comercial, razon_social, tipo_identificacion, correo_emisor, iva_por_defecto, color_primario, color_sidebar, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, requiereConfirmacionCitas, provincia, canton, distrito, otrasSenas, regimenSimplificado, nombre_comercial, razon_social, tipo_identificacion, correo_emisor, iva_por_defecto, color_primario, color_sidebar, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
-            c.estadoSaas || 'PENDIENTE', c.maxUsuarios || 5, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, JSON.stringify(c.horarioAtencion || null), c.requiereConfirmacionCitas ? 1 : 0,
+            c.estadoSaas || 'PENDIENTE', c.maxUsuarios || 5, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, c.requiereConfirmacionCitas ? 1 : 0,
             c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0,
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl
           ]
         );
         c.id = (result as any).insertId;
+        await guardarHorarioAtencionCompania(pool, c.id, c.horarioAtencion);
 
         // Servicios por defecto según el colegio profesional correspondiente
         // (Fisioterapia/Nutrición/Ambas únicamente — Spa no aplica).
@@ -1635,7 +1707,6 @@ async function startServer() {
             // relación con esto) — se pisa explícitamente con la columna real estadoConsulta.
             estado: norm.estadoConsulta,
             antropometria: typeof norm.antropometria === 'string' ? JSON.parse(norm.antropometria) : norm.antropometria,
-            fisioterapia: typeof norm.fisioterapia === 'string' ? JSON.parse(norm.fisioterapia) : norm.fisioterapia,
             ...evaluaciones
           };
         });
@@ -1671,9 +1742,9 @@ async function startServer() {
             const [exists] = await connection.query("SELECT id_consulta FROM consultas WHERE id_consulta = ? AND (idCompania = ? OR id_compania = ?)", [con.id, parseInt(con.idCompania), parseInt(con.idCompania)]);
             if ((exists as any).length > 0) {
               await connection.query(
-                "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, estadoConsulta = ? WHERE id_consulta = ?",
+                "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, estadoConsulta = ? WHERE id_consulta = ?",
                 [
-                  parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
+                  parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), con.anotacionesGenerales, con.anotacionesGenerales,
                   con.estado || 'ABIERTA',
                   con.id
                 ]
@@ -1684,9 +1755,9 @@ async function startServer() {
             }
           }
           const [result] = await connection.query(
-            "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, antropometria, fisioterapia, anotacionesGenerales, comentarios_nutricionista, estadoConsulta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, antropometria, anotacionesGenerales, comentarios_nutricionista, estadoConsulta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
-              parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
+              parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), con.anotacionesGenerales, con.anotacionesGenerales,
               con.estado || 'ABIERTA'
             ]
           );
@@ -1741,7 +1812,6 @@ async function startServer() {
           // relación con esto) — se pisa explícitamente con la columna real estadoConsulta.
           estado: norm.estadoConsulta,
           antropometria: typeof norm.antropometria === 'string' ? JSON.parse(norm.antropometria) : norm.antropometria,
-          fisioterapia: typeof norm.fisioterapia === 'string' ? JSON.parse(norm.fisioterapia) : norm.fisioterapia,
           ...evaluaciones
         });
       } else {
@@ -4217,7 +4287,6 @@ async function startServer() {
           return {
             ...row,
             antropometria: typeof row.antropometria === 'string' ? JSON.parse(row.antropometria) : row.antropometria,
-            fisioterapia: typeof row.fisioterapia === 'string' ? JSON.parse(row.fisioterapia) : row.fisioterapia,
             ...evaluaciones
           };
         }
@@ -4411,6 +4480,7 @@ async function startServer() {
 
         const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [user.idCompania]);
         company = (companyRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
+        if (company) company.horarioAtencion = await fetchHorarioAtencionCompania(company.id);
 
         const [citaRows] = await pool.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ?", [idUsuario, `${fecha}%`]);
         citasDelDia = citaRows as any[];
@@ -4477,6 +4547,7 @@ async function startServer() {
         user = (userRows as any[]).map(row => normalizeRow(row, 'id_usuario'))[0];
         const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
+        if (company) company.horarioAtencion = await fetchHorarioAtencionCompania(company.id);
       } else {
         user = localUsers.find(u => u.id === idUsuarioNutricionista);
         company = localCompanies.find(c => c.id === idCompania);
