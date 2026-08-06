@@ -36,6 +36,9 @@ import { serviciosDefectoParaPerfil } from "./server/serviciosDefecto";
 import { parsearFacturaProveedorXML } from "./server/xmlProveedorParser";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail } from "./server/mailer";
+import type { AdjuntoEmail } from "./server/mailer";
+import { generarPdfDesdeHtml } from "./server/pdf";
+import { renderFacturaPdf, renderConsultaPacientePdf } from "./server/pdfTemplates";
 import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderFacturaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
 import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales, PorcentajeDieta, PlantillaDieta } from "./src/data/mockData";
@@ -2878,6 +2881,10 @@ async function startServer() {
         // validaron no-nulos arriba (omitirEnvioHacienda es false en este branch).
         try {
           const xmlFirmado = await firmarXadesEpes(xml, cert!.p12Base64, cert!.pin);
+          // El XML firmado se conserva: es el comprobante que el paciente tiene derecho a recibir
+          // y el respaldo ante Hacienda. Antes se descartaba al salir de este bloque, por eso
+          // facturas.xml_firmado estaba siempre en NULL.
+          nuevaFactura.xmlFirmado = xmlFirmado;
           const token = await obtenerTokenHacienda(credenciales!.ambiente, credenciales!.usuarioAtv, credenciales!.passwordAtv);
           const envio = await enviarFacturaHacienda({
             ambiente: credenciales!.ambiente,
@@ -2904,8 +2911,8 @@ async function startServer() {
         try {
           await connection.beginTransaction();
           const [result] = await connection.query(
-            "INSERT INTO facturas (idCompania, idCita, id_consulta, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idConsulta, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion, nuevaFactura.medioPago, nuevaFactura.montoRecibido]
+            "INSERT INTO facturas (idCompania, idCita, id_consulta, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido, xml_firmado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idConsulta, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion, nuevaFactura.medioPago, nuevaFactura.montoRecibido, nuevaFactura.xmlFirmado || null]
           );
           nuevaFactura.id = (result as any).insertId;
           await guardarLineasFactura(connection, nuevaFactura.id, nuevaFactura.lineas);
@@ -3114,6 +3121,7 @@ async function startServer() {
       const xmlFirmado = await firmarXadesEpes(xml, cert.p12Base64, cert.pin);
 
       const notaCredito: any = {
+        xmlFirmado,
         idCompania,
         idCita: null,
         idPaciente: factura.idPaciente,
@@ -3163,8 +3171,8 @@ async function startServer() {
         try {
           await connection.beginTransaction();
           const [result] = await connection.query(
-            "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [notaCredito.idCompania, notaCredito.idCita, notaCredito.idPaciente, notaCredito.clave, notaCredito.consecutivo, notaCredito.fechaEmision, notaCredito.ambiente, notaCredito.subtotal, notaCredito.totalIva, notaCredito.total, notaCredito.estado, notaCredito.mensajeError, notaCredito.creadaEn, notaCredito.condicionVenta, notaCredito.tipoDocumento, notaCredito.idFacturaReferencia, notaCredito.motivoAnulacion]
+            "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, xml_firmado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [notaCredito.idCompania, notaCredito.idCita, notaCredito.idPaciente, notaCredito.clave, notaCredito.consecutivo, notaCredito.fechaEmision, notaCredito.ambiente, notaCredito.subtotal, notaCredito.totalIva, notaCredito.total, notaCredito.estado, notaCredito.mensajeError, notaCredito.creadaEn, notaCredito.condicionVenta, notaCredito.tipoDocumento, notaCredito.idFacturaReferencia, notaCredito.motivoAnulacion, notaCredito.xmlFirmado || null]
           );
           notaCredito.id = (result as any).insertId;
           await guardarLineasFactura(connection, notaCredito.id, notaCredito.lineas);
@@ -3221,7 +3229,12 @@ async function startServer() {
       const nuevoEstado = mapaEstado[estadoHacienda.estado] || factura.estado;
 
       if (dbConnected && pool) {
-        await pool.query("UPDATE facturas SET estado = ? WHERE id_factura = ?", [nuevoEstado, id]);
+        // respuestaXmlBase64 es el XML de aceptacion/rechazo de Hacienda. La consulta siempre
+        // lo devolvia, pero se descartaba: es el tercer documento que el paciente debe recibir.
+        await pool.query(
+          "UPDATE facturas SET estado = ?, respuesta_hacienda = COALESCE(?, respuesta_hacienda) WHERE id_factura = ?",
+          [nuevoEstado, estadoHacienda.respuestaXmlBase64 || null, id]
+        );
       } else {
         const idx = localFacturas.findIndex(f => f.id === id);
         if (idx !== -1) localFacturas[idx].estado = nuevoEstado as any;
@@ -3253,6 +3266,10 @@ async function startServer() {
       factura.lineas = dbConnected && pool
         ? (await fetchLineasPorFactura([factura.id])).get(factura.id) || []
         : (typeof factura.lineas === 'string' ? JSON.parse(factura.lineas) : factura.lineas);
+      // Estas dos conservan el nombre snake_case del esquema original de Hacienda; se exponen en
+      // camelCase aquí, que es el único punto que las consume (los adjuntos del correo).
+      factura.xmlFirmado = factura.xmlFirmado ?? factura.xml_firmado ?? null;
+      factura.respuestaHacienda = factura.respuestaHacienda ?? factura.respuesta_hacienda ?? null;
 
       const idCompania = factura.idCompania;
       let company: Company | undefined;
@@ -3279,7 +3296,37 @@ async function startServer() {
       }
 
       const rendered = renderFacturaEmail({ company, patient: paciente, factura });
-      await sendMail(smtpConfig, { to: paciente.correoElectronico, subject: rendered.subject, html: rendered.html, text: rendered.text });
+
+      // Adjuntos: el PDF va siempre, incluso en facturas simuladas — es el comprobante que el
+      // paciente archiva. Los dos XML solo si existen: una factura en modo prueba no se firma ni
+      // se envía a Hacienda, así que nunca los tendrá. La regla es "adjunta lo que haya".
+      const adjuntosFactura: AdjuntoEmail[] = [];
+      const pdfFactura = await generarPdfDesdeHtml(
+        renderFacturaPdf({ company, patient: paciente, factura }),
+        `factura ${factura.consecutivo}`
+      );
+      if (pdfFactura) {
+        adjuntosFactura.push({ filename: `factura-${factura.consecutivo}.pdf`, content: pdfFactura, contentType: "application/pdf" });
+      }
+      if (factura.xmlFirmado) {
+        adjuntosFactura.push({ filename: `factura-${factura.consecutivo}.xml`, content: factura.xmlFirmado, contentType: "application/xml" });
+      }
+      if (factura.respuestaHacienda) {
+        // Hacienda la devuelve en base64; se adjunta ya decodificada para que el paciente pueda abrirla.
+        adjuntosFactura.push({
+          filename: `respuesta-hacienda-${factura.consecutivo}.xml`,
+          content: Buffer.from(factura.respuestaHacienda, "base64"),
+          contentType: "application/xml"
+        });
+      }
+
+      await sendMail(smtpConfig, {
+        to: paciente.correoElectronico,
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text,
+        attachments: adjuntosFactura
+      });
 
       const log: any = {
         idCompania,
@@ -4363,6 +4410,7 @@ async function startServer() {
       }
 
       let rendered;
+      const adjuntos: AdjuntoEmail[] = [];
       let idCita: number | null = null;
       let idConsulta: number | null = null;
       let destinatario: string;
@@ -4399,6 +4447,16 @@ async function startServer() {
           return res.status(400).json({ error: "Paciente o consulta no encontrados." });
         }
         rendered = renderConsultaEmail({ company, patient, consultation });
+        // Documento para el paciente: plan e indicaciones para seguir en casa. Si el PDF no se
+        // puede generar, el correo sale igual sin adjunto (ver server/pdf.ts).
+        const pdfConsulta = await generarPdfDesdeHtml(
+          renderConsultaPacientePdf({ company, patient, consultation }),
+          `consulta ${consultation.id}`
+        );
+        if (pdfConsulta) {
+          const etiqueta = consultation.tipo === "Fisioterapia" ? "plan-terapia" : "plan-nutricional";
+          adjuntos.push({ filename: `${etiqueta}-${consultation.fecha}.pdf`, content: pdfConsulta, contentType: "application/pdf" });
+        }
         idConsulta = consultation.id;
         destinatario = patient.correoElectronico;
         tipoLog = "CONSULTA";
@@ -4406,7 +4464,7 @@ async function startServer() {
         return res.status(400).json({ error: "Tipo de notificación inválido." });
       }
 
-      await sendMail(smtpConfig, { to: destinatario, subject: rendered.subject, html: rendered.html, text: rendered.text });
+      await sendMail(smtpConfig, { to: destinatario, subject: rendered.subject, html: rendered.html, text: rendered.text, attachments: adjuntos });
 
       const log: any = {
         idCompania,
