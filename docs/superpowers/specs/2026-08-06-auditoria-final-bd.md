@@ -2,6 +2,8 @@
 
 Ejecutada contra la base de datos en vivo (`ConsultorioDB`) al terminar las fases 1, 2, 2b, 2c, 2d, 2e y 3. Script: `.scratch/auditoria_final.cjs`; salida cruda: `.scratch/auditoria_final.txt`.
 
+> **Actualización tras la Fase 4.** Los hallazgos 1 y 2 de abajo se resolvieron: `cuentas_pagar.lineas` se normalizó en la Fase 4 (ya no queda ninguna columna JSON con dato relacional vivo). Además se agregó una verificación nueva — **código vs. esquema** — que detectó una regresión que esta auditoría no había visto; ver la sección final.
+
 ## Resumen
 
 | Métrica | Antes (inicio de Fase 1) | Ahora |
@@ -53,9 +55,22 @@ No todas son problema — hay que distinguir tres grupos:
 
 **Campos opcionales legítimos:** `dietas_recetas.fecha_inicio`/`fecha_fin` (sin equivalente en la UI actual, documentado en el spec de Fase 2d); `dietas_recetas.macro_*` (se llenan solo si el nutricionista define macros); `antecedentes_*.observaciones`, etc.
 
+## Verificación añadida: código vs. esquema
+
+Script: `.scratch/auditoria_codigo_vs_esquema.cjs`. Extrae cada nombre de tabla que aparece tras `FROM`/`JOIN`/`INSERT INTO`/`UPDATE … SET`/`DELETE FROM`/`ALTER TABLE`/`CREATE TABLE` en `server.ts` y lo cruza contra las tablas que existen de verdad. Ignora líneas de comentario, porque la prosa en español produce falsos positivos ("LEFT JOIN sin match…", "JOIN genérico…").
+
+**Esta verificación encontró una regresión que la auditoría de esquema no podía ver: la Fase 1 eliminó `cabys_catalogo`, pero quedaron dos `INSERT` contra ella** en la importación de factura de proveedor desde XML, dejando esa ruta rota con `ER_NO_SUCH_TABLE`. Corregido en el commit `5dde767`.
+
+Por qué se escapó antes: las pruebas en vivo de cada fase nunca ejercitaron la importación XML (requiere un archivo real de Hacienda que no hay en este entorno), y la auditoría original verificó **integridad del esquema**, no **consistencia entre el código y el esquema**. Son dos preguntas distintas y hacían falta las dos.
+
+Estado actual: **cero tablas referenciadas que no existan.** Tres tablas existen sin que el código las use — `antecedentes_familiares`, `antecedentes_personales` y `paciente_telefonos` — exactamente las que la Fase 1 documentó como funcionalidad más rica nunca conectada, conservadas a propósito.
+
+**Recomendación**: correr este script después de cualquier `DROP TABLE`/`DROP COLUMN` futuro. Es la red que faltaba.
+
 ## Recomendación de prioridades
 
-1. **Fase 4 — `cuentas_pagar.lineas` → `cuentas_pagar_lineas`.** Alto valor, riesgo mínimo: la tabla está vacía, no hay datos que migrar, y el patrón está probado. Es la única columna JSON que queda con dato relacional vivo.
+1. ~~**Fase 4** — `cuentas_pagar.lineas` → `cuentas_pagar_lineas`.~~ **Hecho** (commit `d821a6f`). Ya no queda ninguna columna JSON con dato relacional vivo en toda la base.
 2. **Fase 5 — consolidar los 20 pares snake_case/camelCase.** Mayor beneficio estructural (elimina la divergencia de raíz), pero necesita backfill previo de las filas legadas y toca los 6 modelos centrales. Merece su propio diseño.
 3. **Limpieza menor** — eliminar las 5 columnas de auditoría/duplicados 100% muertas del hallazgo 3. Trivial, se puede plegar a la Fase 5.
 4. **No tocar** `cierres_fiscales.datos`.
+5. **Brecha de atomicidad pendiente** — en la importación desde XML, el movimiento de inventario aún se confirma en una transacción aparte de la cuenta por pagar (la ruta equivalente en `POST /api/cxp` sí quedó unificada en la Fase 4). No se reestructuró porque esa ruta no se puede probar de punta a punta sin un XML real de proveedor.
