@@ -1176,7 +1176,7 @@ async function startServer() {
         // que debe ser único en todo el sistema, no solo dentro de esta empresa.
         const usuarioNormalizado = String(u.usuario || "").trim().toLowerCase();
         const yaExiste = dbConnected && pool
-          ? ((await pool.query("SELECT id FROM usuarios WHERE LOWER(usuario) = ?", [usuarioNormalizado]))[0] as any).length > 0
+          ? ((await pool.query("SELECT id_usuario FROM usuarios WHERE LOWER(usuario) = ?", [usuarioNormalizado]))[0] as any).length > 0
           : localUsers.some(item => item.usuario.trim().toLowerCase() === usuarioNormalizado);
         if (yaExiste) {
           return res.status(400).json({ error: "El nombre de usuario ya se encuentra registrado." });
@@ -3507,7 +3507,7 @@ async function startServer() {
         citas = (citasRows as any[]).map(row => normalizeRow(row, 'id'));
         const [consultasRows] = await pool.query("SELECT idPaciente, id_paciente, fecha, estadoConsulta FROM consultas WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]);
         consultas = (consultasRows as any[]).map(row => normalizeRow(row, 'id_consulta')).map(c => ({ idPaciente: c.idPaciente, fecha: c.fecha, estado: c.estadoConsulta }));
-        const [pacientesRows] = await pool.query("SELECT id, id_paciente, nombreCompleto FROM pacientes WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]);
+        const [pacientesRows] = await pool.query("SELECT id_paciente, nombreCompleto FROM pacientes WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]);
         pacientes = (pacientesRows as any[]).map(row => normalizeRow(row, 'id_paciente')).map(p => ({ id: p.id, nombreCompleto: p.nombreCompleto }));
       } else {
         citas = localCitas.filter(c => c.idCompania === idCompania).map(c => ({ idPaciente: c.idPaciente, fechaHora: c.fechaHora, estadoCita: c.estadoCita }));
