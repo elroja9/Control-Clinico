@@ -259,8 +259,8 @@ async function seedDefaultData() {
     console.log("[MySQL] Seeding default consultations...");
     for (const con of defaultConsultations) {
       await pool.query(
-        "INSERT INTO consultas (id, idPaciente, idCompania, fecha, tipo, motivo, horasSueno, compromiso, antropometria, anotacionesGenerales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [con.id, con.idPaciente, con.idCompania, con.fecha, con.tipo, con.motivo, con.horasSueno, con.compromiso, JSON.stringify(con.antropometria || null), con.anotacionesGenerales]
+        "INSERT INTO consultas (id, idPaciente, idCompania, fecha, tipo, motivo, horasSueno, compromiso, anotacionesGenerales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [con.id, con.idPaciente, con.idCompania, con.fecha, con.tipo, con.motivo, con.horasSueno, con.compromiso, con.anotacionesGenerales]
       );
     }
   }
@@ -427,7 +427,12 @@ function normalizeRow(row: any, ownIdColumn: string): any {
 // Estas 3 tablas legadas de ConsultorioDB_schema.sql calzan campo por campo (mismo nombre) con
 // lo que la app ya guardaba como JSON en consultas.evaluacionAntropometrica/Bioquimica/Dietetica
 // — por eso no hace falta traducir nombres, solo mover el storage de columna JSON a tabla propia.
-const EVAL_ANTROPOMETRICA_COLS = ['peso', 'talla', 'imc', 'c_muneca', 'porcentaje_grasa_balanza', 'grasa_visceral',
+// `porcentaje_grasa_corporal` se agregó en Fase 3: es el único campo del antiguo JSON
+// consultas.antropometria que no existía ya aquí ("Grasa Corporal (%)" del formulario es un
+// input distinto de "Grasa Balanza (%)" → porcentaje_grasa_balanza). Los otros 8 campos de ese
+// JSON eran duplicados literales de columnas de esta tabla — ver reconstruirEvaluaciones.
+const EVAL_ANTROPOMETRICA_COLS = ['peso', 'talla', 'imc', 'c_muneca', 'porcentaje_grasa_balanza',
+  'porcentaje_grasa_corporal', 'grasa_visceral',
   'porcentaje_agua', 'masa_muscular', 'kg_magros', 'masa_osea', 'tmb', 'edad_metabolica', 'cintura',
   'circunferencia_abdominal', 'pliegue_triceps', 'pliegue_subescapular', 'pliegue_biceps', 'pliegue_cresta_iliaca',
   'pliegue_supraespinal', 'pliegue_abdominal', 'pliegue_muslo_medio', 'pliegue_pierna_medial',
@@ -518,7 +523,7 @@ const CONSULTA_EVAL_JOIN = "LEFT JOIN evaluacion_antropometrica ea ON ea.id_cons
 // Devuelve `undefined` para el objeto completo si la consulta no tiene fila en esa tabla hija
 // (LEFT JOIN sin match trae todas sus columnas en NULL) — mismo comportamiento que un JSON `null`.
 function reconstruirEvaluaciones(row: any): {
-  evaluacionAntropometrica: any; evaluacionBioquimica: any; evaluacionDietetica: any; composicionSegmentada: any; estiloVida: any; dieta: any; fisioterapia: any;
+  evaluacionAntropometrica: any; evaluacionBioquimica: any; evaluacionDietetica: any; composicionSegmentada: any; estiloVida: any; dieta: any; fisioterapia: any; antropometria: any;
 } {
   const pick = (prefix: string, cols: string[], boolCols?: Set<string>) => {
     const hasAny = cols.some(c => row[`${prefix}_${c}`] != null);
@@ -547,14 +552,31 @@ function reconstruirEvaluaciones(row: any): {
     macros: pickMapped('dr', DIETA_MACRO_MAP)
   } : undefined;
 
+  // `antropometria` (Fase 3) no tiene tabla propia: es una vista derivada de las mismas columnas
+  // de evaluacion_antropometrica que ya trae el JOIN. Antes era una columna JSON aparte que
+  // duplicaba 8 de estos 9 campos y podía divergir; ahora ambas formas leen la misma fila.
+  const ea = pick('ea', EVAL_ANTROPOMETRICA_COLS);
+  const antropometria = ea ? {
+    peso: ea.peso,
+    talla: ea.talla,
+    imc: ea.imc,
+    grasaCorporal: ea.porcentaje_grasa_corporal,
+    grasaVisceral: ea.grasa_visceral,
+    masaMuscular: ea.masa_muscular,
+    masaOsea: ea.masa_osea,
+    cintura: ea.cintura,
+    abdominal: ea.circunferencia_abdominal
+  } : undefined;
+
   return {
-    evaluacionAntropometrica: pick('ea', EVAL_ANTROPOMETRICA_COLS),
+    evaluacionAntropometrica: ea,
     evaluacionBioquimica: pick('eb', EVAL_BIOQUIMICA_COLS),
     evaluacionDietetica: pick('ed', EVAL_DIETETICA_COLS, EVAL_DIETETICA_BOOL_COLS),
     composicionSegmentada: (grasa || musculo) ? { grasa, musculo } : undefined,
     estiloVida: pick('ev', ESTILO_VIDA_COLS, ESTILO_VIDA_BOOL_COLS),
     dieta,
-    fisioterapia: pickMapped('fi', FISIOTERAPIA_MAP)
+    fisioterapia: pickMapped('fi', FISIOTERAPIA_MAP),
+    antropometria
   };
 }
 
@@ -567,7 +589,18 @@ async function guardarEvaluacionesConsulta(connection: any, idConsulta: number, 
       `INSERT INTO evaluacion_antropometrica (id_consulta, ${EVAL_ANTROPOMETRICA_COLS.join(', ')})
        VALUES (?, ${EVAL_ANTROPOMETRICA_COLS.map(() => '?').join(', ')})
        ON DUPLICATE KEY UPDATE ${EVAL_ANTROPOMETRICA_COLS.map(c => `${c} = VALUES(${c})`).join(', ')}`,
-      [idConsulta, ...EVAL_ANTROPOMETRICA_COLS.map(c => ea[c] ?? null)]
+      [idConsulta, ...EVAL_ANTROPOMETRICA_COLS.map(c => {
+        // "Grasa Corporal (%)" es el único campo del antiguo JSON que no estaba ya en esta tabla.
+        // El formulario lo manda dentro de con.antropometria, así que esa forma tiene precedencia:
+        // es la que el usuario edita. Se acepta también dentro de evaluacionAntropometrica para no
+        // atarnos a esa forma, pero como fallback — si ganara, un round-trip leer→modificar→guardar
+        // reescribiría el valor viejo que el GET devolvió, descartando el cambio del usuario.
+        // Los otros 8 campos de con.antropometria se ignoran: duplican columnas de esta tabla.
+        if (c === 'porcentaje_grasa_corporal') {
+          return con.antropometria?.grasaCorporal ?? ea.porcentaje_grasa_corporal ?? null;
+        }
+        return ea[c] ?? null;
+      })]
     );
   } else {
     await connection.query("DELETE FROM evaluacion_antropometrica WHERE id_consulta = ?", [idConsulta]);
@@ -1706,7 +1739,6 @@ async function startServer() {
             // `norm.estado` es la columna legada tinyint(1) de ConsultorioDB_schema.sql (sin
             // relación con esto) — se pisa explícitamente con la columna real estadoConsulta.
             estado: norm.estadoConsulta,
-            antropometria: typeof norm.antropometria === 'string' ? JSON.parse(norm.antropometria) : norm.antropometria,
             ...evaluaciones
           };
         });
@@ -1742,9 +1774,9 @@ async function startServer() {
             const [exists] = await connection.query("SELECT id_consulta FROM consultas WHERE id_consulta = ? AND (idCompania = ? OR id_compania = ?)", [con.id, parseInt(con.idCompania), parseInt(con.idCompania)]);
             if ((exists as any).length > 0) {
               await connection.query(
-                "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, estadoConsulta = ? WHERE id_consulta = ?",
+                "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, estadoConsulta = ? WHERE id_consulta = ?",
                 [
-                  parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), con.anotacionesGenerales, con.anotacionesGenerales,
+                  parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), con.anotacionesGenerales, con.anotacionesGenerales,
                   con.estado || 'ABIERTA',
                   con.id
                 ]
@@ -1755,9 +1787,9 @@ async function startServer() {
             }
           }
           const [result] = await connection.query(
-            "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, antropometria, anotacionesGenerales, comentarios_nutricionista, estadoConsulta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, anotacionesGenerales, comentarios_nutricionista, estadoConsulta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
-              parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), con.anotacionesGenerales, con.anotacionesGenerales,
+              parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), con.anotacionesGenerales, con.anotacionesGenerales,
               con.estado || 'ABIERTA'
             ]
           );
@@ -1811,7 +1843,6 @@ async function startServer() {
           // `norm.estado` es la columna legada tinyint(1) de ConsultorioDB_schema.sql (sin
           // relación con esto) — se pisa explícitamente con la columna real estadoConsulta.
           estado: norm.estadoConsulta,
-          antropometria: typeof norm.antropometria === 'string' ? JSON.parse(norm.antropometria) : norm.antropometria,
           ...evaluaciones
         });
       } else {
@@ -4286,7 +4317,6 @@ async function startServer() {
           const evaluaciones = reconstruirEvaluaciones(rawRow);
           return {
             ...row,
-            antropometria: typeof row.antropometria === 'string' ? JSON.parse(row.antropometria) : row.antropometria,
             ...evaluaciones
           };
         }
