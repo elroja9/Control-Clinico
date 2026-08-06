@@ -2786,11 +2786,19 @@ async function startServer() {
         try {
           await connection.beginTransaction();
 
+          // La fila de configuración solo se creaba al guardar credenciales de Hacienda. Una
+          // empresa que factura sin haberlas guardado (ambiente de pruebas) no tenía fila: el
+          // SELECT no devolvía nada, el contador arrancaba en 0 y el UPDATE afectaba 0 filas en
+          // silencio — así que TODAS sus facturas salían con el consecutivo 1. Con el upsert la
+          // numeración se autocorrige exista o no la fila.
           const [rows] = await connection.query("SELECT ultimo_consecutivo FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE", [idCompania]);
           const actual = (rows as any[])[0]?.ultimo_consecutivo || 0;
           siguienteSecuencial = actual + 1;
           const consecutivoParaMovimiento = generarConsecutivo(siguienteSecuencial);
-          await connection.query("UPDATE compania_hacienda_config SET ultimo_consecutivo = ? WHERE id_compania = ?", [siguienteSecuencial, idCompania]);
+          await connection.query(
+            "INSERT INTO compania_hacienda_config (id_compania, ultimo_consecutivo) VALUES (?, ?) ON DUPLICATE KEY UPDATE ultimo_consecutivo = VALUES(ultimo_consecutivo)",
+            [idCompania, siguienteSecuencial]
+          );
 
           for (const l of lineasCalculadas) {
             if (l.tipo !== 'ARTICULO' || !l.idServicio) continue;
@@ -3049,10 +3057,15 @@ async function startServer() {
         const connection = await pool.getConnection();
         try {
           await connection.beginTransaction();
+          // Upsert por la misma razón que en POST /api/facturas: sin fila de configuración el
+          // UPDATE no hacía nada y todas las notas de crédito repetían el consecutivo 1.
           const [rows] = await connection.query("SELECT ultimo_consecutivo_nc FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE", [idCompania]);
           const actual = (rows as any[])[0]?.ultimo_consecutivo_nc || 0;
           siguienteSecuencialNc = actual + 1;
-          await connection.query("UPDATE compania_hacienda_config SET ultimo_consecutivo_nc = ? WHERE id_compania = ?", [siguienteSecuencialNc, idCompania]);
+          await connection.query(
+            "INSERT INTO compania_hacienda_config (id_compania, ultimo_consecutivo_nc) VALUES (?, ?) ON DUPLICATE KEY UPDATE ultimo_consecutivo_nc = VALUES(ultimo_consecutivo_nc)",
+            [idCompania, siguienteSecuencialNc]
+          );
 
           for (const l of lineasOriginales) {
             if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
