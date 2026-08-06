@@ -426,6 +426,167 @@ function normalizeRow(row: any, ownIdColumn: string): any {
   return copy;
 }
 
+// --- Normalización Fase 2: evaluacion_antropometrica/bioquimica/dietetica ---
+// Estas 3 tablas legadas de ConsultorioDB_schema.sql calzan campo por campo (mismo nombre) con
+// lo que la app ya guardaba como JSON en consultas.evaluacionAntropometrica/Bioquimica/Dietetica
+// — por eso no hace falta traducir nombres, solo mover el storage de columna JSON a tabla propia.
+const EVAL_ANTROPOMETRICA_COLS = ['peso', 'talla', 'imc', 'c_muneca', 'porcentaje_grasa_balanza', 'grasa_visceral',
+  'porcentaje_agua', 'masa_muscular', 'kg_magros', 'masa_osea', 'tmb', 'edad_metabolica', 'cintura',
+  'circunferencia_abdominal', 'pliegue_triceps', 'pliegue_subescapular', 'pliegue_biceps', 'pliegue_cresta_iliaca',
+  'pliegue_supraespinal', 'pliegue_abdominal', 'pliegue_muslo_medio', 'pliegue_pierna_medial',
+  'perimetro_brazo_relajado', 'perimetro_brazo_contraido'];
+const EVAL_BIOQUIMICA_COLS = ['indice_homa', 'hb1ac_glicosilada', 'vit_d', 'glicemia', 'insulinemia', 'hematocrito',
+  'hemoglobina', 'albumina', 'acido_urico', 'trigliceridos', 'colesterol_total', 'colesterol_hdl', 'colesterol_ldl',
+  'intolerancias_alimentarias', 'alergias'];
+const EVAL_DIETETICA_COLS = ['tiempos_comida', 'lugar_consumo', 'quien_prepara', 'calificacion_apetito', 'tipo_grasas',
+  'coccion_asado', 'coccion_fritura', 'coccion_hervido', 'coccion_plancha', 'coccion_vapor', 'coccion_freidora_aire',
+  'agrega_sal', 'consume_azucar', 'utiliza_edulcorante', 'dietas_anteriores', 'consume_agua', 'cantidad_agua',
+  'alimentos_no_consume', 'alimentos_preferidos'];
+const EVAL_DIETETICA_BOOL_COLS = new Set(['coccion_asado', 'coccion_fritura', 'coccion_hervido', 'coccion_plancha',
+  'coccion_vapor', 'coccion_freidora_aire', 'agrega_sal', 'consume_azucar', 'utiliza_edulcorante', 'consume_agua']);
+
+const CONSULTA_EVAL_SELECT = [
+  'c.*',
+  ...EVAL_ANTROPOMETRICA_COLS.map(col => `ea.${col} AS ea_${col}`),
+  ...EVAL_BIOQUIMICA_COLS.map(col => `eb.${col} AS eb_${col}`),
+  ...EVAL_DIETETICA_COLS.map(col => `ed.${col} AS ed_${col}`)
+].join(', ');
+
+const CONSULTA_EVAL_JOIN = "LEFT JOIN evaluacion_antropometrica ea ON ea.id_consulta = c.id_consulta " +
+  "LEFT JOIN evaluacion_bioquimica eb ON eb.id_consulta = c.id_consulta " +
+  "LEFT JOIN evaluacion_dietetica ed ON ed.id_consulta = c.id_consulta";
+
+// Reconstruye los 3 objetos anidados que el frontend espera a partir de las columnas con
+// prefijo (ea_/eb_/ed_) que trae una fila leída con CONSULTA_EVAL_SELECT + CONSULTA_EVAL_JOIN.
+// Devuelve `undefined` para el objeto completo si la consulta no tiene fila en esa tabla hija
+// (LEFT JOIN sin match trae todas sus columnas en NULL) — mismo comportamiento que un JSON `null`.
+function reconstruirEvaluaciones(row: any): { evaluacionAntropometrica: any; evaluacionBioquimica: any; evaluacionDietetica: any } {
+  const pick = (prefix: string, cols: string[], boolCols?: Set<string>) => {
+    const hasAny = cols.some(c => row[`${prefix}_${c}`] != null);
+    if (!hasAny) return undefined;
+    const obj: any = {};
+    for (const c of cols) {
+      const v = row[`${prefix}_${c}`];
+      obj[c] = boolCols?.has(c) ? (v == null ? undefined : Boolean(v)) : v;
+    }
+    return obj;
+  };
+  return {
+    evaluacionAntropometrica: pick('ea', EVAL_ANTROPOMETRICA_COLS),
+    evaluacionBioquimica: pick('eb', EVAL_BIOQUIMICA_COLS),
+    evaluacionDietetica: pick('ed', EVAL_DIETETICA_COLS, EVAL_DIETETICA_BOOL_COLS)
+  };
+}
+
+// Upsert/borrado de las 3 evaluaciones dentro de la misma transacción que guarda `consultas` —
+// si con.evaluacionXxx viene null/ausente se borra la fila (equivalente a guardar JSON `null`).
+async function guardarEvaluacionesConsulta(connection: any, idConsulta: number, con: any): Promise<void> {
+  const ea = con.evaluacionAntropometrica;
+  if (ea) {
+    await connection.query(
+      `INSERT INTO evaluacion_antropometrica (id_consulta, ${EVAL_ANTROPOMETRICA_COLS.join(', ')})
+       VALUES (?, ${EVAL_ANTROPOMETRICA_COLS.map(() => '?').join(', ')})
+       ON DUPLICATE KEY UPDATE ${EVAL_ANTROPOMETRICA_COLS.map(c => `${c} = VALUES(${c})`).join(', ')}`,
+      [idConsulta, ...EVAL_ANTROPOMETRICA_COLS.map(c => ea[c] ?? null)]
+    );
+  } else {
+    await connection.query("DELETE FROM evaluacion_antropometrica WHERE id_consulta = ?", [idConsulta]);
+  }
+
+  const eb = con.evaluacionBioquimica;
+  if (eb) {
+    await connection.query(
+      `INSERT INTO evaluacion_bioquimica (id_consulta, ${EVAL_BIOQUIMICA_COLS.join(', ')})
+       VALUES (?, ${EVAL_BIOQUIMICA_COLS.map(() => '?').join(', ')})
+       ON DUPLICATE KEY UPDATE ${EVAL_BIOQUIMICA_COLS.map(c => `${c} = VALUES(${c})`).join(', ')}`,
+      [idConsulta, ...EVAL_BIOQUIMICA_COLS.map(c => eb[c] ?? null)]
+    );
+  } else {
+    await connection.query("DELETE FROM evaluacion_bioquimica WHERE id_consulta = ?", [idConsulta]);
+  }
+
+  const ed = con.evaluacionDietetica;
+  if (ed) {
+    await connection.query(
+      `INSERT INTO evaluacion_dietetica (id_consulta, ${EVAL_DIETETICA_COLS.join(', ')})
+       VALUES (?, ${EVAL_DIETETICA_COLS.map(() => '?').join(', ')})
+       ON DUPLICATE KEY UPDATE ${EVAL_DIETETICA_COLS.map(c => `${c} = VALUES(${c})`).join(', ')}`,
+      [idConsulta, ...EVAL_DIETETICA_COLS.map(c => {
+        const v = ed[c];
+        return typeof v === 'boolean' ? (v ? 1 : 0) : (v ?? null);
+      })]
+    );
+  } else {
+    await connection.query("DELETE FROM evaluacion_dietetica WHERE id_consulta = ?", [idConsulta]);
+  }
+}
+
+// --- Normalización Fase 2: factura_lineas ---
+// A diferencia de las 3 evaluaciones, varios campos que la app guardaba en el JSON son alias
+// exactos de otro (verificado en server/haciendaFactura.ts::calcularLineas: subTotal === montoTotal,
+// baseImponible === subTotal, impuestoNeto === montoIva) — se reconstruyen aquí en vez de tener
+// columna propia. `numeroLinea` se deriva del orden de inserción (ORDER BY id_linea).
+function reconstruirLineaFactura(row: any, numeroLinea: number): any {
+  const montoTotal = row.monto_total;
+  const montoIva = row.monto_iva;
+  return {
+    idServicio: row.id_servicio,
+    tipo: row.tipo,
+    codigoCabys: row.codigo_cabys,
+    detalle: row.detalle,
+    unidadMedida: row.unidad_medida,
+    cantidad: row.cantidad,
+    precioUnitario: row.precio_unitario,
+    porcentajeIva: row.porcentaje_iva,
+    codigoTarifaIva: row.codigo_tarifa_iva,
+    numeroLinea,
+    montoTotal,
+    subTotal: montoTotal,
+    baseImponible: montoTotal,
+    montoIva,
+    impuestoNeto: montoIva,
+    montoTotalLinea: montoTotal + montoIva
+  };
+}
+
+// Trae las líneas de varias facturas de una sola consulta (usado por GET /api/facturas y el
+// reporte D-104), agrupadas por id_factura y en el orden en que se insertaron originalmente.
+async function fetchLineasPorFactura(idsFactura: number[]): Promise<Map<number, any[]>> {
+  const mapa = new Map<number, any[]>();
+  if (!pool || idsFactura.length === 0) return mapa;
+  const [rows] = await pool.query(
+    "SELECT * FROM factura_lineas WHERE id_factura IN (?) ORDER BY id_factura ASC, id_linea ASC",
+    [idsFactura]
+  );
+  for (const row of rows as any[]) {
+    if (!mapa.has(row.id_factura)) mapa.set(row.id_factura, []);
+    const lista = mapa.get(row.id_factura)!;
+    lista.push(reconstruirLineaFactura(row, lista.length + 1));
+  }
+  return mapa;
+}
+
+// Inserta en lote las líneas calculadas de una factura/nota de crédito recién creada, dentro de
+// la misma transacción que el INSERT de `facturas`.
+async function guardarLineasFactura(connection: any, idFactura: number, lineas: any[]): Promise<void> {
+  if (lineas.length === 0) return;
+  const placeholders = lineas.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+  const valores: any[] = [];
+  for (const l of lineas) {
+    valores.push(
+      idFactura, l.idServicio ?? null, l.tipo, l.detalle, l.unidadMedida, l.codigoCabys ?? null,
+      l.cantidad, l.precioUnitario, l.porcentajeIva, l.codigoTarifaIva, l.montoIva, l.montoTotal
+    );
+  }
+  await connection.query(
+    `INSERT INTO factura_lineas
+      (id_factura, id_servicio, tipo, detalle, unidad_medida, codigo_cabys, cantidad, precio_unitario,
+       porcentaje_iva, codigo_tarifa_iva, monto_iva, monto_total)
+     VALUES ${placeholders}`,
+    valores
+  );
+}
+
 // --- Reportes fiscales D-104 (IVA mensual) y D-101 (Renta anual) ---
 // Funciones puras: reciben datos ya obtenidos (de MySQL o del fallback local) y calculan el
 // reporte, para que GET /api/reportes/d104 y POST /api/reportes/d104/cerrar (que necesita
@@ -1336,9 +1497,13 @@ async function startServer() {
     try {
       const session = sessionOf(req);
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM consultas WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [session.idCompania, session.idCompania]);
+        const [rows] = await pool.query(
+          `SELECT ${CONSULTA_EVAL_SELECT} FROM consultas c ${CONSULTA_EVAL_JOIN} WHERE (c.idCompania = ? OR c.id_compania = ?) AND c.activo = 1`,
+          [session.idCompania, session.idCompania]
+        );
         const formatted = (rows as any[]).map(row => {
           const norm = normalizeRow(row, 'id_consulta');
+          const evaluaciones = reconstruirEvaluaciones(row);
           return {
             ...norm,
             // `norm.estado` es la columna legada tinyint(1) de ConsultorioDB_schema.sql (sin
@@ -1347,9 +1512,7 @@ async function startServer() {
             antropometria: typeof norm.antropometria === 'string' ? JSON.parse(norm.antropometria) : norm.antropometria,
             dieta: typeof norm.dieta === 'string' ? JSON.parse(norm.dieta) : norm.dieta,
             fisioterapia: typeof norm.fisioterapia === 'string' ? JSON.parse(norm.fisioterapia) : norm.fisioterapia,
-            evaluacionAntropometrica: typeof norm.evaluacionAntropometrica === 'string' ? JSON.parse(norm.evaluacionAntropometrica) : norm.evaluacionAntropometrica,
-            evaluacionBioquimica: typeof norm.evaluacionBioquimica === 'string' ? JSON.parse(norm.evaluacionBioquimica) : norm.evaluacionBioquimica,
-            evaluacionDietetica: typeof norm.evaluacionDietetica === 'string' ? JSON.parse(norm.evaluacionDietetica) : norm.evaluacionDietetica,
+            ...evaluaciones,
             composicionSegmentada: typeof norm.composicionSegmentada === 'string' ? JSON.parse(norm.composicionSegmentada) : norm.composicionSegmentada,
             estiloVida: typeof norm.estiloVida === 'string' ? JSON.parse(norm.estiloVida) : norm.estiloVida
           };
@@ -1378,30 +1541,43 @@ async function startServer() {
         }
       }
       if (dbConnected && pool) {
-        if (con.id) {
-          // Scoped by idCompania too — see comment on the equivalent usuarios check above.
-          const [exists] = await pool.query("SELECT * FROM consultas WHERE id_consulta = ? AND (idCompania = ? OR id_compania = ?)", [con.id, parseInt(con.idCompania), parseInt(con.idCompania)]);
-          if ((exists as any).length > 0) {
-            await pool.query(
-              "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, dieta = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, evaluacionAntropometrica = ?, evaluacionBioquimica = ?, evaluacionDietetica = ?, composicionSegmentada = ?, estiloVida = ?, estadoConsulta = ? WHERE id_consulta = ?",
-              [
-                parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
-                JSON.stringify(con.evaluacionAntropometrica || null), JSON.stringify(con.evaluacionBioquimica || null), JSON.stringify(con.evaluacionDietetica || null), JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null), con.estado || 'ABIERTA',
-                con.id
-              ]
-            );
-            return res.json(con);
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          if (con.id) {
+            // Scoped by idCompania too — see comment on the equivalent usuarios check above.
+            const [exists] = await connection.query("SELECT id_consulta FROM consultas WHERE id_consulta = ? AND (idCompania = ? OR id_compania = ?)", [con.id, parseInt(con.idCompania), parseInt(con.idCompania)]);
+            if ((exists as any).length > 0) {
+              await connection.query(
+                "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, dieta = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, composicionSegmentada = ?, estiloVida = ?, estadoConsulta = ? WHERE id_consulta = ?",
+                [
+                  parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
+                  JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null), con.estado || 'ABIERTA',
+                  con.id
+                ]
+              );
+              await guardarEvaluacionesConsulta(connection, con.id, con);
+              await connection.commit();
+              return res.json(con);
+            }
           }
+          const [result] = await connection.query(
+            "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, antropometria, dieta, fisioterapia, anotacionesGenerales, comentarios_nutricionista, composicionSegmentada, estiloVida, estadoConsulta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+              parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
+              JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null), con.estado || 'ABIERTA'
+            ]
+          );
+          con.id = (result as any).insertId;
+          await guardarEvaluacionesConsulta(connection, con.id, con);
+          await connection.commit();
+          res.json(con);
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
         }
-        const [result] = await pool.query(
-          "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, antropometria, dieta, fisioterapia, anotacionesGenerales, comentarios_nutricionista, evaluacionAntropometrica, evaluacionBioquimica, evaluacionDietetica, composicionSegmentada, estiloVida, estadoConsulta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [
-            parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
-            JSON.stringify(con.evaluacionAntropometrica || null), JSON.stringify(con.evaluacionBioquimica || null), JSON.stringify(con.evaluacionDietetica || null), JSON.stringify(con.composicionSegmentada || null), JSON.stringify(con.estiloVida || null), con.estado || 'ABIERTA'
-          ]
-        );
-        con.id = (result as any).insertId;
-        res.json(con);
       } else {
         if (con.id) {
           localConsultations = localConsultations.map(item => item.id === con.id ? con : item);
@@ -1432,10 +1608,11 @@ async function startServer() {
         if ((result as any).affectedRows === 0) {
           return res.status(404).json({ error: "Consulta no encontrada." });
         }
-        const [rows] = await pool.query("SELECT * FROM consultas WHERE id_consulta = ?", [id]);
+        const [rows] = await pool.query(`SELECT ${CONSULTA_EVAL_SELECT} FROM consultas c ${CONSULTA_EVAL_JOIN} WHERE c.id_consulta = ?`, [id]);
         const row = (rows as any[])[0];
         if (!row) return res.status(404).json({ error: "Consulta no encontrada." });
         const norm = normalizeRow(row, 'id_consulta');
+        const evaluaciones = reconstruirEvaluaciones(row);
         res.json({
           ...norm,
           // `norm.estado` es la columna legada tinyint(1) de ConsultorioDB_schema.sql (sin
@@ -1444,9 +1621,7 @@ async function startServer() {
           antropometria: typeof norm.antropometria === 'string' ? JSON.parse(norm.antropometria) : norm.antropometria,
           dieta: typeof norm.dieta === 'string' ? JSON.parse(norm.dieta) : norm.dieta,
           fisioterapia: typeof norm.fisioterapia === 'string' ? JSON.parse(norm.fisioterapia) : norm.fisioterapia,
-          evaluacionAntropometrica: typeof norm.evaluacionAntropometrica === 'string' ? JSON.parse(norm.evaluacionAntropometrica) : norm.evaluacionAntropometrica,
-          evaluacionBioquimica: typeof norm.evaluacionBioquimica === 'string' ? JSON.parse(norm.evaluacionBioquimica) : norm.evaluacionBioquimica,
-          evaluacionDietetica: typeof norm.evaluacionDietetica === 'string' ? JSON.parse(norm.evaluacionDietetica) : norm.evaluacionDietetica,
+          ...evaluaciones,
           composicionSegmentada: typeof norm.composicionSegmentada === 'string' ? JSON.parse(norm.composicionSegmentada) : norm.composicionSegmentada,
           estiloVida: typeof norm.estiloVida === 'string' ? JSON.parse(norm.estiloVida) : norm.estiloVida
         });
@@ -2234,7 +2409,9 @@ async function startServer() {
       const idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         const [rows] = await pool.query("SELECT * FROM facturas WHERE idCompania = ?", [idCompania]);
-        res.json((rows as any[]).map(row => normalizeRow(row, 'id_factura')).map(r => ({ ...r, idConsulta: r.id_consulta, lineas: typeof r.lineas === 'string' ? JSON.parse(r.lineas) : r.lineas })));
+        const facturas = (rows as any[]).map(row => normalizeRow(row, 'id_factura'));
+        const lineasPorFactura = await fetchLineasPorFactura(facturas.map(f => f.id_factura));
+        res.json(facturas.map(r => ({ ...r, idConsulta: r.id_consulta, lineas: lineasPorFactura.get(r.id_factura) || [] })));
       } else {
         res.json(localFacturas.filter(f => f.idCompania === idCompania));
       }
@@ -2483,19 +2660,26 @@ async function startServer() {
       }
 
       if (dbConnected && pool) {
+        const connection = await pool.getConnection();
         try {
-          const [result] = await pool.query(
-            "INSERT INTO facturas (idCompania, idCita, id_consulta, idPaciente, clave, consecutivo, fechaEmision, ambiente, lineas, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idConsulta, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, JSON.stringify(nuevaFactura.lineas), nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion, nuevaFactura.medioPago, nuevaFactura.montoRecibido]
+          await connection.beginTransaction();
+          const [result] = await connection.query(
+            "INSERT INTO facturas (idCompania, idCita, id_consulta, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idConsulta, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion, nuevaFactura.medioPago, nuevaFactura.montoRecibido]
           );
           nuevaFactura.id = (result as any).insertId;
+          await guardarLineasFactura(connection, nuevaFactura.id, nuevaFactura.lineas);
+          await connection.commit();
         } catch (err: any) {
+          await connection.rollback();
           // Red de seguridad ante una carrera entre dos solicitudes simultáneas para la misma
           // consulta — el chequeo de arriba ya cubre el caso normal (secuencial).
           if (err.code === "ER_DUP_ENTRY" && nuevaFactura.idConsulta != null) {
             return res.status(409).json({ error: "Esta consulta ya fue facturada." });
           }
           throw err;
+        } finally {
+          connection.release();
         }
       } else {
         nuevaFactura.id = Math.max(0, ...localFacturas.map(f => f.id)) + 1;
@@ -2593,7 +2777,9 @@ async function startServer() {
       const credenciales = await cargarCredencialesAtv(idCompania);
       if (!credenciales) return res.status(400).json({ error: "Configure primero el usuario y contraseña ATV de Hacienda en Configuración de Empresa." });
 
-      const lineasOriginales = typeof factura.lineas === "string" ? JSON.parse(factura.lineas) : factura.lineas;
+      const lineasOriginales = dbConnected && pool
+        ? (await fetchLineasPorFactura([factura.id])).get(factura.id) || []
+        : (typeof factura.lineas === "string" ? JSON.parse(factura.lineas) : factura.lineas);
       const resumen = calcularResumen(lineasOriginales);
 
       // Numeración de la Nota de Crédito (contador independiente de la Factura) + reversa de
@@ -2728,12 +2914,23 @@ async function startServer() {
       }
 
       if (dbConnected && pool) {
-        const [result] = await pool.query(
-          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, lineas, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [notaCredito.idCompania, notaCredito.idCita, notaCredito.idPaciente, notaCredito.clave, notaCredito.consecutivo, notaCredito.fechaEmision, notaCredito.ambiente, JSON.stringify(notaCredito.lineas), notaCredito.subtotal, notaCredito.totalIva, notaCredito.total, notaCredito.estado, notaCredito.mensajeError, notaCredito.creadaEn, notaCredito.condicionVenta, notaCredito.tipoDocumento, notaCredito.idFacturaReferencia, notaCredito.motivoAnulacion]
-        );
-        notaCredito.id = (result as any).insertId;
-        await pool.query("UPDATE facturas SET estado = 'ANULADA' WHERE id_factura = ?", [factura.id]);
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          const [result] = await connection.query(
+            "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [notaCredito.idCompania, notaCredito.idCita, notaCredito.idPaciente, notaCredito.clave, notaCredito.consecutivo, notaCredito.fechaEmision, notaCredito.ambiente, notaCredito.subtotal, notaCredito.totalIva, notaCredito.total, notaCredito.estado, notaCredito.mensajeError, notaCredito.creadaEn, notaCredito.condicionVenta, notaCredito.tipoDocumento, notaCredito.idFacturaReferencia, notaCredito.motivoAnulacion]
+          );
+          notaCredito.id = (result as any).insertId;
+          await guardarLineasFactura(connection, notaCredito.id, notaCredito.lineas);
+          await connection.query("UPDATE facturas SET estado = 'ANULADA' WHERE id_factura = ?", [factura.id]);
+          await connection.commit();
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
+        }
         // Si esta factura había generado una CXC que aún no está pagada, se anula también — ya
         // no hay una deuda real que cobrar sobre un comprobante que Hacienda considera anulado.
         // Si ya estaba PAGADA se deja intacta (el cobro ya ocurrió, es un hecho histórico).
@@ -2808,7 +3005,9 @@ async function startServer() {
       if (!canAccessCompany(sessionOf(req), factura.idCompania)) {
         return res.status(403).json({ error: "No autorizado." });
       }
-      factura.lineas = typeof factura.lineas === 'string' ? JSON.parse(factura.lineas) : factura.lineas;
+      factura.lineas = dbConnected && pool
+        ? (await fetchLineasPorFactura([factura.id])).get(factura.id) || []
+        : (typeof factura.lineas === 'string' ? JSON.parse(factura.lineas) : factura.lineas);
 
       const idCompania = factura.idCompania;
       let company: Company | undefined;
@@ -3462,13 +3661,14 @@ async function startServer() {
         "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '01' AND fechaEmision LIKE ? AND estado IN ('ACEPTADA','ANULADA')",
         [idCompania, `${periodo}%`]
       );
-      const facturasMes = (facturaRows as any[]).map(r => ({ ...r, lineas: typeof r.lineas === "string" ? JSON.parse(r.lineas) : r.lineas }));
-
       const [ncRows] = await pool.query(
         "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '03' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
         [idCompania, `${periodo}%`]
       );
-      const notasCreditoMes = (ncRows as any[]).map(r => ({ ...r, lineas: typeof r.lineas === "string" ? JSON.parse(r.lineas) : r.lineas }));
+      const idsFacturaYNc = [...(facturaRows as any[]).map(r => r.id_factura), ...(ncRows as any[]).map(r => r.id_factura)];
+      const lineasPorFactura = await fetchLineasPorFactura(idsFacturaYNc);
+      const facturasMes = (facturaRows as any[]).map(r => ({ ...r, lineas: lineasPorFactura.get(r.id_factura) || [] }));
+      const notasCreditoMes = (ncRows as any[]).map(r => ({ ...r, lineas: lineasPorFactura.get(r.id_factura) || [] }));
 
       const [cxpRows] = await pool.query(
         "SELECT COALESCE(SUM(ivaAcreditable), 0) AS total FROM cuentas_pagar WHERE idCompania = ? AND fechaRegistro LIKE ? AND estado != 'ANULADA'",
@@ -3890,17 +4090,17 @@ async function startServer() {
 
       async function fetchConsultationById(id: number): Promise<Consultation | undefined> {
         if (dbConnected && pool) {
-          const [rows] = await pool.query("SELECT * FROM consultas WHERE id_consulta = ?", [id]);
-          const row = (rows as any[]).map(row => normalizeRow(row, 'id_consulta'))[0];
-          if (!row) return undefined;
+          const [rows] = await pool.query(`SELECT ${CONSULTA_EVAL_SELECT} FROM consultas c ${CONSULTA_EVAL_JOIN} WHERE c.id_consulta = ?`, [id]);
+          const rawRow = (rows as any[])[0];
+          if (!rawRow) return undefined;
+          const row = normalizeRow(rawRow, 'id_consulta');
+          const evaluaciones = reconstruirEvaluaciones(rawRow);
           return {
             ...row,
             antropometria: typeof row.antropometria === 'string' ? JSON.parse(row.antropometria) : row.antropometria,
             dieta: typeof row.dieta === 'string' ? JSON.parse(row.dieta) : row.dieta,
             fisioterapia: typeof row.fisioterapia === 'string' ? JSON.parse(row.fisioterapia) : row.fisioterapia,
-            evaluacionAntropometrica: typeof row.evaluacionAntropometrica === 'string' ? JSON.parse(row.evaluacionAntropometrica) : row.evaluacionAntropometrica,
-            evaluacionBioquimica: typeof row.evaluacionBioquimica === 'string' ? JSON.parse(row.evaluacionBioquimica) : row.evaluacionBioquimica,
-            evaluacionDietetica: typeof row.evaluacionDietetica === 'string' ? JSON.parse(row.evaluacionDietetica) : row.evaluacionDietetica,
+            ...evaluaciones,
             composicionSegmentada: typeof row.composicionSegmentada === 'string' ? JSON.parse(row.composicionSegmentada) : row.composicionSegmentada,
             estiloVida: typeof row.estiloVida === 'string' ? JSON.parse(row.estiloVida) : row.estiloVida
           };
