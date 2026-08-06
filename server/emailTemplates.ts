@@ -1,4 +1,5 @@
 import type { Company, Patient, Cita, Consultation, User, Factura } from "../src/data/mockData";
+import { textoSobre, colorMarca } from "./branding";
 
 export interface RenderedEmail {
   subject: string;
@@ -35,6 +36,13 @@ function escapeHtml(value: string | number | null | undefined): string {
 }
 
 function emailShell(company: Company, title: string, bodyHtml: string): string {
+  // El color del texto sobre la banda de marca se calcula por luminancia: un blanco fijo se
+  // vuelve ilegible cuando la clínica configura un color claro (hay casos reales en la base).
+  const primario = colorMarca(company.colorPrimario, "#0f766e");
+  const barra = colorMarca(company.colorSidebar, primario);
+  const textoBarra = textoSobre(barra);
+  const textoBarraTenue = textoBarra === "#ffffff" ? "rgba(255,255,255,0.85)" : "rgba(30,41,59,0.75)";
+
   return `<!doctype html>
 <html>
   <body style="margin:0;padding:0;background-color:#f1f5f9;font-family:Arial,Helvetica,sans-serif;">
@@ -43,15 +51,15 @@ function emailShell(company: Company, title: string, bodyHtml: string): string {
         <td align="center">
           <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e2e8f0;">
             <tr>
-              <td style="background-color:${escapeHtml(company.colorSidebar)};padding:20px 24px;">
+              <td style="background-color:${barra};padding:20px 24px;">
                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                   <tr>
                     <td width="56" style="vertical-align:middle;">
                       <img src="${escapeHtml(company.logoUrl)}" width="48" height="48" alt="${escapeHtml(company.nombreComercial)}" style="border-radius:10px;display:block;object-fit:cover;" />
                     </td>
                     <td style="vertical-align:middle;padding-left:12px;">
-                      <span style="color:#ffffff;font-size:16px;font-weight:bold;display:block;">${escapeHtml(company.nombreComercial)}</span>
-                      <span style="color:#ffffff;opacity:0.85;font-size:11px;">${escapeHtml(company.razonSocial)}</span>
+                      <span style="color:${textoBarra};font-size:16px;font-weight:bold;display:block;">${escapeHtml(company.nombreComercial)}</span>
+                      <span style="color:${textoBarraTenue};font-size:11px;">${escapeHtml(company.razonSocial)}</span>
                     </td>
                   </tr>
                 </table>
@@ -59,7 +67,7 @@ function emailShell(company: Company, title: string, bodyHtml: string): string {
             </tr>
             <tr>
               <td style="padding:8px 24px 0 24px;">
-                <h1 style="color:${escapeHtml(company.colorPrimario)};font-size:18px;margin:16px 0 8px 0;">${escapeHtml(title)}</h1>
+                <h1 style="color:${primario};font-size:18px;margin:16px 0 8px 0;">${escapeHtml(title)}</h1>
               </td>
             </tr>
             <tr>

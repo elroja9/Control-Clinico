@@ -1,4 +1,5 @@
 import type { Company, Patient, Consultation, Factura } from "../src/data/mockData";
+import { textoSobre, tinte, colorMarca } from "./branding";
 
 /**
  * HTML pensado para imprimirse en papel, no para leerse en un cliente de correo.
@@ -20,33 +21,43 @@ function escapeHtml(value: string | number | null | undefined): string {
 const colones = (n: number) => `₡${Number(n || 0).toLocaleString("es-CR", { maximumFractionDigits: 2 })}`;
 
 function documentoShell(company: Company, titulo: string, cuerpoHtml: string): string {
-  const primario = company.colorPrimario || "#0f766e";
+  // Los dos colores que la clínica configura en Configuración de Empresa: el de barra lateral
+  // encabeza el documento y el primario marca títulos y totales, igual que en la aplicación y en
+  // los correos. El color del texto sale de la luminancia del fondo, porque hay clínicas con
+  // marcas oscuras y otras claras y un blanco fijo dejaría a estas últimas ilegibles.
+  const primario = colorMarca(company.colorPrimario, "#0f766e");
+  const barra = colorMarca(company.colorSidebar, primario);
+  const textoBarra = textoSobre(barra);
+  const textoBarraTenue = textoBarra === "#ffffff" ? "rgba(255,255,255,0.82)" : "rgba(30,41,59,0.72)";
+
   const logo = company.logoUrl
-    ? `<img src="${escapeHtml(company.logoUrl)}" alt="" style="height:52px;max-width:180px;object-fit:contain;">`
-    : `<div style="font-size:20px;font-weight:700;color:${primario};">${escapeHtml(company.nombreComercial)}</div>`;
+    ? `<img src="${escapeHtml(company.logoUrl)}" alt="" style="height:46px;width:46px;border-radius:9px;object-fit:cover;display:block;background:#fff;">`
+    : "";
 
   return `<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
 <style>
-  @page { size: letter; margin: 14mm 14mm 16mm 14mm; }
+  @page { size: letter; margin: 12mm 12mm 16mm 12mm; }
   * { box-sizing: border-box; }
   body { font-family: "Segoe UI", Arial, sans-serif; color: #1e293b; font-size: 12px; margin: 0; }
-  h1 { font-size: 19px; margin: 0 0 2px 0; color: ${primario}; }
+  h1 { font-size: 19px; margin: 14px 0 2px 0; color: ${primario}; }
   h2 { font-size: 13px; margin: 18px 0 7px 0; color: ${primario};
        border-bottom: 1.5px solid ${primario}; padding-bottom: 3px; }
   table { width: 100%; border-collapse: collapse; }
-  .cab { display: flex; justify-content: space-between; align-items: flex-start;
-         border-bottom: 2.5px solid ${primario}; padding-bottom: 10px; margin-bottom: 14px; }
-  .emp { font-size: 10.5px; color: #64748b; line-height: 1.45; text-align: right; }
+  .banda { background: ${barra}; color: ${textoBarra}; padding: 13px 16px; border-radius: 9px;
+           display: flex; align-items: center; gap: 12px; }
+  .banda .nom { font-size: 16px; font-weight: 700; line-height: 1.2; }
+  .banda .raz { font-size: 10.5px; color: ${textoBarraTenue}; }
+  .banda .der { margin-left: auto; text-align: right; font-size: 10px; color: ${textoBarraTenue}; line-height: 1.5; }
   .datos td { padding: 3px 0; vertical-align: top; }
   .datos .et { color: #64748b; width: 145px; }
-  .lineas th { background: #f1f5f9; padding: 6px 8px; text-align: left;
-               font-size: 11px; border-bottom: 1.5px solid #cbd5e1; }
+  .lineas th { background: ${tinte(primario, 0.14)}; padding: 6px 8px; text-align: left;
+               font-size: 11px; border-bottom: 1.5px solid ${tinte(primario, 0.45)}; }
   .lineas td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; }
   .der { text-align: right; }
   .cen { text-align: center; }
   .tot { font-size: 14px; font-weight: 700; color: ${primario}; }
-  .bloque { background: #f8fafc; border-left: 3px solid ${primario};
+  .bloque { background: ${tinte(primario, 0.07)}; border-left: 3px solid ${primario};
             padding: 9px 12px; margin: 7px 0; border-radius: 0 4px 4px 0; }
   .bloque .t { font-weight: 600; color: ${primario}; margin-bottom: 3px; font-size: 11.5px; }
   .nota { font-size: 10px; color: #64748b; margin-top: 22px;
@@ -57,10 +68,13 @@ function documentoShell(company: Company, titulo: string, cuerpoHtml: string): s
   li { margin-bottom: 3px; }
 </style></head>
 <body>
-  <div class="cab">
-    <div>${logo}</div>
-    <div class="emp">
-      <strong style="color:#1e293b;font-size:12px;">${escapeHtml(company.razonSocial || company.nombreComercial)}</strong><br>
+  <div class="banda">
+    ${logo}
+    <div>
+      <div class="nom">${escapeHtml(company.nombreComercial)}</div>
+      <div class="raz">${escapeHtml(company.razonSocial || "")}</div>
+    </div>
+    <div class="der">
       C&eacute;dula: ${escapeHtml(company.identificacion)}<br>
       ${escapeHtml(company.correoEmisor || "")}
     </div>
