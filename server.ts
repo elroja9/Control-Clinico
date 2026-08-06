@@ -88,8 +88,6 @@ interface LocalGastosManuales extends GastosManualesAnuales { idCompania: number
 let localGastosManuales: LocalGastosManuales[] = [];
 interface LocalCierreFiscal { id: number; idCompania: number; tipo: "D104" | "D101"; periodo: string; datos: ReporteD104 | ReporteD101; creadoPor: string | null; creadoEn: string; }
 let localCierresFiscales: LocalCierreFiscal[] = [];
-interface LocalCabysEntry { codigo: string; descripcion: string; actualizadoEn: string; }
-let localCabysCatalogo: LocalCabysEntry[] = [];
 
 interface LocalHaciendaConfig {
   idCompania: number;
@@ -3822,10 +3820,6 @@ async function startServer() {
                 "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'COMPRA', ?, ?, ?, ?, ?, ?)",
                 [idCompania, idServicio, linea.cantidad, stockResultante, `Importado de XML — Factura proveedor ${parsed.numeroFacturaProv || ""}`, null, null, new Date().toISOString()]
               );
-              await connection.query(
-                "INSERT INTO cabys_catalogo (codigo, descripcion, actualizadoEn) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE descripcion = VALUES(descripcion), actualizadoEn = VALUES(actualizadoEn)",
-                [linea.codigoCabys, linea.nombre, new Date().toISOString()]
-              );
               lineasFinal.push({ idServicio, nombre: linea.nombre, cantidad: linea.cantidad, costoUnitario: linea.precioUnitario });
             }
             await connection.commit();
@@ -3852,28 +3846,15 @@ async function startServer() {
               localServicios.push(nuevo);
               lineasFinal.push({ idServicio: nuevo.id, nombre: linea.nombre, cantidad: linea.cantidad, costoUnitario: linea.precioUnitario });
             }
-            const existing = localCabysCatalogo.find(c => c.codigo === linea.codigoCabys);
-            if (existing) { existing.descripcion = linea.nombre; existing.actualizadoEn = new Date().toISOString(); }
-            else localCabysCatalogo.push({ codigo: linea.codigoCabys, descripcion: linea.nombre, actualizadoEn: new Date().toISOString() });
-          }
-        }
-      } else {
-        // Compra de servicios: solo alimenta el catálogo CABYS, sin tocar inventario.
-        if (dbConnected && pool) {
-          for (const linea of parsed.lineas) {
-            await pool.query(
-              "INSERT INTO cabys_catalogo (codigo, descripcion, actualizadoEn) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE descripcion = VALUES(descripcion), actualizadoEn = VALUES(actualizadoEn)",
-              [linea.codigoCabys, linea.nombre, new Date().toISOString()]
-            );
-          }
-        } else {
-          for (const linea of parsed.lineas) {
-            const existing = localCabysCatalogo.find(c => c.codigo === linea.codigoCabys);
-            if (existing) { existing.descripcion = linea.nombre; existing.actualizadoEn = new Date().toISOString(); }
-            else localCabysCatalogo.push({ codigo: linea.codigoCabys, descripcion: linea.nombre, actualizadoEn: new Date().toISOString() });
           }
         }
       }
+      // Nota: cuando la compra es de servicios (no alimenta inventario) no queda nada que hacer
+      // en este paso. Antes se poblaba una tabla `cabys_catalogo` con las descripciones que
+      // venían en el XML, pero nadie la leía nunca: la búsqueda de códigos CABYS de la app va
+      // contra la API oficial de Hacienda (ver GET /api/cabys). La tabla se eliminó en la Fase 1
+      // de la limpieza de BD por ser peso muerto, pero estas escrituras quedaron — dejando la
+      // importación de XML rota con ER_NO_SUCH_TABLE hasta que se quitaron aquí.
 
       // 3. Registrar la cuenta por pagar — ya Pagada si la venta fue de contado (para no perder
       // el historial de compras), Pendiente con el plazo indicado si fue a crédito.
