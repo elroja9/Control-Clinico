@@ -390,19 +390,9 @@ function normalizeRow(row: any, ownIdColumn: string): any {
 
   if (copy[ownIdColumn] != null && copy.id == null) copy.id = copy[ownIdColumn];
 
-  // Los duplicados snake_case de companias, usuarios y servicios se eliminaron en la Fase 5b:
-  // esas tablas ya guardan una sola columna por concepto, con el nombre camelCase que usa la app,
-  // así que aquí no queda nada que traducir. `id_compania` sigue mapeándose porque pacientes y
-  // consultas todavía la tienen (pendiente de la Fase 5c).
-  if (copy.id_compania != null && copy.idCompania == null) copy.idCompania = copy.id_compania;
-
-  // pacientes
-  if (copy.nombre_completo != null && copy.nombreCompleto == null) copy.nombreCompleto = copy.nombre_completo;
-  if (copy.fecha_nacimiento != null && copy.fechaNacimiento == null) copy.fechaNacimiento = copy.fecha_nacimiento;
-  if (copy.correo_electronico != null && copy.correoElectronico == null) copy.correoElectronico = copy.correo_electronico;
-  if (copy.situacion_vivienda != null && copy.situacionVivienda == null) copy.situacionVivienda = copy.situacion_vivienda;
-  if (copy.fact_tipo_identificacion != null && copy.tipoIdentificacion == null) copy.tipoIdentificacion = copy.fact_tipo_identificacion;
-  if (copy.fact_identificacion != null && copy.identificacion == null) copy.identificacion = copy.fact_identificacion;
+  // Tras la Fase 5 ya no hay columnas duplicadas que traducir: cada concepto vive en una sola
+  // columna, con el nombre camelCase que usa la app. Lo único que sigue haciendo esta función es
+  // exponer la pk propia de cada tabla (que sí conserva su nombre snake_case) como `.id`.
 
   return copy;
 }
@@ -1657,7 +1647,7 @@ async function startServer() {
     try {
       const session = sessionOf(req);
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM pacientes WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [session.idCompania, session.idCompania]);
+        const [rows] = await pool.query("SELECT * FROM pacientes WHERE idCompania = ? AND activo = 1", [session.idCompania]);
         const formatted = (rows as any[]).map(row => {
           const norm = normalizeRow(row, 'id_paciente');
           return {
@@ -1684,12 +1674,12 @@ async function startServer() {
       if (dbConnected && pool) {
         if (p.id) {
           // Scoped by idCompania too — see comment on the equivalent usuarios check above.
-          const [exists] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ? AND (idCompania = ? OR id_compania = ?)", [p.id, parseInt(p.idCompania), parseInt(p.idCompania)]);
+          const [exists] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ? AND idCompania = ?", [p.id, parseInt(p.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE pacientes SET idCompania = ?, id_compania = ?, nombreCompleto = ?, nombre_completo = ?, fechaNacimiento = ?, fecha_nacimiento = ?, edad = ?, sexo = ?, ocupacion = ?, correoElectronico = ?, correo_electronico = ?, situacionVivienda = ?, situacion_vivienda = ?, tipoIdentificacion = ?, fact_tipo_identificacion = ?, identificacion = ?, fact_identificacion = ?, telefono = ?, provinciaId = ?, cantonId = ?, distritoId = ?, otrasSenas = ?, diabetes = ?, hipertension = ?, gastritis = ?, estrenimiento = ?, alergiasAlimentarias = ?, fracturas = ?, esguinces = ?, cirugiasOrtopedicas = ?, actividadFisica = ? WHERE id_paciente = ?",
+              "UPDATE pacientes SET idCompania = ?, nombreCompleto = ?, fechaNacimiento = ?, edad = ?, sexo = ?, ocupacion = ?, correoElectronico = ?, situacionVivienda = ?, tipoIdentificacion = ?, identificacion = ?, telefono = ?, provinciaId = ?, cantonId = ?, distritoId = ?, otrasSenas = ?, diabetes = ?, hipertension = ?, gastritis = ?, estrenimiento = ?, alergiasAlimentarias = ?, fracturas = ?, esguinces = ?, cirugiasOrtopedicas = ?, actividadFisica = ? WHERE id_paciente = ?",
               [
-                parseInt(p.idCompania), parseInt(p.idCompania), p.nombreCompleto, p.nombreCompleto, p.fechaNacimiento, p.fechaNacimiento, parseInt(p.edad), p.sexo || null, p.ocupacion, p.correoElectronico, p.correoElectronico, p.situacionVivienda, p.situacionVivienda, p.tipoIdentificacion, p.tipoIdentificacion, p.identificacion, p.identificacion, p.telefono, parseInt(p.provinciaId), parseInt(p.cantonId), parseInt(p.distritoId), p.otrasSenas, p.diabetes ? 1 : 0, p.hipertension ? 1 : 0, p.gastritis ? 1 : 0, p.estrenimiento ? 1 : 0, p.alergiasAlimentarias, p.fracturas, p.esguinces, p.cirugiasOrtopedicas, p.actividadFisica,
+                parseInt(p.idCompania), p.nombreCompleto, p.fechaNacimiento, parseInt(p.edad), p.sexo || null, p.ocupacion, p.correoElectronico, p.situacionVivienda, p.tipoIdentificacion, p.identificacion, p.telefono, parseInt(p.provinciaId), parseInt(p.cantonId), parseInt(p.distritoId), p.otrasSenas, p.diabetes ? 1 : 0, p.hipertension ? 1 : 0, p.gastritis ? 1 : 0, p.estrenimiento ? 1 : 0, p.alergiasAlimentarias, p.fracturas, p.esguinces, p.cirugiasOrtopedicas, p.actividadFisica,
                 p.id
               ]
             );
@@ -1697,9 +1687,9 @@ async function startServer() {
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO pacientes (idCompania, id_compania, nombreCompleto, nombre_completo, fechaNacimiento, fecha_nacimiento, edad, sexo, ocupacion, correoElectronico, correo_electronico, situacionVivienda, situacion_vivienda, tipoIdentificacion, fact_tipo_identificacion, identificacion, fact_identificacion, telefono, provinciaId, cantonId, distritoId, otrasSenas, diabetes, hipertension, gastritis, estrenimiento, alergiasAlimentarias, fracturas, esguinces, cirugiasOrtopedicas, actividadFisica) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO pacientes (idCompania, nombreCompleto, fechaNacimiento, edad, sexo, ocupacion, correoElectronico, situacionVivienda, tipoIdentificacion, identificacion, telefono, provinciaId, cantonId, distritoId, otrasSenas, diabetes, hipertension, gastritis, estrenimiento, alergiasAlimentarias, fracturas, esguinces, cirugiasOrtopedicas, actividadFisica) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
-            parseInt(p.idCompania), parseInt(p.idCompania), p.nombreCompleto, p.nombreCompleto, p.fechaNacimiento, p.fechaNacimiento, parseInt(p.edad), p.sexo || null, p.ocupacion, p.correoElectronico, p.correoElectronico, p.situacionVivienda, p.situacionVivienda, p.tipoIdentificacion, p.tipoIdentificacion, p.identificacion, p.identificacion, p.telefono, parseInt(p.provinciaId), parseInt(p.cantonId), parseInt(p.distritoId), p.otrasSenas, p.diabetes ? 1 : 0, p.hipertension ? 1 : 0, p.gastritis ? 1 : 0, p.estrenimiento ? 1 : 0, p.alergiasAlimentarias, p.fracturas, p.esguinces, p.cirugiasOrtopedicas, p.actividadFisica
+            parseInt(p.idCompania), p.nombreCompleto, p.fechaNacimiento, parseInt(p.edad), p.sexo || null, p.ocupacion, p.correoElectronico, p.situacionVivienda, p.tipoIdentificacion, p.identificacion, p.telefono, parseInt(p.provinciaId), parseInt(p.cantonId), parseInt(p.distritoId), p.otrasSenas, p.diabetes ? 1 : 0, p.hipertension ? 1 : 0, p.gastritis ? 1 : 0, p.estrenimiento ? 1 : 0, p.alergiasAlimentarias, p.fracturas, p.esguinces, p.cirugiasOrtopedicas, p.actividadFisica
           ]
         );
         p.id = (result as any).insertId;
@@ -1726,8 +1716,8 @@ async function startServer() {
       const idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         const [result] = await pool.query(
-          "UPDATE pacientes SET activo = 0 WHERE id_paciente = ? AND (idCompania = ? OR id_compania = ?)",
-          [id, idCompania, idCompania]
+          "UPDATE pacientes SET activo = 0 WHERE id_paciente = ? AND idCompania = ?",
+          [id, idCompania]
         );
         if ((result as any).affectedRows === 0) {
           return res.status(404).json({ error: "Paciente no encontrado." });
@@ -1750,8 +1740,8 @@ async function startServer() {
       const session = sessionOf(req);
       if (dbConnected && pool) {
         const [rows] = await pool.query(
-          `SELECT ${CONSULTA_EVAL_SELECT} FROM consultas c ${CONSULTA_EVAL_JOIN} WHERE (c.idCompania = ? OR c.id_compania = ?) AND c.activo = 1`,
-          [session.idCompania, session.idCompania]
+          `SELECT ${CONSULTA_EVAL_SELECT} FROM consultas c ${CONSULTA_EVAL_JOIN} WHERE c.idCompania = ? AND c.activo = 1`,
+          [session.idCompania]
         );
         const formatted = (rows as any[]).map(row => {
           const norm = normalizeRow(row, 'id_consulta');
@@ -1793,12 +1783,12 @@ async function startServer() {
           await connection.beginTransaction();
           if (con.id) {
             // Scoped by idCompania too — see comment on the equivalent usuarios check above.
-            const [exists] = await connection.query("SELECT id_consulta FROM consultas WHERE id_consulta = ? AND (idCompania = ? OR id_compania = ?)", [con.id, parseInt(con.idCompania), parseInt(con.idCompania)]);
+            const [exists] = await connection.query("SELECT id_consulta FROM consultas WHERE id_consulta = ? AND idCompania = ?", [con.id, parseInt(con.idCompania)]);
             if ((exists as any).length > 0) {
               await connection.query(
-                "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, estadoConsulta = ? WHERE id_consulta = ?",
+                "UPDATE consultas SET idPaciente = ?, idCompania = ?, fecha = ?, tipo = ?, motivo = ?, horasSueno = ?, compromiso = ?, anotacionesGenerales = ?, estadoConsulta = ? WHERE id_consulta = ?",
                 [
-                  parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), con.anotacionesGenerales, con.anotacionesGenerales,
+                  parseInt(con.idPaciente), parseInt(con.idCompania), con.fecha, con.tipo, con.motivo, parseFloat(con.horasSueno), parseInt(con.compromiso), con.anotacionesGenerales,
                   con.estado || 'ABIERTA',
                   con.id
                 ]
@@ -1809,9 +1799,9 @@ async function startServer() {
             }
           }
           const [result] = await connection.query(
-            "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, anotacionesGenerales, comentarios_nutricionista, estadoConsulta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO consultas (idPaciente, idCompania, fecha, tipo, motivo, horasSueno, compromiso, anotacionesGenerales, estadoConsulta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
-              parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), con.anotacionesGenerales, con.anotacionesGenerales,
+              parseInt(con.idPaciente), parseInt(con.idCompania), con.fecha, con.tipo, con.motivo, parseFloat(con.horasSueno), parseInt(con.compromiso), con.anotacionesGenerales,
               con.estado || 'ABIERTA'
             ]
           );
@@ -1849,8 +1839,8 @@ async function startServer() {
       }
       if (dbConnected && pool) {
         const [result] = await pool.query(
-          "UPDATE consultas SET estadoConsulta = ? WHERE id_consulta = ? AND (idCompania = ? OR id_compania = ?)",
-          [estado, id, session.idCompania, session.idCompania]
+          "UPDATE consultas SET estadoConsulta = ? WHERE id_consulta = ? AND idCompania = ?",
+          [estado, id, session.idCompania]
         );
         if ((result as any).affectedRows === 0) {
           return res.status(404).json({ error: "Consulta no encontrada." });
@@ -1886,8 +1876,8 @@ async function startServer() {
       const idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
         const [result] = await pool.query(
-          "UPDATE consultas SET activo = 0 WHERE id_consulta = ? AND (idCompania = ? OR id_compania = ?)",
-          [id, idCompania, idCompania]
+          "UPDATE consultas SET activo = 0 WHERE id_consulta = ? AND idCompania = ?",
+          [id, idCompania]
         );
         if ((result as any).affectedRows === 0) {
           return res.status(404).json({ error: "Consulta no encontrada." });
@@ -3974,9 +3964,9 @@ async function startServer() {
       if (dbConnected && pool) {
         const [citasRows] = await pool.query("SELECT idPaciente, fechaHora, estadoCita FROM citas WHERE idCompania = ?", [idCompania]);
         citas = (citasRows as any[]).map(row => normalizeRow(row, 'id'));
-        const [consultasRows] = await pool.query("SELECT idPaciente, id_paciente, fecha, estadoConsulta FROM consultas WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]);
+        const [consultasRows] = await pool.query("SELECT idPaciente, fecha, estadoConsulta FROM consultas WHERE idCompania = ? AND activo = 1", [idCompania]);
         consultas = (consultasRows as any[]).map(row => normalizeRow(row, 'id_consulta')).map(c => ({ idPaciente: c.idPaciente, fecha: c.fecha, estado: c.estadoConsulta }));
-        const [pacientesRows] = await pool.query("SELECT id_paciente, nombreCompleto FROM pacientes WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]);
+        const [pacientesRows] = await pool.query("SELECT id_paciente, nombreCompleto FROM pacientes WHERE idCompania = ? AND activo = 1", [idCompania]);
         pacientes = (pacientesRows as any[]).map(row => normalizeRow(row, 'id_paciente')).map(p => ({ id: p.id, nombreCompleto: p.nombreCompleto }));
       } else {
         citas = localCitas.filter(c => c.idCompania === idCompania).map(c => ({ idPaciente: c.idPaciente, fechaHora: c.fechaHora, estadoCita: c.estadoCita }));
@@ -4523,7 +4513,7 @@ async function startServer() {
       const identificacion = req.params.identificacion;
       let patient: Patient | undefined;
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM pacientes WHERE (idCompania = ? OR id_compania = ?) AND (identificacion = ? OR fact_identificacion = ?)", [idCompania, idCompania, identificacion, identificacion]);
+        const [rows] = await pool.query("SELECT * FROM pacientes WHERE idCompania = ? AND identificacion = ?", [idCompania, identificacion]);
         patient = (rows as any[]).map(row => normalizeRow(row, 'id_paciente'))[0];
       } else {
         patient = localPatients.find(p => p.idCompania === idCompania && p.identificacion === identificacion);
@@ -4750,7 +4740,7 @@ async function startServer() {
           }
 
           // Buscar o crear paciente por cédula
-          const [existing] = await connection.query("SELECT * FROM pacientes WHERE (idCompania = ? OR id_compania = ?) AND (identificacion = ? OR fact_identificacion = ?)", [idCompania, idCompania, pac.identificacion, pac.identificacion]);
+          const [existing] = await connection.query("SELECT * FROM pacientes WHERE idCompania = ? AND identificacion = ?", [idCompania, pac.identificacion]);
           paciente = (existing as any[]).map(row => normalizeRow(row, 'id_paciente'))[0];
 
           if (!paciente) {
@@ -4788,9 +4778,9 @@ async function startServer() {
             };
 
             const [result] = await connection.query(
-              "INSERT INTO pacientes (idCompania, id_compania, nombreCompleto, nombre_completo, fechaNacimiento, fecha_nacimiento, edad, ocupacion, correoElectronico, correo_electronico, situacionVivienda, situacion_vivienda, tipoIdentificacion, fact_tipo_identificacion, identificacion, fact_identificacion, telefono, provinciaId, cantonId, distritoId, otrasSenas, diabetes, hipertension, gastritis, estrenimiento, alergiasAlimentarias, fracturas, esguinces, cirugiasOrtopedicas, actividadFisica) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "INSERT INTO pacientes (idCompania, nombreCompleto, fechaNacimiento, edad, ocupacion, correoElectronico, situacionVivienda, tipoIdentificacion, identificacion, telefono, provinciaId, cantonId, distritoId, otrasSenas, diabetes, hipertension, gastritis, estrenimiento, alergiasAlimentarias, fracturas, esguinces, cirugiasOrtopedicas, actividadFisica) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
               [
-                nuevoPaciente.idCompania, nuevoPaciente.idCompania, nuevoPaciente.nombreCompleto, nuevoPaciente.nombreCompleto, nuevoPaciente.fechaNacimiento, nuevoPaciente.fechaNacimiento, nuevoPaciente.edad, nuevoPaciente.ocupacion, nuevoPaciente.correoElectronico, nuevoPaciente.correoElectronico, nuevoPaciente.situacionVivienda, nuevoPaciente.situacionVivienda, nuevoPaciente.tipoIdentificacion, nuevoPaciente.tipoIdentificacion, nuevoPaciente.identificacion, nuevoPaciente.identificacion, nuevoPaciente.telefono, nuevoPaciente.provinciaId, nuevoPaciente.cantonId, nuevoPaciente.distritoId, nuevoPaciente.otrasSenas, 0, 0, 0, 0, nuevoPaciente.alergiasAlimentarias, nuevoPaciente.fracturas, nuevoPaciente.esguinces, nuevoPaciente.cirugiasOrtopedicas, nuevoPaciente.actividadFisica
+                nuevoPaciente.idCompania, nuevoPaciente.nombreCompleto, nuevoPaciente.fechaNacimiento, nuevoPaciente.edad, nuevoPaciente.ocupacion, nuevoPaciente.correoElectronico, nuevoPaciente.situacionVivienda, nuevoPaciente.tipoIdentificacion, nuevoPaciente.identificacion, nuevoPaciente.telefono, nuevoPaciente.provinciaId, nuevoPaciente.cantonId, nuevoPaciente.distritoId, nuevoPaciente.otrasSenas, 0, 0, 0, 0, nuevoPaciente.alergiasAlimentarias, nuevoPaciente.fracturas, nuevoPaciente.esguinces, nuevoPaciente.cirugiasOrtopedicas, nuevoPaciente.actividadFisica
               ]
             );
             nuevoPaciente.id = (result as any).insertId;
@@ -4810,13 +4800,13 @@ async function startServer() {
               fechaNacimiento: pac.fechaNacimiento
             };
             await connection.query(
-              "UPDATE pacientes SET nombreCompleto = ?, nombre_completo = ?, correoElectronico = ?, correo_electronico = ?, telefono = ?, tipoIdentificacion = ?, fact_tipo_identificacion = ?, fechaNacimiento = ?, fecha_nacimiento = ? WHERE id_paciente = ?",
+              "UPDATE pacientes SET nombreCompleto = ?, correoElectronico = ?, telefono = ?, tipoIdentificacion = ?, fechaNacimiento = ? WHERE id_paciente = ?",
               [
-                contactoActualizado.nombreCompleto, contactoActualizado.nombreCompleto,
-                contactoActualizado.correoElectronico, contactoActualizado.correoElectronico,
+                contactoActualizado.nombreCompleto,
+                contactoActualizado.correoElectronico,
                 contactoActualizado.telefono,
-                contactoActualizado.tipoIdentificacion, contactoActualizado.tipoIdentificacion,
-                contactoActualizado.fechaNacimiento, contactoActualizado.fechaNacimiento,
+                contactoActualizado.tipoIdentificacion,
+                contactoActualizado.fechaNacimiento,
                 paciente.id
               ]
             );
