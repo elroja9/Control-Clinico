@@ -390,25 +390,11 @@ function normalizeRow(row: any, ownIdColumn: string): any {
 
   if (copy[ownIdColumn] != null && copy.id == null) copy.id = copy[ownIdColumn];
 
-  // companias
-  if (copy.nombre_comercial != null && copy.nombreComercial == null) copy.nombreComercial = copy.nombre_comercial;
-  if (copy.razon_social != null && copy.razonSocial == null) copy.razonSocial = copy.razon_social;
-  if (copy.tipo_identificacion != null && copy.tipoIdentificacion == null) copy.tipoIdentificacion = copy.tipo_identificacion;
-  if (copy.correo_emisor != null && copy.correoEmisor == null) copy.correoEmisor = copy.correo_emisor;
-  if (copy.iva_por_defecto != null && copy.ivaPorDefecto == null) copy.ivaPorDefecto = parseFloat(copy.iva_por_defecto);
-  if (copy.color_primario != null && copy.colorPrimario == null) copy.colorPrimario = copy.color_primario;
-  if (copy.color_sidebar != null && copy.colorSidebar == null) copy.colorSidebar = copy.color_sidebar;
-  if (copy.logo_url != null && copy.logoUrl == null) copy.logoUrl = copy.logo_url;
-  if (copy.cod_actividad_economica != null && copy.actividadEconomica == null) copy.actividadEconomica = copy.cod_actividad_economica;
-
-  // usuarios
+  // Los duplicados snake_case de companias, usuarios y servicios se eliminaron en la Fase 5b:
+  // esas tablas ya guardan una sola columna por concepto, con el nombre camelCase que usa la app,
+  // así que aquí no queda nada que traducir. `id_compania` sigue mapeándose porque pacientes y
+  // consultas todavía la tienen (pendiente de la Fase 5c).
   if (copy.id_compania != null && copy.idCompania == null) copy.idCompania = copy.id_compania;
-  if (copy.email != null && copy.correo == null) copy.correo = copy.email;
-  if (copy.password_hash != null && copy.contrasena == null) copy.contrasena = copy.password_hash;
-  if (copy.usuario == null && copy.email != null) copy.usuario = copy.email.split("@")[0];
-
-  // servicios
-  if (copy.porcentaje_iva != null && copy.porcentajeIva == null) copy.porcentajeIva = parseFloat(copy.porcentaje_iva);
 
   // pacientes
   if (copy.nombre_completo != null && copy.nombreCompleto == null) copy.nombreCompleto = copy.nombre_completo;
@@ -1142,7 +1128,7 @@ async function startServer() {
   // colaborador de la misma empresa (bcrypt es lento, no infranqueable).
   function sanitizeUser(u: any): any {
     if (!u) return u;
-    const { contrasena, password_hash, ...safeUser } = u;
+    const { contrasena, ...safeUser } = u;
     return safeUser;
   }
 
@@ -1157,7 +1143,7 @@ async function startServer() {
       let user: any;
       if (dbConnected && pool) {
         const [rows] = await pool.query(
-          "SELECT * FROM usuarios WHERE LOWER(usuario) = ? OR LOWER(email) = ?",
+          "SELECT * FROM usuarios WHERE LOWER(usuario) = ? OR LOWER(correo) = ?",
           [usuario, usuario]
         );
         user = (rows as any[]).map(row => normalizeRow(row, 'id_usuario'))[0];
@@ -1185,7 +1171,7 @@ async function startServer() {
       if (!isBcryptHash(user.contrasena)) {
         const upgraded = hashPassword(password);
         if (dbConnected && pool) {
-          await pool.query("UPDATE usuarios SET contrasena = ?, password_hash = ? WHERE id_usuario = ?", [upgraded, upgraded, user.id]);
+          await pool.query("UPDATE usuarios SET contrasena = ? WHERE id_usuario = ?", [upgraded, user.id]);
         } else {
           localUsers = localUsers.map(u => u.id === user.id ? { ...u, contrasena: upgraded } : u);
         }
@@ -1195,7 +1181,7 @@ async function startServer() {
       const token = createSessionToken({ userId: user.id, idCompania: user.idCompania, rol: user.rol });
       res.setHeader("Set-Cookie", serializeSessionCookie(token, SESSION_MAX_AGE_SECONDS));
 
-      const { contrasena, password_hash, ...safeUser } = user;
+      const { contrasena, ...safeUser } = user;
       res.json({ user: safeUser, company });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1223,8 +1209,8 @@ async function startServer() {
       let user: any;
       if (dbConnected && pool) {
         const [rows] = await pool.query(
-          "SELECT * FROM usuarios WHERE LOWER(usuario) = ? OR LOWER(correo) = ? OR LOWER(email) = ?",
-          [identificador, identificador, identificador]
+          "SELECT * FROM usuarios WHERE LOWER(usuario) = ? OR LOWER(correo) = ?",
+          [identificador, identificador]
         );
         user = (rows as any[]).map(row => normalizeRow(row, 'id_usuario'))[0];
       } else {
@@ -1261,7 +1247,7 @@ async function startServer() {
       const hash = hashPassword(nuevaContrasena);
 
       if (dbConnected && pool) {
-        await pool.query("UPDATE usuarios SET contrasena = ?, password_hash = ? WHERE id_usuario = ?", [hash, hash, user.id]);
+        await pool.query("UPDATE usuarios SET contrasena = ? WHERE id_usuario = ?", [hash, user.id]);
       } else {
         localUsers = localUsers.map(u => u.id === user.id ? { ...u, contrasena: hash } : u);
       }
@@ -1284,7 +1270,7 @@ async function startServer() {
     if (!user || user.activo === false) return res.status(401).json({ error: "No autenticado." });
     const company = await fetchCompanyById(session.idCompania);
 
-    const { contrasena, password_hash, ...safeUser } = user;
+    const { contrasena, ...safeUser } = user;
     res.json({ user: safeUser, company });
   });
 
@@ -1339,12 +1325,11 @@ async function startServer() {
           const [exists] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [c.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, regimenSimplificado = ?, nombre_comercial = ?, razon_social = ?, tipo_identificacion = ?, correo_emisor = ?, iva_por_defecto = ?, color_primario = ?, color_sidebar = ?, logo_url = ? WHERE id_compania = ?",
+              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, regimenSimplificado = ? WHERE id_compania = ?",
               [
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
                 c.estadoSaas, c.maxUsuarios, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, c.requiereConfirmacionCitas ? 1 : 0,
                 c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0,
-                c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl,
                 c.id
               ]
             );
@@ -1353,12 +1338,11 @@ async function startServer() {
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, requiereConfirmacionCitas, provincia, canton, distrito, otrasSenas, regimenSimplificado, nombre_comercial, razon_social, tipo_identificacion, correo_emisor, iva_por_defecto, color_primario, color_sidebar, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, requiereConfirmacionCitas, provincia, canton, distrito, otrasSenas, regimenSimplificado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           [
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
             c.estadoSaas || 'PENDIENTE', c.maxUsuarios || 5, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, c.requiereConfirmacionCitas ? 1 : 0,
-            c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0,
-            c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl
+            c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0
           ]
         );
         c.id = (result as any).insertId;
@@ -1368,8 +1352,8 @@ async function startServer() {
         // (Fisioterapia/Nutrición/Ambas únicamente — Spa no aplica).
         for (const s of serviciosDefectoParaPerfil(c.perfilCompania)) {
           await pool.query(
-            "INSERT INTO servicios (idCompania, id_compania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [c.id, c.id, s.nombre, s.precio, s.porcentajeIva, s.duracionMinutos, s.codigoCabys, s.unidadMedida, s.activo ? 1 : 0]
+            "INSERT INTO servicios (idCompania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [c.id, s.nombre, s.precio, s.porcentajeIva, s.duracionMinutos, s.codigoCabys, s.unidadMedida, s.activo ? 1 : 0]
           );
         }
 
@@ -1383,7 +1367,7 @@ async function startServer() {
             const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = 7");
             const smtpRow = (smtpRows as any[])[0];
             const platformSmtp: CompaniaSmtpConfig | undefined = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
-            const [adminRows] = await pool.query("SELECT * FROM usuarios WHERE (idCompania = 7 OR id_compania = 7) AND rol = 'Administrador'");
+            const [adminRows] = await pool.query("SELECT * FROM usuarios WHERE idCompania = 7 AND rol = 'Administrador'");
             const adminUsers = (adminRows as any[]).map(row => normalizeRow(row, 'id_usuario'));
 
             if (platformCompany && platformSmtp && platformSmtp.activo && adminUsers.length > 0) {
@@ -1457,7 +1441,7 @@ async function startServer() {
             const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = 7");
             const smtpRow = (smtpRows as any[])[0];
             platformSmtp = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
-            const [userRows] = await pool.query("SELECT * FROM usuarios WHERE (idCompania = ? OR id_compania = ?) AND rol = 'Administrador' LIMIT 1", [companyId, companyId]);
+            const [userRows] = await pool.query("SELECT * FROM usuarios WHERE idCompania = ? AND rol = 'Administrador' LIMIT 1", [companyId]);
             adminUser = (userRows as any[]).map(row => normalizeRow(row, 'id_usuario'))[0];
           } else {
             platformCompany = localCompanies.find(c => c.id === 7);
@@ -1545,7 +1529,7 @@ async function startServer() {
       if (dbConnected && pool) {
         const [rows] = isSaasAdmin(session)
           ? await pool.query("SELECT * FROM usuarios")
-          : await pool.query("SELECT * FROM usuarios WHERE idCompania = ? OR id_compania = ?", [session.idCompania, session.idCompania]);
+          : await pool.query("SELECT * FROM usuarios WHERE idCompania = ?", [session.idCompania]);
         res.json((rows as any[]).map(row => normalizeRow(row, 'id_usuario')).map(sanitizeUser));
       } else {
         res.json((isSaasAdmin(session) ? localUsers : localUsers.filter(u => u.idCompania === session.idCompania)).map(sanitizeUser));
@@ -1566,7 +1550,7 @@ async function startServer() {
         const [companyRows] = await pool.query("SELECT maxUsuarios FROM companias WHERE id_compania = ?", [idCompania]);
         const companyRow = (companyRows as any[])[0];
         if (companyRow) maxUsuarios = companyRow.maxUsuarios;
-        const [countRows] = await pool.query("SELECT COUNT(*) as count FROM usuarios WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
+        const [countRows] = await pool.query("SELECT COUNT(*) as count FROM usuarios WHERE idCompania = ?", [idCompania]);
         totalUsuariosCompania = (countRows as any)[0].count;
       } else {
         const company = localCompanies.find(c => c.id === idCompania);
@@ -1594,7 +1578,7 @@ async function startServer() {
       if (!u.id) {
         // Solo se valida el límite al CREAR un usuario nuevo, no al editar uno existente.
         const activosActuales = dbConnected && pool
-          ? ((await pool.query("SELECT COUNT(*) as count FROM usuarios WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]))[0] as any)[0].count
+          ? ((await pool.query("SELECT COUNT(*) as count FROM usuarios WHERE idCompania = ? AND activo = 1", [idCompania]))[0] as any)[0].count
           : localUsers.filter(item => item.idCompania === idCompania && item.activo).length;
 
         if (activosActuales >= maxUsuarios) {
@@ -1617,7 +1601,7 @@ async function startServer() {
           // Scoped by idCompania too — an id that only collides by coincidence (never a real
           // edit of this tenant's own record) must fall through to INSERT below instead of
           // overwriting another company's user.
-          const [exists] = await pool.query("SELECT * FROM usuarios WHERE id_usuario = ? AND (idCompania = ? OR id_compania = ?)", [u.id, parseInt(u.idCompania), parseInt(u.idCompania)]);
+          const [exists] = await pool.query("SELECT * FROM usuarios WHERE id_usuario = ? AND idCompania = ?", [u.id, parseInt(u.idCompania)]);
           const existingRow = (exists as any[])[0];
           if (existingRow) {
             // Un `contrasena` vacío significa "no está cambiando la contraseña" (el cliente ya
@@ -1626,19 +1610,19 @@ async function startServer() {
             // caso en vez de sobreescribirlo con un valor vacío.
             const contrasenaFinal = u.contrasena && String(u.contrasena).trim()
               ? hashPassword(String(u.contrasena).trim())
-              : (existingRow.contrasena || existingRow.password_hash);
+              : existingRow.contrasena;
             await pool.query(
-              "UPDATE usuarios SET idCompania = ?, id_compania = ?, nombre = ?, usuario = ?, correo = ?, email = ?, contrasena = ?, password_hash = ?, rol = ?, activo = ?, ubicacionDireccion = ?, ubicacionLat = ?, ubicacionLng = ?, maxTiempoTrasladoMinutos = ? WHERE id_usuario = ?",
-              [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, contrasenaFinal, contrasenaFinal, u.rol, u.activo ? 1 : 0, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45, u.id]
+              "UPDATE usuarios SET idCompania = ?, nombre = ?, usuario = ?, correo = ?, contrasena = ?, rol = ?, activo = ?, ubicacionDireccion = ?, ubicacionLat = ?, ubicacionLng = ?, maxTiempoTrasladoMinutos = ? WHERE id_usuario = ?",
+              [parseInt(u.idCompania), u.nombre, u.usuario, u.correo, contrasenaFinal, u.rol, u.activo ? 1 : 0, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45, u.id]
             );
-            const { contrasena, password_hash, ...safeUser } = u;
+            const { contrasena, ...safeUser } = u;
             return res.json(safeUser);
           }
         }
         const contrasenaNueva = hashPassword(String(u.contrasena || "").trim());
         const [result] = await pool.query(
-          "INSERT INTO usuarios (idCompania, id_compania, nombre, usuario, correo, email, contrasena, password_hash, rol, activo, ubicacionDireccion, ubicacionLat, ubicacionLng, maxTiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(u.idCompania), parseInt(u.idCompania), u.nombre, u.usuario, u.correo, u.correo, contrasenaNueva, contrasenaNueva, u.rol, u.activo === false ? 0 : 1, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45]
+          "INSERT INTO usuarios (idCompania, nombre, usuario, correo, contrasena, rol, activo, ubicacionDireccion, ubicacionLat, ubicacionLng, maxTiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [parseInt(u.idCompania), u.nombre, u.usuario, u.correo, contrasenaNueva, u.rol, u.activo === false ? 0 : 1, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45]
         );
         u.id = (result as any).insertId;
         u.activo = u.activo === false ? false : true;
@@ -2221,7 +2205,7 @@ async function startServer() {
     try {
       const session = sessionOf(req);
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ? OR id_compania = ?", [session.idCompania, session.idCompania]);
+        const [rows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ?", [session.idCompania]);
         res.json((rows as any[]).map(row => normalizeRow(row, 'id_servicio')));
       } else {
         res.json(localServicios.filter(s => s.idCompania === session.idCompania));
@@ -2246,11 +2230,11 @@ async function startServer() {
           // `stock` NUNCA se toca aquí — solo POST /api/servicios/:id/ajustar-stock puede
           // cambiarlo, para que cada cambio de existencias quede en movimientos_inventario en
           // vez de poder sobreescribirse en silencio desde este formulario genérico.
-          const [exists] = await pool.query("SELECT id_servicio FROM servicios WHERE id_servicio = ? AND (idCompania = ? OR id_compania = ?)", [s.id, parseInt(s.idCompania), parseInt(s.idCompania)]);
+          const [exists] = await pool.query("SELECT id_servicio FROM servicios WHERE id_servicio = ? AND idCompania = ?", [s.id, parseInt(s.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE servicios SET idCompania = ?, id_compania = ?, nombre = ?, precio = ?, porcentajeIva = ?, duracionMinutos = ?, codigoCabys = ?, unidadMedida = ?, activo = ?, tipo = ?, stockMinimo = ?, costoUnitario = ?, codigoBarras = ? WHERE id_servicio = ?",
-              [parseInt(s.idCompania), parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 0, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo ? 1 : 0, tipo, stockMinimo, costoUnitario, codigoBarras, s.id]
+              "UPDATE servicios SET idCompania = ?, nombre = ?, precio = ?, porcentajeIva = ?, duracionMinutos = ?, codigoCabys = ?, unidadMedida = ?, activo = ?, tipo = ?, stockMinimo = ?, costoUnitario = ?, codigoBarras = ? WHERE id_servicio = ?",
+              [parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 0, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo ? 1 : 0, tipo, stockMinimo, costoUnitario, codigoBarras, s.id]
             );
             const [refreshed] = await pool.query("SELECT * FROM servicios WHERE id_servicio = ?", [s.id]);
             return res.json(normalizeRow((refreshed as any[])[0], 'id_servicio'));
@@ -2259,8 +2243,8 @@ async function startServer() {
 
         const stockInicial = tipo === 'ARTICULO' ? (parseInt(s.stock) || 0) : null;
         const [result] = await pool.query(
-          "INSERT INTO servicios (idCompania, id_compania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo, tipo, stock, stockMinimo, costoUnitario, codigoBarras) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(s.idCompania), parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 0, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo === false ? 0 : 1, tipo, stockInicial, stockMinimo, costoUnitario, codigoBarras]
+          "INSERT INTO servicios (idCompania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo, tipo, stock, stockMinimo, costoUnitario, codigoBarras) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 0, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo === false ? 0 : 1, tipo, stockInicial, stockMinimo, costoUnitario, codigoBarras]
         );
         s.id = (result as any).insertId;
 
@@ -2313,7 +2297,7 @@ async function startServer() {
         const connection = await pool.getConnection();
         try {
           await connection.beginTransaction();
-          const [rows] = await connection.query("SELECT * FROM servicios WHERE id_servicio = ? AND (idCompania = ? OR id_compania = ?) FOR UPDATE", [id, session.idCompania, session.idCompania]);
+          const [rows] = await connection.query("SELECT * FROM servicios WHERE id_servicio = ? AND idCompania = ? FOR UPDATE", [id, session.idCompania]);
           const servicio = (rows as any[]).map(row => normalizeRow(row, 'id_servicio'))[0];
           if (!servicio) {
             await connection.rollback();
@@ -2385,7 +2369,7 @@ async function startServer() {
       if (dbConnected && pool) {
         const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
-        const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
+        const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ?", [idCompania]);
         existentes = (servicioRows as any[]).map(row => normalizeRow(row, 'id_servicio'));
       } else {
         company = localCompanies.find(c => c.id === idCompania);
@@ -2400,8 +2384,8 @@ async function startServer() {
       for (const s of porAgregar) {
         if (dbConnected && pool) {
           const [result] = await pool.query(
-            "INSERT INTO servicios (idCompania, id_compania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [idCompania, idCompania, s.nombre, s.precio, s.porcentajeIva, s.duracionMinutos, s.codigoCabys, s.unidadMedida, s.activo ? 1 : 0]
+            "INSERT INTO servicios (idCompania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            [idCompania, s.nombre, s.precio, s.porcentajeIva, s.duracionMinutos, s.codigoCabys, s.unidadMedida, s.activo ? 1 : 0]
           );
           agregados.push({ ...s, id: (result as any).insertId, idCompania });
         } else {
@@ -2719,7 +2703,7 @@ async function startServer() {
         company = (companyRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
         const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ?", [idPaciente]);
         paciente = (pacienteRows as any[]).map(row => normalizeRow(row, 'id_paciente'))[0];
-        const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ? OR id_compania = ?", [idCompania, idCompania]);
+        const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ?", [idCompania]);
         serviciosDisponibles = (servicioRows as any[]).map(row => normalizeRow(row, 'id_servicio'));
       } else {
         company = localCompanies.find(c => c.id === idCompania);
@@ -3615,7 +3599,7 @@ async function startServer() {
             const idServicio = parseInt(l.idServicio as any);
             const cantidad = parseFloat(l.cantidad as any);
             const costoUnitario = parseFloat(l.costoUnitario as any);
-            const [rows] = await connection.query("SELECT * FROM servicios WHERE id_servicio = ? AND (idCompania = ? OR id_compania = ?) FOR UPDATE", [idServicio, idCompania, idCompania]);
+            const [rows] = await connection.query("SELECT * FROM servicios WHERE id_servicio = ? AND idCompania = ? FOR UPDATE", [idServicio, idCompania]);
             const servicio = (rows as any[]).map(row => normalizeRow(row, 'id_servicio'))[0];
             if (!servicio) {
               await connection.rollback();
@@ -3823,8 +3807,8 @@ async function startServer() {
               } else {
                 const unidadMedida = UNIDADES_VALIDAS.has(linea.unidadMedida) ? linea.unidadMedida : "Unid";
                 const [result] = await connection.query(
-                  "INSERT INTO servicios (idCompania, id_compania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo, tipo, stock, stockMinimo, costoUnitario, codigoBarras) VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1, 'ARTICULO', ?, 0, ?, ?)",
-                  [idCompania, idCompania, linea.nombre, linea.precioUnitario, linea.porcentajeIva, linea.codigoCabys, unidadMedida, linea.cantidad, linea.precioUnitario, linea.codigoComercial]
+                  "INSERT INTO servicios (idCompania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo, tipo, stock, stockMinimo, costoUnitario, codigoBarras) VALUES (?, ?, ?, ?, 0, ?, ?, 1, 'ARTICULO', ?, 0, ?, ?)",
+                  [idCompania, linea.nombre, linea.precioUnitario, linea.porcentajeIva, linea.codigoCabys, unidadMedida, linea.cantidad, linea.precioUnitario, linea.codigoComercial]
                 );
                 idServicio = (result as any).insertId;
                 stockResultante = linea.cantidad;
@@ -4496,7 +4480,7 @@ async function startServer() {
       const idCompania = parseInt(req.params.id);
       let users: any[];
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM usuarios WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]);
+        const [rows] = await pool.query("SELECT * FROM usuarios WHERE idCompania = ? AND activo = 1", [idCompania]);
         users = (rows as any[]).map(row => normalizeRow(row, 'id_usuario'));
       } else {
         users = localUsers.filter(u => u.idCompania === idCompania && u.activo);
@@ -4517,7 +4501,7 @@ async function startServer() {
       const idCompania = parseInt(req.params.id);
       let servicios: Servicio[];
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM servicios WHERE (idCompania = ? OR id_compania = ?) AND activo = 1", [idCompania, idCompania]);
+        const [rows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ? AND activo = 1", [idCompania]);
         servicios = (rows as any[]).map(row => normalizeRow(row, 'id_servicio'));
       } else {
         servicios = localServicios.filter(s => s.idCompania === idCompania && s.activo);
@@ -4598,7 +4582,7 @@ async function startServer() {
         const idServicio = parseInt(req.query.idServicio as string);
         let servicio: Servicio | undefined;
         if (dbConnected && pool) {
-          const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE id_servicio = ? AND (idCompania = ? OR id_compania = ?) AND activo = 1", [idServicio, user.idCompania, user.idCompania]);
+          const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE id_servicio = ? AND idCompania = ? AND activo = 1", [idServicio, user.idCompania]);
           servicio = (servicioRows as any[]).map(row => normalizeRow(row, 'id_servicio'))[0];
         } else {
           servicio = localServicios.find(s => s.id === idServicio && s.idCompania === user.idCompania && s.activo);
@@ -4658,7 +4642,7 @@ async function startServer() {
         idServicio = parseInt(body.idServicio);
         let servicio: Servicio | undefined;
         if (dbConnected && pool) {
-          const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE id_servicio = ? AND (idCompania = ? OR id_compania = ?) AND activo = 1", [idServicio, idCompania, idCompania]);
+          const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE id_servicio = ? AND idCompania = ? AND activo = 1", [idServicio, idCompania]);
           servicio = (servicioRows as any[]).map(row => normalizeRow(row, 'id_servicio'))[0];
         } else {
           servicio = localServicios.find(s => s.id === idServicio && s.idCompania === idCompania && s.activo);
