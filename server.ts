@@ -259,8 +259,8 @@ async function seedDefaultData() {
     console.log("[MySQL] Seeding default consultations...");
     for (const con of defaultConsultations) {
       await pool.query(
-        "INSERT INTO consultas (id, idPaciente, idCompania, fecha, tipo, motivo, horasSueno, compromiso, antropometria, dieta, fisioterapia, anotacionesGenerales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [con.id, con.idPaciente, con.idCompania, con.fecha, con.tipo, con.motivo, con.horasSueno, con.compromiso, JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales]
+        "INSERT INTO consultas (id, idPaciente, idCompania, fecha, tipo, motivo, horasSueno, compromiso, antropometria, fisioterapia, anotacionesGenerales) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [con.id, con.idPaciente, con.idCompania, con.fecha, con.tipo, con.motivo, con.horasSueno, con.compromiso, JSON.stringify(con.antropometria || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales]
       );
     }
   }
@@ -460,6 +460,26 @@ const ESTILO_VIDA_COLS = ['realiza_ejercicio', 'tiempo_entrenar', 'hace_cuanto_e
   'tipo_alcohol', 'frecuencia_alcohol', 'cantidad_alcohol', 'fuma', 'frecuencia_fumado', 'cantidad_fumado'];
 const ESTILO_VIDA_BOOL_COLS = new Set(['realiza_ejercicio', 'consume_alcohol', 'fuma']);
 
+// --- Normalización Fase 2d: dietas_recetas ---
+// A diferencia de las 3 evaluaciones (mismo nombre de campo), aquí sí hay que traducir: la tabla
+// legada usa comida_1_desayuno/etc. (nombres del esquema original) donde el JSON usa
+// desayuno/etc. prescripcionCalorica/macros no tenían columna en absoluto — se agregaron 12
+// columnas nuevas (ver .scratch/apply_fase2d.cjs) porque esos dos sub-objetos se sumaron a
+// `dieta` en una sesión posterior a la creación del esquema legado.
+const DIETA_COMIDA_MAP: [string, string][] = [
+  ['totalCalorias', 'total_calorias'], ['desayuno', 'comida_1_desayuno'], ['meriendaManana', 'comida_2_merienda_manana'],
+  ['almuerzo', 'comida_3_almuerzo'], ['meriendaTarde', 'comida_4_merienda_tarde'], ['cena', 'comida_5_cena'],
+  ['indicaciones', 'indicaciones_adicionales']
+];
+const DIETA_PRESCRIPCION_MAP: [string, string][] = [
+  ['formula', 'formula'], ['tmb', 'tmb'], ['diasDescanso', 'dias_descanso'], ['diasEntrenamiento', 'dias_entrenamiento'],
+  ['factorActividadDescanso', 'factor_actividad_descanso'], ['factorActividadEntreno', 'factor_actividad_entreno'],
+  ['promedioMantenimiento', 'promedio_mantenimiento'], ['direccion', 'direccion'], ['porcentaje', 'porcentaje']
+];
+const DIETA_MACRO_MAP: [string, string][] = [
+  ['carbohidratosPct', 'macro_carbohidratos_pct'], ['proteinasPct', 'macro_proteinas_pct'], ['grasasPct', 'macro_grasas_pct']
+];
+
 const CONSULTA_EVAL_SELECT = [
   'c.*',
   ...EVAL_ANTROPOMETRICA_COLS.map(col => `ea.${col} AS ea_${col}`),
@@ -467,7 +487,8 @@ const CONSULTA_EVAL_SELECT = [
   ...EVAL_DIETETICA_COLS.map(col => `ed.${col} AS ed_${col}`),
   ...COMPOSICION_COLS.map(col => `cg.${col} AS cg_${col}`), 'cg.calificacion_grasa AS cg_calificacion_grasa',
   ...COMPOSICION_COLS.map(col => `cm.${col} AS cm_${col}`),
-  ...ESTILO_VIDA_COLS.map(col => `ev.${col} AS ev_${col}`)
+  ...ESTILO_VIDA_COLS.map(col => `ev.${col} AS ev_${col}`),
+  ...[...DIETA_COMIDA_MAP, ...DIETA_PRESCRIPCION_MAP, ...DIETA_MACRO_MAP].map(([, col]) => `dr.${col} AS dr_${col}`)
 ].join(', ');
 
 const CONSULTA_EVAL_JOIN = "LEFT JOIN evaluacion_antropometrica ea ON ea.id_consulta = c.id_consulta " +
@@ -475,14 +496,15 @@ const CONSULTA_EVAL_JOIN = "LEFT JOIN evaluacion_antropometrica ea ON ea.id_cons
   "LEFT JOIN evaluacion_dietetica ed ON ed.id_consulta = c.id_consulta " +
   "LEFT JOIN composicion_segmentada cg ON cg.id_consulta = c.id_consulta AND cg.tipo_medicion = 'Grasa' " +
   "LEFT JOIN composicion_segmentada cm ON cm.id_consulta = c.id_consulta AND cm.tipo_medicion = 'Musculo' " +
-  "LEFT JOIN estilo_vida ev ON ev.id_consulta = c.id_consulta";
+  "LEFT JOIN estilo_vida ev ON ev.id_consulta = c.id_consulta " +
+  "LEFT JOIN dietas_recetas dr ON dr.id_consulta = c.id_consulta";
 
 // Reconstruye los objetos anidados que el frontend espera a partir de las columnas con
-// prefijo (ea_/eb_/ed_/cg_/cm_/ev_) que trae una fila leída con CONSULTA_EVAL_SELECT + CONSULTA_EVAL_JOIN.
+// prefijo (ea_/eb_/ed_/cg_/cm_/ev_/dr_) que trae una fila leída con CONSULTA_EVAL_SELECT + CONSULTA_EVAL_JOIN.
 // Devuelve `undefined` para el objeto completo si la consulta no tiene fila en esa tabla hija
 // (LEFT JOIN sin match trae todas sus columnas en NULL) — mismo comportamiento que un JSON `null`.
 function reconstruirEvaluaciones(row: any): {
-  evaluacionAntropometrica: any; evaluacionBioquimica: any; evaluacionDietetica: any; composicionSegmentada: any; estiloVida: any;
+  evaluacionAntropometrica: any; evaluacionBioquimica: any; evaluacionDietetica: any; composicionSegmentada: any; estiloVida: any; dieta: any;
 } {
   const pick = (prefix: string, cols: string[], boolCols?: Set<string>) => {
     const hasAny = cols.some(c => row[`${prefix}_${c}`] != null);
@@ -496,12 +518,28 @@ function reconstruirEvaluaciones(row: any): {
   };
   const grasa = pick('cg', [...COMPOSICION_COLS, 'calificacion_grasa']);
   const musculo = pick('cm', COMPOSICION_COLS);
+
+  const pickMapped = (map: [string, string][]) => {
+    const hasAny = map.some(([, col]) => row[`dr_${col}`] != null);
+    if (!hasAny) return undefined;
+    const obj: any = {};
+    for (const [jsonKey, col] of map) obj[jsonKey] = row[`dr_${col}`];
+    return obj;
+  };
+  const dietaBase = pickMapped(DIETA_COMIDA_MAP);
+  const dieta = dietaBase ? {
+    ...dietaBase,
+    prescripcionCalorica: pickMapped(DIETA_PRESCRIPCION_MAP),
+    macros: pickMapped(DIETA_MACRO_MAP)
+  } : undefined;
+
   return {
     evaluacionAntropometrica: pick('ea', EVAL_ANTROPOMETRICA_COLS),
     evaluacionBioquimica: pick('eb', EVAL_BIOQUIMICA_COLS),
     evaluacionDietetica: pick('ed', EVAL_DIETETICA_COLS, EVAL_DIETETICA_BOOL_COLS),
     composicionSegmentada: (grasa || musculo) ? { grasa, musculo } : undefined,
-    estiloVida: pick('ev', ESTILO_VIDA_COLS, ESTILO_VIDA_BOOL_COLS)
+    estiloVida: pick('ev', ESTILO_VIDA_COLS, ESTILO_VIDA_BOOL_COLS),
+    dieta
   };
 }
 
@@ -585,6 +623,26 @@ async function guardarEvaluacionesConsulta(connection: any, idConsulta: number, 
     );
   } else {
     await connection.query("DELETE FROM estilo_vida WHERE id_consulta = ?", [idConsulta]);
+  }
+
+  const dieta = con.dieta;
+  if (dieta) {
+    const mapaCompleto = [...DIETA_COMIDA_MAP, ...DIETA_PRESCRIPCION_MAP, ...DIETA_MACRO_MAP];
+    const cols = mapaCompleto.map(([, col]) => col);
+    const valores = mapaCompleto.map(([jsonKey, col]) => {
+      const v = col.startsWith('macro_') ? dieta.macros?.[jsonKey]
+        : DIETA_PRESCRIPCION_MAP.some(([k]) => k === jsonKey) ? dieta.prescripcionCalorica?.[jsonKey]
+        : dieta[jsonKey];
+      return v ?? null;
+    });
+    await connection.query(
+      `INSERT INTO dietas_recetas (id_paciente, id_consulta, ${cols.join(', ')})
+       VALUES (?, ?, ${cols.map(() => '?').join(', ')})
+       ON DUPLICATE KEY UPDATE ${cols.map(c => `${c} = VALUES(${c})`).join(', ')}`,
+      [parseInt(con.idPaciente), idConsulta, ...valores]
+    );
+  } else {
+    await connection.query("DELETE FROM dietas_recetas WHERE id_consulta = ?", [idConsulta]);
   }
 }
 
@@ -1577,7 +1635,6 @@ async function startServer() {
             // relación con esto) — se pisa explícitamente con la columna real estadoConsulta.
             estado: norm.estadoConsulta,
             antropometria: typeof norm.antropometria === 'string' ? JSON.parse(norm.antropometria) : norm.antropometria,
-            dieta: typeof norm.dieta === 'string' ? JSON.parse(norm.dieta) : norm.dieta,
             fisioterapia: typeof norm.fisioterapia === 'string' ? JSON.parse(norm.fisioterapia) : norm.fisioterapia,
             ...evaluaciones
           };
@@ -1614,9 +1671,9 @@ async function startServer() {
             const [exists] = await connection.query("SELECT id_consulta FROM consultas WHERE id_consulta = ? AND (idCompania = ? OR id_compania = ?)", [con.id, parseInt(con.idCompania), parseInt(con.idCompania)]);
             if ((exists as any).length > 0) {
               await connection.query(
-                "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, dieta = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, estadoConsulta = ? WHERE id_consulta = ?",
+                "UPDATE consultas SET idPaciente = ?, id_paciente = ?, idCompania = ?, id_compania = ?, fecha = ?, fecha_consulta = ?, tipo = ?, motivo = ?, motivo_expectativas = ?, horasSueno = ?, horas_sueno = ?, compromiso = ?, compromiso_cumplir = ?, antropometria = ?, fisioterapia = ?, anotacionesGenerales = ?, comentarios_nutricionista = ?, estadoConsulta = ? WHERE id_consulta = ?",
                 [
-                  parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
+                  parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
                   con.estado || 'ABIERTA',
                   con.id
                 ]
@@ -1627,9 +1684,9 @@ async function startServer() {
             }
           }
           const [result] = await connection.query(
-            "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, antropometria, dieta, fisioterapia, anotacionesGenerales, comentarios_nutricionista, estadoConsulta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO consultas (idPaciente, id_paciente, idCompania, id_compania, fecha, fecha_consulta, tipo, motivo, motivo_expectativas, horasSueno, horas_sueno, compromiso, compromiso_cumplir, antropometria, fisioterapia, anotacionesGenerales, comentarios_nutricionista, estadoConsulta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
-              parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.dieta || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
+              parseInt(con.idPaciente), parseInt(con.idPaciente), parseInt(con.idCompania), parseInt(con.idCompania), con.fecha, con.fecha, con.tipo, con.motivo, con.motivo, parseFloat(con.horasSueno), parseFloat(con.horasSueno), parseInt(con.compromiso), parseInt(con.compromiso), JSON.stringify(con.antropometria || null), JSON.stringify(con.fisioterapia || null), con.anotacionesGenerales, con.anotacionesGenerales,
               con.estado || 'ABIERTA'
             ]
           );
@@ -1684,7 +1741,6 @@ async function startServer() {
           // relación con esto) — se pisa explícitamente con la columna real estadoConsulta.
           estado: norm.estadoConsulta,
           antropometria: typeof norm.antropometria === 'string' ? JSON.parse(norm.antropometria) : norm.antropometria,
-          dieta: typeof norm.dieta === 'string' ? JSON.parse(norm.dieta) : norm.dieta,
           fisioterapia: typeof norm.fisioterapia === 'string' ? JSON.parse(norm.fisioterapia) : norm.fisioterapia,
           ...evaluaciones
         });
@@ -4161,7 +4217,6 @@ async function startServer() {
           return {
             ...row,
             antropometria: typeof row.antropometria === 'string' ? JSON.parse(row.antropometria) : row.antropometria,
-            dieta: typeof row.dieta === 'string' ? JSON.parse(row.dieta) : row.dieta,
             fisioterapia: typeof row.fisioterapia === 'string' ? JSON.parse(row.fisioterapia) : row.fisioterapia,
             ...evaluaciones
           };
