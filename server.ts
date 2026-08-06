@@ -811,6 +811,46 @@ async function guardarLineasFactura(connection: any, idFactura: number, lineas: 
   );
 }
 
+// --- Normalización Fase 4: cuentas_pagar_lineas ---
+// Equivalente del lado de compras de factura_lineas. A diferencia de aquella (tabla legada, todo
+// snake_case), esta se creó para esta app y sigue la convención de su hermana cxp_pagos: nombre
+// de tabla snake_case, columnas camelCase.
+
+/** Trae los renglones de varias cuentas por pagar de una sola consulta, agrupados por idCuentaPagar. */
+async function fetchLineasPorCuentaPagar(idsCuentaPagar: number[]): Promise<Map<number, any[]>> {
+  const mapa = new Map<number, any[]>();
+  if (!pool || idsCuentaPagar.length === 0) return mapa;
+  const [rows] = await pool.query(
+    "SELECT * FROM cuentas_pagar_lineas WHERE idCuentaPagar IN (?) ORDER BY idCuentaPagar ASC, id ASC",
+    [idsCuentaPagar]
+  );
+  for (const row of rows as any[]) {
+    if (!mapa.has(row.idCuentaPagar)) mapa.set(row.idCuentaPagar, []);
+    mapa.get(row.idCuentaPagar)!.push({
+      idServicio: row.idServicio,
+      nombre: row.nombre,
+      cantidad: row.cantidad,
+      costoUnitario: row.costoUnitario
+    });
+  }
+  return mapa;
+}
+
+/** Inserta en lote los renglones de una cuenta por pagar, dentro de la transacción que la crea. */
+async function guardarLineasCuentaPagar(connection: any, idCuentaPagar: number, lineas: any[]): Promise<void> {
+  if (!lineas || lineas.length === 0) return;
+  const placeholders = lineas.map(() => "(?, ?, ?, ?, ?)").join(", ");
+  const valores: any[] = [];
+  for (const l of lineas) {
+    valores.push(idCuentaPagar, l.idServicio, l.nombre, l.cantidad, l.costoUnitario);
+  }
+  await connection.query(
+    `INSERT INTO cuentas_pagar_lineas (idCuentaPagar, idServicio, nombre, cantidad, costoUnitario)
+     VALUES ${placeholders}`,
+    valores
+  );
+}
+
 // --- Reportes fiscales D-104 (IVA mensual) y D-101 (Renta anual) ---
 // Funciones puras: reciben datos ya obtenidos (de MySQL o del fallback local) y calculan el
 // reporte, para que GET /api/reportes/d104 y POST /api/reportes/d104/cerrar (que necesita
@@ -3459,9 +3499,10 @@ async function startServer() {
           if (!pagosPorCuenta.has(p.idCuentaPagar)) pagosPorCuenta.set(p.idCuentaPagar, []);
           pagosPorCuenta.get(p.idCuentaPagar)!.push(p);
         }
+        const lineasPorCuenta = await fetchLineasPorCuentaPagar((cuentas as any[]).map(c => c.id));
         res.json((cuentas as any[]).map(c => ({
           ...c,
-          lineas: typeof c.lineas === "string" ? JSON.parse(c.lineas) : (c.lineas || []),
+          lineas: lineasPorCuenta.get(c.id) || [],
           pagos: pagosPorCuenta.get(c.id) || []
         })));
       } else {
@@ -3510,6 +3551,7 @@ async function startServer() {
 
       let lineasFinal: Array<{ idServicio: number; nombre: string; cantidad: number; costoUnitario: number }> = [];
       let montoTotal: number;
+      let lineasBody: Array<{ idServicio: number; cantidad: number; costoUnitario: number }> = [];
 
       if (esServicio) {
         montoTotal = parseFloat(body.montoTotal);
@@ -3517,7 +3559,7 @@ async function startServer() {
           return res.status(400).json({ error: "Indique un monto total válido." });
         }
       } else {
-        const lineasBody: Array<{ idServicio: number; cantidad: number; costoUnitario: number }> = body.lineas || [];
+        lineasBody = body.lineas || [];
         if (lineasBody.length === 0) {
           return res.status(400).json({ error: "Agregue al menos un artículo, o marque esta compra como un gasto sin inventario." });
         }
@@ -3532,40 +3574,7 @@ async function startServer() {
         }
         montoTotal = Math.round(montoTotal * 100000) / 100000;
 
-        if (dbConnected && pool) {
-          const connection = await pool.getConnection();
-          try {
-            await connection.beginTransaction();
-            for (const l of lineasBody) {
-              const idServicio = parseInt(l.idServicio as any);
-              const cantidad = parseFloat(l.cantidad as any);
-              const costoUnitario = parseFloat(l.costoUnitario as any);
-              const [rows] = await connection.query("SELECT * FROM servicios WHERE id_servicio = ? AND (idCompania = ? OR id_compania = ?) FOR UPDATE", [idServicio, idCompania, idCompania]);
-              const servicio = (rows as any[]).map(row => normalizeRow(row, 'id_servicio'))[0];
-              if (!servicio) {
-                await connection.rollback();
-                return res.status(400).json({ error: `Artículo ${idServicio} no encontrado.` });
-              }
-              if (servicio.tipo !== "ARTICULO") {
-                await connection.rollback();
-                return res.status(400).json({ error: `"${servicio.nombre}" es un servicio, no un artículo — no tiene existencias que alimentar.` });
-              }
-              const stockResultante = (servicio.stock || 0) + cantidad;
-              await connection.query("UPDATE servicios SET stock = ?, costoUnitario = ? WHERE id_servicio = ?", [stockResultante, costoUnitario, idServicio]);
-              await connection.query(
-                "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'COMPRA', ?, ?, ?, ?, ?, ?)",
-                [idCompania, idServicio, cantidad, stockResultante, `Compra a ${proveedor.nombre}${numeroFacturaProveedor ? ` (${numeroFacturaProveedor})` : ""}`, notas, null, new Date().toISOString()]
-              );
-              lineasFinal.push({ idServicio, nombre: servicio.nombre, cantidad, costoUnitario });
-            }
-            await connection.commit();
-          } catch (err) {
-            await connection.rollback();
-            throw err;
-          } finally {
-            connection.release();
-          }
-        } else {
+        if (!dbConnected || !pool) {
           for (const l of lineasBody) {
             const idServicio = parseInt(l.idServicio as any);
             const cantidad = parseFloat(l.cantidad as any);
@@ -3580,16 +3589,60 @@ async function startServer() {
         }
       }
 
+      const creadaEn = new Date().toISOString();
+
       if (dbConnected && pool) {
-        const [result] = await pool.query(
-          "INSERT INTO cuentas_pagar (idCompania, idProveedor, numeroFacturaProveedor, esServicio, lineas, fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente, estado, ivaAcreditable, notas, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?, ?, ?)",
-          [idCompania, idProveedor, numeroFacturaProveedor, esServicio ? 1 : 0, JSON.stringify(lineasFinal), fechaRegistro, fechaVencimiento, plazoDias, montoTotal, montoTotal, ivaAcreditable, notas, new Date().toISOString()]
-        );
-        res.json({
-          id: (result as any).insertId, idCompania, idProveedor, numeroFacturaProveedor, esServicio, lineas: lineasFinal,
-          fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente: montoTotal, estado: "PENDIENTE", ivaAcreditable, notas,
-          creadaEn: new Date().toISOString(), pagos: []
-        });
+        // Existencias, movimientos de inventario, la cuenta por pagar y sus renglones van todos
+        // en la misma transacción. Antes el inventario se confirmaba por separado y la CXP se
+        // insertaba después, así que un fallo al guardarla dejaba el stock ya sumado sin ninguna
+        // cuenta que lo respaldara.
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+
+          for (const l of lineasBody) {
+            const idServicio = parseInt(l.idServicio as any);
+            const cantidad = parseFloat(l.cantidad as any);
+            const costoUnitario = parseFloat(l.costoUnitario as any);
+            const [rows] = await connection.query("SELECT * FROM servicios WHERE id_servicio = ? AND (idCompania = ? OR id_compania = ?) FOR UPDATE", [idServicio, idCompania, idCompania]);
+            const servicio = (rows as any[]).map(row => normalizeRow(row, 'id_servicio'))[0];
+            if (!servicio) {
+              await connection.rollback();
+              return res.status(400).json({ error: `Artículo ${idServicio} no encontrado.` });
+            }
+            if (servicio.tipo !== "ARTICULO") {
+              await connection.rollback();
+              return res.status(400).json({ error: `"${servicio.nombre}" es un servicio, no un artículo — no tiene existencias que alimentar.` });
+            }
+            const stockResultante = (servicio.stock || 0) + cantidad;
+            await connection.query("UPDATE servicios SET stock = ?, costoUnitario = ? WHERE id_servicio = ?", [stockResultante, costoUnitario, idServicio]);
+            await connection.query(
+              "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'COMPRA', ?, ?, ?, ?, ?, ?)",
+              [idCompania, idServicio, cantidad, stockResultante, `Compra a ${proveedor.nombre}${numeroFacturaProveedor ? ` (${numeroFacturaProveedor})` : ""}`, notas, null, creadaEn]
+            );
+            lineasFinal.push({ idServicio, nombre: servicio.nombre, cantidad, costoUnitario });
+          }
+
+          const [result] = await connection.query(
+            "INSERT INTO cuentas_pagar (idCompania, idProveedor, numeroFacturaProveedor, esServicio, fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente, estado, ivaAcreditable, notas, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?, ?, ?)",
+            [idCompania, idProveedor, numeroFacturaProveedor, esServicio ? 1 : 0, fechaRegistro, fechaVencimiento, plazoDias, montoTotal, montoTotal, ivaAcreditable, notas, creadaEn]
+          );
+          const idCuentaPagar = (result as any).insertId;
+          await guardarLineasCuentaPagar(connection, idCuentaPagar, lineasFinal);
+
+          await connection.commit();
+
+          res.json({
+            id: idCuentaPagar, idCompania, idProveedor, numeroFacturaProveedor, esServicio, lineas: lineasFinal,
+            fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente: montoTotal, estado: "PENDIENTE", ivaAcreditable, notas,
+            creadaEn, pagos: []
+          });
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
+        }
       } else {
         const nueva: any = {
           id: Math.max(0, ...localCuentasPagar.map(c => c.id), 0) + 1,
@@ -3829,23 +3882,41 @@ async function startServer() {
       let cxpCreada: CuentaPagar;
 
       if (dbConnected && pool) {
-        const [result] = await pool.query(
-          "INSERT INTO cuentas_pagar (idCompania, idProveedor, numeroFacturaProveedor, esServicio, lineas, fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente, estado, ivaAcreditable, notas, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [idCompania, proveedor.id, numeroFacturaProveedor, alimentaInventario ? 0 : 1, JSON.stringify(lineasFinal), fechaRegistro, fechaVencimiento, plazoDias, montoTotal, esContado ? 0 : montoTotal, esContado ? "PAGADA" : "PENDIENTE", ivaAcreditable, "Importada desde XML", new Date().toISOString()]
-        );
-        const idCuentaPagar = (result as any).insertId;
+        // La cuenta por pagar, sus renglones y el pago de contado van en una sola transacción.
+        // (El movimiento de inventario del paso 2 sigue confirmándose por separado — brecha
+        // preexistente en esta ruta, anotada en el spec de Fase 4; no se reestructura aquí
+        // porque no hay forma de probar la importación XML de punta a punta en este entorno.)
+        const creadaEn = new Date().toISOString();
+        const connection = await pool.getConnection();
         const pagos: PagoCuentaPagar[] = [];
-        if (esContado) {
-          const [pagoResult] = await pool.query(
-            "INSERT INTO cxp_pagos (idCompania, idCuentaPagar, fecha, monto, medioPago, referencia, registradoPor, creadoEn) VALUES (?, ?, ?, ?, '01', NULL, NULL, ?)",
-            [idCompania, idCuentaPagar, fechaRegistro, montoTotal, new Date().toISOString()]
+        let idCuentaPagar: number;
+        try {
+          await connection.beginTransaction();
+          const [result] = await connection.query(
+            "INSERT INTO cuentas_pagar (idCompania, idProveedor, numeroFacturaProveedor, esServicio, fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente, estado, ivaAcreditable, notas, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [idCompania, proveedor.id, numeroFacturaProveedor, alimentaInventario ? 0 : 1, fechaRegistro, fechaVencimiento, plazoDias, montoTotal, esContado ? 0 : montoTotal, esContado ? "PAGADA" : "PENDIENTE", ivaAcreditable, "Importada desde XML", creadaEn]
           );
-          pagos.push({ id: (pagoResult as any).insertId, idCompania, idCuentaPagar, fecha: fechaRegistro, monto: montoTotal, medioPago: "01", referencia: null, registradoPor: null, creadoEn: new Date().toISOString() });
+          idCuentaPagar = (result as any).insertId;
+          await guardarLineasCuentaPagar(connection, idCuentaPagar, lineasFinal);
+
+          if (esContado) {
+            const [pagoResult] = await connection.query(
+              "INSERT INTO cxp_pagos (idCompania, idCuentaPagar, fecha, monto, medioPago, referencia, registradoPor, creadoEn) VALUES (?, ?, ?, ?, '01', NULL, NULL, ?)",
+              [idCompania, idCuentaPagar, fechaRegistro, montoTotal, creadaEn]
+            );
+            pagos.push({ id: (pagoResult as any).insertId, idCompania, idCuentaPagar, fecha: fechaRegistro, monto: montoTotal, medioPago: "01", referencia: null, registradoPor: null, creadoEn: creadaEn });
+          }
+          await connection.commit();
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
         }
         cxpCreada = {
           id: idCuentaPagar, idCompania, idProveedor: proveedor.id, numeroFacturaProveedor, esServicio: !alimentaInventario, lineas: lineasFinal,
           fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente: esContado ? 0 : montoTotal, estado: esContado ? "PAGADA" : "PENDIENTE",
-          ivaAcreditable, notas: "Importada desde XML", creadaEn: new Date().toISOString(), pagos
+          ivaAcreditable, notas: "Importada desde XML", creadaEn, pagos
         };
       } else {
         const nueva: any = {
