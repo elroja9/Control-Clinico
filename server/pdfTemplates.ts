@@ -88,7 +88,8 @@ function documentoShell(company: Company, titulo: string, cuerpoHtml: string): s
 export function renderFacturaPdf(params: { company: Company; patient: Patient; factura: Factura }): string {
   const { company, patient, factura } = params;
   const esNotaCredito = factura.tipoDocumento === "03";
-  const titulo = esNotaCredito ? "Nota de Crédito Electrónica" : "Factura Electrónica";
+  const esNotaDebito = factura.tipoDocumento === "02";
+  const titulo = esNotaCredito ? "Nota de Crédito Electrónica" : esNotaDebito ? "Nota de Débito Electrónica" : "Factura Electrónica";
 
   const filas = (factura.lineas || []).map(l => `
     <tr>
@@ -138,7 +139,7 @@ export function renderFacturaPdf(params: { company: Company; patient: Patient; f
 
     <div class="nota">
       Comprobante generado electr&oacute;nicamente por ${escapeHtml(company.nombreComercial)}.
-      ${esNotaCredito && factura.motivoAnulacion ? `<br>Motivo de la anulaci&oacute;n: ${escapeHtml(factura.motivoAnulacion)}` : ""}
+      ${(esNotaCredito || esNotaDebito) && factura.motivoAnulacion ? `<br>Motivo: ${escapeHtml(factura.motivoAnulacion)}` : ""}
     </div>`;
 
   return documentoShell(company, titulo, cuerpo);

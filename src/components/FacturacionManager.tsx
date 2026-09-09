@@ -1,13 +1,17 @@
 import React, { useState } from 'react';
-import { Factura, Patient, Company, NotificationLog } from '../data/mockData';
-import { Receipt, XCircle, FileMinus, AlertCircle, RefreshCw, Eye } from 'lucide-react';
+import { Factura, Patient, Company, Servicio, NotificationLog } from '../data/mockData';
+import { Receipt, XCircle, FileMinus, FilePlus, AlertCircle, RefreshCw, Eye } from 'lucide-react';
 import FacturaDetailView from './FacturaDetailView';
+import AjusteFacturaModal from './AjusteFacturaModal';
 
 interface FacturacionManagerProps {
   facturas: Factura[];
   patients: Patient[];
   company: Company;
+  servicios: Servicio[];
   onAnularFactura: (idFactura: number, motivo: string) => Promise<Factura>;
+  onEmitirNotaCredito: (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }>; modoPrueba: boolean }) => Promise<Factura>;
+  onEmitirNotaDebito: (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }>; medioPago?: string; modoPrueba: boolean }) => Promise<Factura>;
   onVerificarEstadoFactura: (idFactura: number) => Promise<Factura>;
   onReenviarCorreo: (idFactura: number) => Promise<NotificationLog>;
 }
@@ -28,13 +32,14 @@ const MEDIO_PAGO_LABEL: Record<string, string> = {
   '06': 'SINPE Móvil'
 };
 
-export default function FacturacionManager({ facturas, patients, company, onAnularFactura, onVerificarEstadoFactura, onReenviarCorreo }: FacturacionManagerProps) {
+export default function FacturacionManager({ facturas, patients, company, servicios, onAnularFactura, onEmitirNotaCredito, onEmitirNotaDebito, onVerificarEstadoFactura, onReenviarCorreo }: FacturacionManagerProps) {
   const [anulandoId, setAnulandoId] = useState<number | null>(null);
   const [motivoAnulacion, setMotivoAnulacion] = useState('');
   const [anulando, setAnulando] = useState(false);
   const [error, setError] = useState('');
   const [verificandoId, setVerificandoId] = useState<number | null>(null);
   const [viewingFactura, setViewingFactura] = useState<Factura | null>(null);
+  const [ajustando, setAjustando] = useState<{ tipo: 'CREDITO' | 'DEBITO'; factura: Factura } | null>(null);
 
   const handleVerificarEstado = async (id: number) => {
     setVerificandoId(id);
@@ -92,22 +97,24 @@ export default function FacturacionManager({ facturas, patients, company, onAnul
       <div className="space-y-1.5">
         {ordenadas.map(f => {
           const esNotaCredito = f.tipoDocumento === '03';
+          const esNotaDebito = f.tipoDocumento === '02';
+          const esNota = esNotaCredito || esNotaDebito;
           return (
             <div key={f.id} className="p-2.5 bg-white border border-slate-200 rounded-lg">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <span className="font-semibold text-slate-800 inline-flex items-center gap-1.5 text-xs">
-                    {esNotaCredito ? <FileMinus className="w-3.5 h-3.5 text-rose-500" /> : <Receipt className="w-3.5 h-3.5 text-slate-500" />}
-                    {esNotaCredito ? 'Nota de Crédito' : 'Factura'} {f.consecutivo}
+                    {esNotaCredito ? <FileMinus className="w-3.5 h-3.5 text-rose-500" /> : esNotaDebito ? <FilePlus className="w-3.5 h-3.5 text-amber-600" /> : <Receipt className="w-3.5 h-3.5 text-slate-500" />}
+                    {esNotaCredito ? 'Nota de Crédito' : esNotaDebito ? 'Nota de Débito' : 'Factura'} {f.consecutivo}
                   </span>
                   <span className="text-[10px] text-slate-500 block truncate">
                     {nombrePaciente(f.idPaciente)} &middot; {new Date(f.fechaEmision).toLocaleString('es-CR')} &middot; ₡{f.total.toLocaleString('es-CR', { maximumFractionDigits: 2 })}
                     {f.condicionVenta === '02' && ' · Crédito'}
                     {!esNotaCredito && ` · ${MEDIO_PAGO_LABEL[f.medioPago] || f.medioPago}`}
-                    {!esNotaCredito && f.montoRecibido != null && ` · Vuelto ₡${(f.montoRecibido - f.total).toLocaleString('es-CR', { maximumFractionDigits: 2 })}`}
+                    {!esNota && f.montoRecibido != null && ` · Vuelto ₡${(f.montoRecibido - f.total).toLocaleString('es-CR', { maximumFractionDigits: 2 })}`}
                   </span>
-                  {esNotaCredito && f.idFacturaReferencia != null && (
-                    <span className="text-[10px] text-slate-400 block">Anula factura {referenciaFactura(f.idFacturaReferencia)}{f.motivoAnulacion ? ` — ${f.motivoAnulacion}` : ''}</span>
+                  {esNota && f.idFacturaReferencia != null && (
+                    <span className="text-[10px] text-slate-400 block">{esNotaCredito ? 'Ajusta' : 'Debita'} factura {referenciaFactura(f.idFacturaReferencia)}{f.motivoAnulacion ? ` — ${f.motivoAnulacion}` : ''}</span>
                   )}
                   {f.mensajeError && (f.estado === 'ERROR' || f.estado === 'RECHAZADA') && (
                     <span className="text-[10px] text-rose-600 block truncate" title={f.mensajeError}>{f.mensajeError}</span>
@@ -132,6 +139,24 @@ export default function FacturacionManager({ facturas, patients, company, onAnul
                       className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 disabled:opacity-50"
                     >
                       <RefreshCw className={`w-3.5 h-3.5 ${verificandoId === f.id ? 'animate-spin' : ''}`} />
+                    </button>
+                  )}
+                  {puedeAnular(f) && (
+                    <button
+                      onClick={() => setAjustando({ tipo: 'CREDITO', factura: f })}
+                      title="Emitir Nota de Crédito parcial"
+                      className="p-1.5 rounded-lg text-indigo-500 hover:bg-indigo-50"
+                    >
+                      <FileMinus className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {puedeAnular(f) && (
+                    <button
+                      onClick={() => setAjustando({ tipo: 'DEBITO', factura: f })}
+                      title="Emitir Nota de Débito"
+                      className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-50"
+                    >
+                      <FilePlus className="w-3.5 h-3.5" />
                     </button>
                   )}
                   {puedeAnular(f) && (
@@ -204,6 +229,18 @@ export default function FacturacionManager({ facturas, patients, company, onAnul
           />
         );
       })()}
+
+      {ajustando && (
+        <AjusteFacturaModal
+          tipo={ajustando.tipo}
+          factura={ajustando.factura}
+          servicios={servicios}
+          ivaPorDefecto={company.ivaPorDefecto}
+          onEmitir={ajustando.tipo === 'CREDITO' ? onEmitirNotaCredito : onEmitirNotaDebito}
+          onClose={() => setAjustando(null)}
+          themeColor={company.colorPrimario}
+        />
+      )}
     </div>
   );
 }

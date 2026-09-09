@@ -29,7 +29,9 @@ import {
   generarClaveNumerica,
   fechaEmisionCR,
   construirXmlFactura,
-  construirXmlNotaCredito
+  construirXmlNotaCredito,
+  construirXmlNotaDebito,
+  PLAZO_CREDITO_DIAS_DEFECTO
 } from "./server/haciendaFactura";
 import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda } from "./server/haciendaApi";
 import { serviciosDefectoParaPerfil } from "./server/serviciosDefecto";
@@ -103,6 +105,7 @@ interface LocalHaciendaConfig {
   certificadoVenceEn: string | null;
   ultimoConsecutivo: number;
   ultimoConsecutivoNc: number;
+  ultimoConsecutivoNd: number;
 }
 let localHaciendaConfigs: LocalHaciendaConfig[] = [];
 
@@ -936,11 +939,12 @@ function construirReporteClientesSesiones(
   };
 }
 
-function construirReporteD104(periodo: string, company: Company, facturasMes: any[], notasCreditoMes: any[], creditoFiscal: number, yaCerrado: boolean, fechaCierre: string | null): ReporteD104 {
+function construirReporteD104(periodo: string, company: Company, facturasMes: any[], notasCreditoMes: any[], notasDebitoMes: any[], creditoFiscal: number, yaCerrado: boolean, fechaCierre: string | null): ReporteD104 {
   const tarifas = {
     t13: { base: 0, iva: 0 }, t4: { base: 0, iva: 0 }, t2: { base: 0, iva: 0 }, t1: { base: 0, iva: 0 }, exento: { base: 0, iva: 0 }
   };
   facturasMes.forEach(f => acumularLineasD104(f.lineas, 1, tarifas));
+  notasDebitoMes.forEach(f => acumularLineasD104(f.lineas, 1, tarifas));
   notasCreditoMes.forEach(f => acumularLineasD104(f.lineas, -1, tarifas));
 
   const debitoFiscal = tarifas.t13.iva + tarifas.t4.iva + tarifas.t2.iva + tarifas.t1.iva;
@@ -961,6 +965,7 @@ function construirReporteD104(periodo: string, company: Company, facturasMes: an
     saldoAPagar: redondear2(debitoFiscal - creditoFiscal),
     cantidadFacturas: facturasMes.length,
     cantidadNotasCredito: notasCreditoMes.length,
+    cantidadNotasDebito: notasDebitoMes.length,
     yaCerrado,
     fechaCierre
   };
@@ -1023,9 +1028,13 @@ function calcularImpuestoRenta(utilidad: number, tipo: "fisica" | "juridica"): {
   return { total: Math.round(total * 100) / 100, tramos };
 }
 
-function construirReporteD101(anio: number, company: Company, facturasAnio: any[], comprasCxPAnio: number, gastosManuales: GastosManualesAnuales, yaCerrado: boolean, fechaCierre: string | null): ReporteD101 {
-  const ventasNetas = facturasAnio.reduce((s, f) => s + (Number(f.subtotal) || 0), 0);
-  const ivaAnual = facturasAnio.reduce((s, f) => s + (Number(f.totalIva) || 0), 0);
+function construirReporteD101(anio: number, company: Company, facturasAnio: any[], notasDebitoAnio: any[], comprasCxPAnio: number, gastosManuales: GastosManualesAnuales, yaCerrado: boolean, fechaCierre: string | null): ReporteD101 {
+  // Una Nota de Débito ACEPTADA es un ingreso real adicional sobre una factura ya aceptada — se
+  // suma igual que una factura (no hay neteo aquí, a diferencia de D-104: ver comentario en
+  // obtenerDatosD101 sobre por qué D-101 no requiere ese ajuste).
+  const todas = [...facturasAnio, ...notasDebitoAnio];
+  const ventasNetas = todas.reduce((s, f) => s + (Number(f.subtotal) || 0), 0);
+  const ivaAnual = todas.reduce((s, f) => s + (Number(f.totalIva) || 0), 0);
   const totalGastosDeducibles = comprasCxPAnio + gastosManuales.alquileres + gastosManuales.servicios + gastosManuales.planilla + gastosManuales.otros;
   const utilidadNeta = Math.max(0, ventasNetas - totalGastosDeducibles);
   const tipoContribuyente: "fisica" | "juridica" = company.tipoIdentificacion === "01" ? "fisica" : "juridica";
@@ -1045,6 +1054,7 @@ function construirReporteD101(anio: number, company: Company, facturasAnio: any[
     impuestoRenta,
     tramos,
     cantidadFacturas: facturasAnio.length,
+    cantidadNotasDebito: notasDebitoAnio.length,
     yaCerrado,
     fechaCierre
   };
@@ -2522,7 +2532,8 @@ async function startServer() {
           passwordAtvCifrado, certificadoP12Cifrado, certificadoPinCifrado,
           certificadoNombreArchivo, certificadoVenceEn,
           ultimoConsecutivo: index !== -1 ? localHaciendaConfigs[index].ultimoConsecutivo : 0,
-          ultimoConsecutivoNc: index !== -1 ? localHaciendaConfigs[index].ultimoConsecutivoNc : 0
+          ultimoConsecutivoNc: index !== -1 ? localHaciendaConfigs[index].ultimoConsecutivoNc : 0,
+          ultimoConsecutivoNd: index !== -1 ? localHaciendaConfigs[index].ultimoConsecutivoNd : 0
         };
         if (index !== -1) {
           localHaciendaConfigs[index] = stored;
@@ -2939,13 +2950,13 @@ async function startServer() {
       if (condicionVenta === "02") {
         const fechaEmisionSolo = nuevaFactura.fechaEmision.split("T")[0];
         const vencimiento = new Date(fechaEmision);
-        vencimiento.setDate(vencimiento.getDate() + 30);
+        vencimiento.setDate(vencimiento.getDate() + PLAZO_CREDITO_DIAS_DEFECTO);
         const fechaVencimiento = vencimiento.toISOString().split("T")[0];
 
         if (dbConnected && pool) {
           await pool.query(
             "INSERT INTO cuentas_cobrar (idCompania, idFactura, facturaConsecutivo, idPaciente, fechaEmision, fechaVencimiento, plazoDias, montoTotal, saldoPendiente, estado, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?)",
-            [idCompania, nuevaFactura.id, consecutivo, idPaciente, fechaEmisionSolo, fechaVencimiento, 30, resumen.totalComprobante, resumen.totalComprobante, new Date().toISOString()]
+            [idCompania, nuevaFactura.id, consecutivo, idPaciente, fechaEmisionSolo, fechaVencimiento, PLAZO_CREDITO_DIAS_DEFECTO, resumen.totalComprobante, resumen.totalComprobante, new Date().toISOString()]
           );
         } else {
           localCuentasCobrar.push({
@@ -2956,7 +2967,7 @@ async function startServer() {
             idPaciente,
             fechaEmision: fechaEmisionSolo,
             fechaVencimiento,
-            plazoDias: 30,
+            plazoDias: PLAZO_CREDITO_DIAS_DEFECTO,
             montoTotal: resumen.totalComprobante,
             saldoPendiente: resumen.totalComprobante,
             estado: "PENDIENTE",
@@ -3019,10 +3030,17 @@ async function startServer() {
       if (!company) return res.status(404).json({ error: "Empresa no encontrada." });
       if (!paciente) return res.status(404).json({ error: "Paciente no encontrado." });
 
-      const cert = await cargarCertificadoEmpresa(idCompania);
-      if (!cert) return res.status(400).json({ error: "Configure primero la Firma Digital de Hacienda (certificado .p12) en Configuración de Empresa." });
+      // Igual que POST /api/facturas: en ambiente PRUEBAS_LOCAL no se exige cert/credenciales ni
+      // se firma/envía nada — antes esto se exigía sin importar el ambiente, así que anular una
+      // factura de prueba fallaba con un error de configuración en vez de simular la anulación.
       const credenciales = await cargarCredencialesAtv(idCompania);
-      if (!credenciales) return res.status(400).json({ error: "Configure primero el usuario y contraseña ATV de Hacienda en Configuración de Empresa." });
+      const omitirEnvioHacienda = credenciales?.ambiente === "PRUEBAS_LOCAL";
+      let cert: { p12Base64: string; pin: string } | null = null;
+      if (!omitirEnvioHacienda) {
+        cert = await cargarCertificadoEmpresa(idCompania);
+        if (!cert) return res.status(400).json({ error: "Configure primero la Firma Digital de Hacienda (certificado .p12) en Configuración de Empresa." });
+        if (!credenciales) return res.status(400).json({ error: "Configure primero el usuario y contraseña ATV de Hacienda en Configuración de Empresa." });
+      }
 
       const lineasOriginales = dbConnected && pool
         ? (await fetchLineasPorFactura([factura.id])).get(factura.id) || []
@@ -3118,17 +3136,14 @@ async function startServer() {
         }
       });
 
-      const xmlFirmado = await firmarXadesEpes(xml, cert.p12Base64, cert.pin);
-
       const notaCredito: any = {
-        xmlFirmado,
         idCompania,
         idCita: null,
         idPaciente: factura.idPaciente,
         clave: claveNc,
         consecutivo: consecutivoNc,
         fechaEmision: fechaEmisionCR(fechaEmisionNc),
-        ambiente: credenciales.ambiente,
+        ambiente: credenciales?.ambiente ?? "PRUEBAS_LOCAL",
         lineas: lineasOriginales,
         subtotal: resumen.totalVenta,
         totalIva: resumen.totalImpuesto,
@@ -3142,28 +3157,35 @@ async function startServer() {
         motivoAnulacion: motivo
       };
 
-      // Envío a Hacienda — best-effort, igual que en POST /api/facturas: si Hacienda no
-      // responde o rechaza, la Nota de Crédito queda guardada como FIRMADA/ERROR y se puede
-      // reintentar el envío después mediante POST /api/facturas/:id/estado.
-      try {
-        const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
-        const envio = await enviarFacturaHacienda({
-          ambiente: credenciales.ambiente,
-          token,
-          clave: claveNc,
-          fechaEmisionIso: fechaEmisionCR(fechaEmisionNc),
-          tipoIdentificacionEmisor: company.tipoIdentificacion,
-          cedulaEmisor: limpiarIdentificacion(company.identificacion),
-          tipoIdentificacionReceptor: tipoIdReceptor,
-          cedulaReceptor: limpiarIdentificacion(paciente.identificacion),
-          xmlFirmado
-        });
-        notaCredito.estado = envio.aceptadoParaProcesar ? "ENVIADA" : "ERROR";
-        notaCredito.mensajeError = envio.mensaje;
-      } catch (err: any) {
-        notaCredito.estado = "ERROR";
-        notaCredito.mensajeError = err.message;
-        console.error("[Hacienda] Error enviando nota de crédito:", err.message || err);
+      if (omitirEnvioHacienda) {
+        notaCredito.estado = "SIMULADA";
+        notaCredito.mensajeError = "Ambiente de pruebas locales — no se envió a Hacienda.";
+      } else {
+        // Envío a Hacienda — best-effort, igual que en POST /api/facturas: si Hacienda no
+        // responde o rechaza, la Nota de Crédito queda guardada como FIRMADA/ERROR y se puede
+        // reintentar el envío después mediante POST /api/facturas/:id/estado.
+        try {
+          const xmlFirmado = await firmarXadesEpes(xml, cert!.p12Base64, cert!.pin);
+          notaCredito.xmlFirmado = xmlFirmado;
+          const token = await obtenerTokenHacienda(credenciales!.ambiente, credenciales!.usuarioAtv, credenciales!.passwordAtv);
+          const envio = await enviarFacturaHacienda({
+            ambiente: credenciales!.ambiente,
+            token,
+            clave: claveNc,
+            fechaEmisionIso: fechaEmisionCR(fechaEmisionNc),
+            tipoIdentificacionEmisor: company.tipoIdentificacion,
+            cedulaEmisor: limpiarIdentificacion(company.identificacion),
+            tipoIdentificacionReceptor: tipoIdReceptor,
+            cedulaReceptor: limpiarIdentificacion(paciente.identificacion),
+            xmlFirmado
+          });
+          notaCredito.estado = envio.aceptadoParaProcesar ? "ENVIADA" : "ERROR";
+          notaCredito.mensajeError = envio.mensaje;
+        } catch (err: any) {
+          notaCredito.estado = "ERROR";
+          notaCredito.mensajeError = err.message;
+          console.error("[Hacienda] Error enviando nota de crédito:", err.message || err);
+        }
       }
 
       if (dbConnected && pool) {
@@ -3201,6 +3223,432 @@ async function startServer() {
     } catch (err: any) {
       console.error("[Hacienda] Error anulando factura:", err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Carga la factura original + empresa + paciente + líneas ya guardadas — validación y datos
+  // compartidos entre /nota-credito y /nota-debito (ambos ajustan, total o parcial, una Factura
+  // Electrónica ya emitida; a diferencia de /anular, ninguno cambia el estado de la factura
+  // original ni su CxC, porque un ajuste no es una anulación).
+  async function cargarFacturaParaAjuste(req: any, res: any): Promise<{ factura: any; company: Company; paciente: Patient; lineasOriginales: any[] } | null> {
+    const id = parseInt(req.params.id);
+    let factura: any;
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT * FROM facturas WHERE id_factura = ?", [id]);
+      factura = (rows as any[]).map(row => normalizeRow(row, 'id_factura'))[0];
+    } else {
+      factura = localFacturas.find(f => f.id === id);
+    }
+    if (!factura) { res.status(404).json({ error: "Factura no encontrada." }); return null; }
+    if (!canAccessCompany(sessionOf(req), factura.idCompania)) { res.status(403).json({ error: "No autorizado." }); return null; }
+    if (factura.tipoDocumento !== "01") { res.status(400).json({ error: "Solo se pueden ajustar Facturas Electrónicas (no otras Notas de Crédito/Débito)." }); return null; }
+    if (factura.estado !== "ENVIADA" && factura.estado !== "ACEPTADA") { res.status(400).json({ error: "Solo se pueden ajustar facturas que fueron enviadas a Hacienda (estado ENVIADA o ACEPTADA)." }); return null; }
+
+    const idCompania = factura.idCompania;
+    let company: Company | undefined;
+    let paciente: Patient | undefined;
+    if (dbConnected && pool) {
+      const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
+      company = (companyRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
+      const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ?", [factura.idPaciente]);
+      paciente = (pacienteRows as any[]).map(row => normalizeRow(row, 'id_paciente'))[0];
+    } else {
+      company = localCompanies.find(c => c.id === idCompania);
+      paciente = localPatients.find(p => p.id === factura.idPaciente);
+    }
+    if (!company) { res.status(404).json({ error: "Empresa no encontrada." }); return null; }
+    if (!paciente) { res.status(404).json({ error: "Paciente no encontrado." }); return null; }
+
+    const lineasOriginales = dbConnected && pool
+      ? (await fetchLineasPorFactura([factura.id])).get(factura.id) || []
+      : (typeof factura.lineas === "string" ? JSON.parse(factura.lineas) : factura.lineas);
+
+    return { factura, company, paciente, lineasOriginales };
+  }
+
+  // Firma y envía (best-effort, igual que POST /api/facturas y /anular) una Nota de Crédito/Débito
+  // ya armada, y la persiste junto con sus líneas. `tipoDocumento` es '02' (Débito) o '03'
+  // (Crédito) — separa el nodo raíz del XML y el contador de consecutivo a usar.
+  async function emitirYGuardarNota(params: {
+    tipoDocumento: "02" | "03";
+    idCompania: number;
+    idPaciente: number;
+    xmlSinFirmar: string;
+    clave: string;
+    consecutivo: string;
+    fechaEmision: Date;
+    condicionVenta: string;
+    resumen: ReturnType<typeof calcularResumen>;
+    lineas: any[];
+    idFacturaReferencia: number;
+    motivo: string;
+    company: Company;
+    paciente: Patient;
+    modoPrueba: boolean;
+    medioPago: string;
+  }): Promise<any> {
+    const { tipoDocumento, idCompania, idPaciente, xmlSinFirmar, clave, consecutivo, fechaEmision, condicionVenta, resumen, lineas, idFacturaReferencia, motivo, company, paciente, modoPrueba, medioPago } = params;
+    const credenciales = await cargarCredencialesAtv(idCompania);
+    const omitirEnvioHacienda = modoPrueba || credenciales?.ambiente === "PRUEBAS_LOCAL";
+
+    const nota: any = {
+      idCompania,
+      idCita: null,
+      idPaciente,
+      clave,
+      consecutivo,
+      fechaEmision: fechaEmisionCR(fechaEmision),
+      ambiente: credenciales?.ambiente ?? "PRUEBAS_LOCAL",
+      lineas,
+      subtotal: resumen.totalVenta,
+      totalIva: resumen.totalImpuesto,
+      total: resumen.totalComprobante,
+      estado: "FIRMADA",
+      mensajeError: null,
+      creadaEn: new Date().toISOString(),
+      condicionVenta,
+      tipoDocumento,
+      idFacturaReferencia,
+      motivoAnulacion: motivo,
+      medioPago,
+      montoRecibido: null
+    };
+
+    if (omitirEnvioHacienda) {
+      nota.estado = "SIMULADA";
+      nota.mensajeError = modoPrueba && credenciales?.ambiente !== "PRUEBAS_LOCAL"
+        ? "Modo prueba activado — no se envió a Hacienda."
+        : "Ambiente de pruebas locales — no se envió a Hacienda.";
+    } else {
+      const cert = await cargarCertificadoEmpresa(idCompania);
+      if (!cert) throw Object.assign(new Error("Configure primero la Firma Digital de Hacienda (certificado .p12) en Configuración de Empresa."), { status: 400 });
+      if (!credenciales) throw Object.assign(new Error("Configure primero el usuario y contraseña ATV de Hacienda en Configuración de Empresa."), { status: 400 });
+      try {
+        const xmlFirmado = await firmarXadesEpes(xmlSinFirmar, cert.p12Base64, cert.pin);
+        nota.xmlFirmado = xmlFirmado;
+        const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
+        const envio = await enviarFacturaHacienda({
+          ambiente: credenciales.ambiente,
+          token,
+          clave,
+          fechaEmisionIso: fechaEmisionCR(fechaEmision),
+          tipoIdentificacionEmisor: company.tipoIdentificacion,
+          cedulaEmisor: limpiarIdentificacion(company.identificacion),
+          tipoIdentificacionReceptor: paciente.tipoIdentificacion === "EXT" ? "03" : paciente.tipoIdentificacion,
+          cedulaReceptor: limpiarIdentificacion(paciente.identificacion),
+          xmlFirmado
+        });
+        nota.estado = envio.aceptadoParaProcesar ? "ENVIADA" : "ERROR";
+        nota.mensajeError = envio.mensaje;
+      } catch (err: any) {
+        nota.estado = "ERROR";
+        nota.mensajeError = err.message;
+        console.error(`[Hacienda] Error enviando Nota de ${tipoDocumento === "02" ? "Débito" : "Crédito"}:`, err.message || err);
+      }
+    }
+
+    if (dbConnected && pool) {
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        const [result] = await connection.query(
+          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido, xml_firmado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [nota.idCompania, nota.idCita, nota.idPaciente, nota.clave, nota.consecutivo, nota.fechaEmision, nota.ambiente, nota.subtotal, nota.totalIva, nota.total, nota.estado, nota.mensajeError, nota.creadaEn, nota.condicionVenta, nota.tipoDocumento, nota.idFacturaReferencia, nota.motivoAnulacion, nota.medioPago, nota.montoRecibido, nota.xmlFirmado || null]
+        );
+        nota.id = (result as any).insertId;
+        await guardarLineasFactura(connection, nota.id, nota.lineas);
+        await connection.commit();
+      } catch (err) {
+        await connection.rollback();
+        throw err;
+      } finally {
+        connection.release();
+      }
+    } else {
+      nota.id = Math.max(0, ...localFacturas.map(f => f.id)) + 1;
+      localFacturas.push(nota);
+    }
+
+    return nota;
+  }
+
+  // Nota de Crédito PARCIAL (o total sin marcar la factura como ANULADA): corrige el monto de una
+  // factura ya emitida acreditando cantidades específicas de sus líneas originales — a diferencia
+  // de POST /api/facturas/:id/anular (que además marca la factura ANULADA, repone TODO el stock y
+  // cancela la CxC), este endpoint es para correcciones (se cobró de más, una devolución parcial)
+  // donde la factura original sigue vigente. Código de referencia '02' ("Corrige monto", Nota 9 de
+  // ANEXOS_Y_ESTRUCTURAS_V4.4.pdf) — nunca '01' (reservado a anulación total vía /anular).
+  app.post("/api/facturas/:id/nota-credito", requireAuth, async (req, res) => {
+    try {
+      const motivo = String(req.body.motivo || "").trim();
+      if (!motivo) return res.status(400).json({ error: "Indique el motivo de la Nota de Crédito." });
+      const lineasBody: Array<{ idServicio: number; cantidad: number }> = req.body.lineas || [];
+      if (lineasBody.length === 0) return res.status(400).json({ error: "Seleccione al menos una línea a acreditar." });
+
+      const datos = await cargarFacturaParaAjuste(req, res);
+      if (!datos) return;
+      const { factura, company, paciente, lineasOriginales } = datos;
+
+      // Cuánto ya se acreditó de cada línea (por idServicio) en Notas de Crédito previas sobre
+      // esta misma factura — Hacienda exige que la suma de ajustes nunca supere el comprobante
+      // original (Anexos V4.4, sección "Información de referencia").
+      let notasPrevias: any[];
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM facturas WHERE idFacturaReferencia = ? AND tipoDocumento = '03'", [factura.id]);
+        notasPrevias = (rows as any[]).map(row => normalizeRow(row, 'id_factura'));
+      } else {
+        notasPrevias = localFacturas.filter(f => f.idFacturaReferencia === factura.id && f.tipoDocumento === "03");
+      }
+      const lineasPrevias = dbConnected && pool
+        ? Array.from((await fetchLineasPorFactura(notasPrevias.map(n => n.id))).values()).flat()
+        : notasPrevias.flatMap(n => (typeof n.lineas === "string" ? JSON.parse(n.lineas) : n.lineas));
+      const acreditadoPorServicio = new Map<number, number>();
+      for (const l of lineasPrevias) {
+        if (l.idServicio == null) continue;
+        acreditadoPorServicio.set(l.idServicio, (acreditadoPorServicio.get(l.idServicio) || 0) + Number(l.cantidad));
+      }
+
+      const lineasInput = [];
+      for (const pedida of lineasBody) {
+        const idServicio = parseInt(pedida.idServicio as any);
+        const cantidad = parseFloat(pedida.cantidad as any);
+        if (!cantidad || cantidad <= 0) return res.status(400).json({ error: "Cada línea a acreditar debe tener una cantidad mayor a 0." });
+        const original = lineasOriginales.find((l: any) => l.idServicio === idServicio);
+        if (!original) return res.status(400).json({ error: `La factura original no tiene una línea con el servicio ${idServicio}.` });
+        const yaAcreditado = acreditadoPorServicio.get(idServicio) || 0;
+        const disponible = Number(original.cantidad) - yaAcreditado;
+        if (cantidad > disponible + 1e-9) {
+          return res.status(400).json({ error: `"${original.detalle}": solo quedan ${disponible} unidad(es) por acreditar (ya se acreditaron ${yaAcreditado} de ${original.cantidad}).` });
+        }
+        lineasInput.push({
+          codigoCabys: original.codigoCabys,
+          detalle: original.detalle,
+          unidadMedida: original.unidadMedida,
+          cantidad,
+          precioUnitario: original.precioUnitario,
+          porcentajeIva: original.porcentajeIva,
+          idServicio,
+          tipo: original.tipo
+        });
+      }
+
+      const lineasCalculadas = calcularLineas(lineasInput).map((l, i) => ({ ...l, idServicio: lineasInput[i].idServicio, tipo: lineasInput[i].tipo }));
+      const resumen = calcularResumen(lineasCalculadas);
+      const idCompania = factura.idCompania;
+
+      // Reversa de stock por las cantidades efectivamente acreditadas (no todo el stock de la
+      // factura, como sí hace /anular) — misma transacción con FOR UPDATE que el resto del módulo.
+      let siguienteSecuencialNc: number;
+      if (dbConnected && pool) {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          const [rows] = await connection.query("SELECT ultimo_consecutivo_nc FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE", [idCompania]);
+          const actual = (rows as any[])[0]?.ultimo_consecutivo_nc || 0;
+          siguienteSecuencialNc = actual + 1;
+          await connection.query(
+            "INSERT INTO compania_hacienda_config (id_compania, ultimo_consecutivo_nc) VALUES (?, ?) ON DUPLICATE KEY UPDATE ultimo_consecutivo_nc = VALUES(ultimo_consecutivo_nc)",
+            [idCompania, siguienteSecuencialNc]
+          );
+          for (const l of lineasCalculadas) {
+            if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
+            const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE id_servicio = ? FOR UPDATE", [l.idServicio]);
+            const stockActual = (servicioRows as any[])[0]?.stock || 0;
+            const stockResultante = stockActual + l.cantidad;
+            await connection.query("UPDATE servicios SET stock = ? WHERE id_servicio = ?", [stockResultante, l.idServicio]);
+            await connection.query(
+              "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'DEVOLUCION_VENTA', ?, ?, ?, ?, ?, ?)",
+              [idCompania, l.idServicio, l.cantidad, stockResultante, `Nota de Crédito parcial sobre factura ${factura.consecutivo}`, motivo, null, new Date().toISOString()]
+            );
+          }
+          await connection.commit();
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
+        }
+      } else {
+        const cfg = localHaciendaConfigs.find(c => c.idCompania === idCompania)!;
+        siguienteSecuencialNc = cfg.ultimoConsecutivoNc + 1;
+        cfg.ultimoConsecutivoNc = siguienteSecuencialNc;
+        for (const l of lineasCalculadas) {
+          if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
+          const servicio = localServicios.find(s => s.id === l.idServicio);
+          if (servicio) servicio.stock = (servicio.stock || 0) + l.cantidad;
+        }
+      }
+
+      const consecutivo = generarConsecutivo(siguienteSecuencialNc, "001", "00001", "03");
+      const fechaEmision = new Date();
+      const clave = generarClaveNumerica(company.identificacion, consecutivo, fechaEmision);
+      const tipoIdReceptor = paciente.tipoIdentificacion === "EXT" ? "03" : paciente.tipoIdentificacion;
+      const condicionVenta = factura.condicionVenta || "01";
+
+      const xml = construirXmlNotaCredito({
+        clave,
+        consecutivo,
+        fechaEmision,
+        emisor: {
+          nombre: company.razonSocial, nombreComercial: company.nombreComercial,
+          tipoIdentificacion: company.tipoIdentificacion, identificacion: company.identificacion,
+          correoElectronico: company.correoEmisor, provincia: company.provincia, canton: company.canton,
+          distrito: company.distrito, otrasSenas: company.otrasSenas, codigoActividad: limpiarCodigoActividad(company.actividadEconomica)
+        },
+        receptor: { nombre: paciente.nombreCompleto, tipoIdentificacion: tipoIdReceptor, identificacion: paciente.identificacion, correoElectronico: paciente.correoElectronico || undefined },
+        condicionVenta,
+        medioPago: "01",
+        lineas: lineasCalculadas,
+        resumen,
+        referencia: { tipoDocumento: "01", numero: factura.clave, fechaEmision: new Date(factura.fechaEmision), codigo: "02", razon: motivo }
+      });
+
+      const notaCredito = await emitirYGuardarNota({
+        tipoDocumento: "03", idCompania, idPaciente: factura.idPaciente, xmlSinFirmar: xml, clave, consecutivo,
+        fechaEmision, condicionVenta, resumen, lineas: lineasCalculadas, idFacturaReferencia: factura.id,
+        motivo, company, paciente, modoPrueba: req.body.modoPrueba === true, medioPago: "01"
+      });
+      res.json(notaCredito);
+    } catch (err: any) {
+      console.error("[Hacienda] Error emitiendo Nota de Crédito parcial:", err);
+      res.status(err.status || 500).json({ error: err.message });
+    }
+  });
+
+  // Nota de Débito (total o parcial): agrega un cargo adicional sobre una factura ya emitida
+  // (sesión adicional no cobrada, corrección al alza, etc.). Las líneas son nuevas — se toman del
+  // catálogo VIGENTE de servicios, igual que POST /api/facturas, no de la factura original.
+  app.post("/api/facturas/:id/nota-debito", requireAuth, async (req, res) => {
+    try {
+      const motivo = String(req.body.motivo || "").trim();
+      if (!motivo) return res.status(400).json({ error: "Indique el motivo de la Nota de Débito." });
+      const lineasBody: Array<{ idServicio: number; cantidad: number }> = req.body.lineas || [];
+      if (lineasBody.length === 0) return res.status(400).json({ error: "Agregue al menos un servicio a debitar." });
+      const medioPago = req.body.medioPago || "01";
+
+      const datos = await cargarFacturaParaAjuste(req, res);
+      if (!datos) return;
+      const { factura, company, paciente } = datos;
+      const idCompania = factura.idCompania;
+
+      let serviciosDisponibles: Servicio[];
+      if (dbConnected && pool) {
+        const [servicioRows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ?", [idCompania]);
+        serviciosDisponibles = (servicioRows as any[]).map(row => normalizeRow(row, 'id_servicio'));
+      } else {
+        serviciosDisponibles = localServicios.filter(s => s.idCompania === idCompania);
+      }
+
+      const lineasInput = [];
+      for (const l of lineasBody) {
+        const servicio = serviciosDisponibles.find(s => s.id === parseInt(l.idServicio as any));
+        if (!servicio) return res.status(400).json({ error: `Servicio ${l.idServicio} no encontrado.` });
+        if (!servicio.codigoCabys) return res.status(400).json({ error: `El servicio "${servicio.nombre}" no tiene un código CABYS configurado.` });
+        const cantidad = parseFloat((l.cantidad as any) || 1);
+        if (servicio.tipo === 'ARTICULO' && (servicio.stock || 0) < cantidad) {
+          return res.status(400).json({ error: `Existencias insuficientes de "${servicio.nombre}" (disponible: ${servicio.stock || 0}, solicitado: ${cantidad}).` });
+        }
+        lineasInput.push({
+          codigoCabys: servicio.codigoCabys, detalle: servicio.nombre, unidadMedida: servicio.unidadMedida || 'Sp',
+          cantidad, precioUnitario: servicio.precio,
+          porcentajeIva: servicio.porcentajeIva != null ? servicio.porcentajeIva : company.ivaPorDefecto,
+          idServicio: servicio.id, tipo: servicio.tipo || 'SERVICIO'
+        });
+      }
+
+      const lineasCalculadas = calcularLineas(lineasInput).map((l, i) => ({ ...l, idServicio: lineasInput[i].idServicio, tipo: lineasInput[i].tipo }));
+      const resumen = calcularResumen(lineasCalculadas);
+
+      let siguienteSecuencialNd: number;
+      if (dbConnected && pool) {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+          const [rows] = await connection.query("SELECT ultimo_consecutivo_nd FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE", [idCompania]);
+          const actual = (rows as any[])[0]?.ultimo_consecutivo_nd || 0;
+          siguienteSecuencialNd = actual + 1;
+          await connection.query(
+            "INSERT INTO compania_hacienda_config (id_compania, ultimo_consecutivo_nd) VALUES (?, ?) ON DUPLICATE KEY UPDATE ultimo_consecutivo_nd = VALUES(ultimo_consecutivo_nd)",
+            [idCompania, siguienteSecuencialNd]
+          );
+          for (const l of lineasCalculadas) {
+            if (l.tipo !== 'ARTICULO' || !l.idServicio) continue;
+            const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE id_servicio = ? FOR UPDATE", [l.idServicio]);
+            const stockActual = (servicioRows as any[])[0]?.stock || 0;
+            if (stockActual < l.cantidad) {
+              await connection.rollback();
+              return res.status(409).json({ error: `Existencias insuficientes de "${l.detalle}" (disponible: ${stockActual}, solicitado: ${l.cantidad}).` });
+            }
+            const stockResultante = stockActual - l.cantidad;
+            await connection.query("UPDATE servicios SET stock = ? WHERE id_servicio = ?", [stockResultante, l.idServicio]);
+            await connection.query(
+              "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'VENTA', ?, ?, ?, ?, ?, ?)",
+              [idCompania, l.idServicio, -l.cantidad, stockResultante, `Nota de Débito sobre factura ${factura.consecutivo}`, motivo, null, new Date().toISOString()]
+            );
+          }
+          // Mantiene la CxC exacta: un cargo adicional sobre una venta a crédito aún pendiente de
+          // cobro incrementa lo que el paciente debe. Si ya estaba PAGADA se deja intacta (ese
+          // cobro ya es un hecho histórico) — igual criterio que /anular con la CxC.
+          await connection.query(
+            "UPDATE cuentas_cobrar SET montoTotal = montoTotal + ?, saldoPendiente = saldoPendiente + ? WHERE idFactura = ? AND estado = 'PENDIENTE'",
+            [resumen.totalComprobante, resumen.totalComprobante, factura.id]
+          );
+          await connection.commit();
+        } catch (err) {
+          await connection.rollback();
+          throw err;
+        } finally {
+          connection.release();
+        }
+      } else {
+        const cfg = localHaciendaConfigs.find(c => c.idCompania === idCompania)!;
+        siguienteSecuencialNd = cfg.ultimoConsecutivoNd + 1;
+        cfg.ultimoConsecutivoNd = siguienteSecuencialNd;
+        for (const l of lineasCalculadas) {
+          if (l.tipo !== 'ARTICULO' || !l.idServicio) continue;
+          const servicio = localServicios.find(s => s.id === l.idServicio);
+          if (servicio) servicio.stock = (servicio.stock || 0) - l.cantidad;
+        }
+        const cxc = localCuentasCobrar.find(c => c.idFactura === factura.id && c.estado === 'PENDIENTE');
+        if (cxc) {
+          cxc.montoTotal += resumen.totalComprobante;
+          cxc.saldoPendiente += resumen.totalComprobante;
+        }
+      }
+
+      const consecutivo = generarConsecutivo(siguienteSecuencialNd, "001", "00001", "02");
+      const fechaEmision = new Date();
+      const clave = generarClaveNumerica(company.identificacion, consecutivo, fechaEmision);
+      const tipoIdReceptor = paciente.tipoIdentificacion === "EXT" ? "03" : paciente.tipoIdentificacion;
+      const condicionVenta = factura.condicionVenta || "01";
+
+      const xml = construirXmlNotaDebito({
+        clave,
+        consecutivo,
+        fechaEmision,
+        emisor: {
+          nombre: company.razonSocial, nombreComercial: company.nombreComercial,
+          tipoIdentificacion: company.tipoIdentificacion, identificacion: company.identificacion,
+          correoElectronico: company.correoEmisor, provincia: company.provincia, canton: company.canton,
+          distrito: company.distrito, otrasSenas: company.otrasSenas, codigoActividad: limpiarCodigoActividad(company.actividadEconomica)
+        },
+        receptor: { nombre: paciente.nombreCompleto, tipoIdentificacion: tipoIdReceptor, identificacion: paciente.identificacion, correoElectronico: paciente.correoElectronico || undefined },
+        condicionVenta,
+        medioPago,
+        lineas: lineasCalculadas,
+        resumen,
+        referencia: { tipoDocumento: "01", numero: factura.clave, fechaEmision: new Date(factura.fechaEmision), codigo: "02", razon: motivo }
+      });
+
+      const notaDebito = await emitirYGuardarNota({
+        tipoDocumento: "02", idCompania, idPaciente: factura.idPaciente, xmlSinFirmar: xml, clave, consecutivo,
+        fechaEmision, condicionVenta, resumen, lineas: lineasCalculadas, idFacturaReferencia: factura.id,
+        motivo, company, paciente, modoPrueba: req.body.modoPrueba === true, medioPago
+      });
+      res.json(notaDebito);
+    } catch (err: any) {
+      console.error("[Hacienda] Error emitiendo Nota de Débito:", err);
+      res.status(err.status || 500).json({ error: err.message });
     }
   });
 
@@ -3971,10 +4419,18 @@ async function startServer() {
         "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '03' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
         [idCompania, `${periodo}%`]
       );
-      const idsFacturaYNc = [...(facturaRows as any[]).map(r => r.id_factura), ...(ncRows as any[]).map(r => r.id_factura)];
-      const lineasPorFactura = await fetchLineasPorFactura(idsFacturaYNc);
+      // Nota de Débito: no hay flujo de anulación para ella (a diferencia de la factura, que
+      // puede quedar ANULADA y seguir contando en D-104 porque la Nota de Crédito ya la neteó) —
+      // solo se declara cuando Hacienda la aceptó.
+      const [ndRows] = await pool.query(
+        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '02' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
+        [idCompania, `${periodo}%`]
+      );
+      const idsFacturaYNotas = [...(facturaRows as any[]).map(r => r.id_factura), ...(ncRows as any[]).map(r => r.id_factura), ...(ndRows as any[]).map(r => r.id_factura)];
+      const lineasPorFactura = await fetchLineasPorFactura(idsFacturaYNotas);
       const facturasMes = (facturaRows as any[]).map(r => ({ ...r, lineas: lineasPorFactura.get(r.id_factura) || [] }));
       const notasCreditoMes = (ncRows as any[]).map(r => ({ ...r, lineas: lineasPorFactura.get(r.id_factura) || [] }));
+      const notasDebitoMes = (ndRows as any[]).map(r => ({ ...r, lineas: lineasPorFactura.get(r.id_factura) || [] }));
 
       const [cxpRows] = await pool.query(
         "SELECT COALESCE(SUM(ivaAcreditable), 0) AS total FROM cuentas_pagar WHERE idCompania = ? AND fechaRegistro LIKE ? AND estado != 'ANULADA'",
@@ -3985,15 +4441,16 @@ async function startServer() {
       const [cierreRows] = await pool.query("SELECT * FROM cierres_fiscales WHERE idCompania = ? AND tipo = 'D104' AND periodo = ?", [idCompania, periodo]);
       const cierre = (cierreRows as any[])[0];
 
-      return { company, facturasMes, notasCreditoMes, creditoFiscal, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
+      return { company, facturasMes, notasCreditoMes, notasDebitoMes, creditoFiscal, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
     } else {
       const company = localCompanies.find(c => c.id === idCompania);
       if (!company) return null;
       const facturasMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(periodo) && (f.estado === "ACEPTADA" || f.estado === "ANULADA"));
       const notasCreditoMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "03" && f.fechaEmision.startsWith(periodo) && f.estado === "ACEPTADA");
+      const notasDebitoMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "02" && f.fechaEmision.startsWith(periodo) && f.estado === "ACEPTADA");
       const creditoFiscal = localCuentasPagar.filter(c => c.idCompania === idCompania && c.fechaRegistro.startsWith(periodo) && c.estado !== "ANULADA").reduce((s, c) => s + (c.ivaAcreditable || 0), 0);
       const cierre = localCierresFiscales.find(c => c.idCompania === idCompania && c.tipo === "D104" && c.periodo === periodo);
-      return { company, facturasMes, notasCreditoMes, creditoFiscal, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
+      return { company, facturasMes, notasCreditoMes, notasDebitoMes, creditoFiscal, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
     }
   }
 
@@ -4033,7 +4490,7 @@ async function startServer() {
       if (!/^\d{4}-\d{2}$/.test(periodo)) return res.status(400).json({ error: "Periodo inválido. Use el formato YYYY-MM." });
       const datos = await obtenerDatosD104(idCompania, periodo);
       if (!datos) return res.status(404).json({ error: "Empresa no encontrada." });
-      res.json(construirReporteD104(periodo, datos.company, datos.facturasMes, datos.notasCreditoMes, datos.creditoFiscal, datos.yaCerrado, datos.fechaCierre));
+      res.json(construirReporteD104(periodo, datos.company, datos.facturasMes, datos.notasCreditoMes, datos.notasDebitoMes, datos.creditoFiscal, datos.yaCerrado, datos.fechaCierre));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -4049,7 +4506,7 @@ async function startServer() {
       if (datos.yaCerrado) return res.status(409).json({ error: `Ya existe un cierre D-104 para el período ${periodo}.` });
 
       const creadoEn = new Date().toISOString();
-      const reporte = { ...construirReporteD104(periodo, datos.company, datos.facturasMes, datos.notasCreditoMes, datos.creditoFiscal, true, creadoEn) };
+      const reporte = { ...construirReporteD104(periodo, datos.company, datos.facturasMes, datos.notasCreditoMes, datos.notasDebitoMes, datos.creditoFiscal, true, creadoEn) };
 
       if (dbConnected && pool) {
         try {
@@ -4087,6 +4544,12 @@ async function startServer() {
       );
       const facturasAnio = facturaRows as any[];
 
+      const [ndRows] = await pool.query(
+        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '02' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
+        [idCompania, `${anioStr}%`]
+      );
+      const notasDebitoAnio = ndRows as any[];
+
       const [cxpRows] = await pool.query(
         "SELECT COALESCE(SUM(montoTotal), 0) AS total FROM cuentas_pagar WHERE idCompania = ? AND fechaRegistro LIKE ? AND estado != 'ANULADA'",
         [idCompania, `${anioStr}%`]
@@ -4102,18 +4565,19 @@ async function startServer() {
       const [cierreRows] = await pool.query("SELECT * FROM cierres_fiscales WHERE idCompania = ? AND tipo = 'D101' AND periodo = ?", [idCompania, anioStr]);
       const cierre = (cierreRows as any[])[0];
 
-      return { company, facturasAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
+      return { company, facturasAnio, notasDebitoAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
     } else {
       const company = localCompanies.find(c => c.id === idCompania);
       if (!company) return null;
       const facturasAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(anioStr) && f.estado === "ACEPTADA");
+      const notasDebitoAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "02" && f.fechaEmision.startsWith(anioStr) && f.estado === "ACEPTADA");
       const comprasCxPAnio = localCuentasPagar.filter(c => c.idCompania === idCompania && c.fechaRegistro.startsWith(anioStr) && c.estado !== "ANULADA").reduce((s, c) => s + c.montoTotal, 0);
       const gm = localGastosManuales.find(g => g.idCompania === idCompania && g.anio === anio);
       const gastosManuales: GastosManualesAnuales = gm
         ? { alquileres: gm.alquileres, servicios: gm.servicios, planilla: gm.planilla, otros: gm.otros }
         : { alquileres: 0, servicios: 0, planilla: 0, otros: 0 };
       const cierre = localCierresFiscales.find(c => c.idCompania === idCompania && c.tipo === "D101" && c.periodo === anioStr);
-      return { company, facturasAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
+      return { company, facturasAnio, notasDebitoAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
     }
   }
 
@@ -4124,7 +4588,7 @@ async function startServer() {
       if (!Number.isFinite(anio) || anio < 2000 || anio > 2100) return res.status(400).json({ error: "Año inválido." });
       const datos = await obtenerDatosD101(idCompania, anio);
       if (!datos) return res.status(404).json({ error: "Empresa no encontrada." });
-      res.json(construirReporteD101(anio, datos.company, datos.facturasAnio, datos.comprasCxPAnio, datos.gastosManuales, datos.yaCerrado, datos.fechaCierre));
+      res.json(construirReporteD101(anio, datos.company, datos.facturasAnio, datos.notasDebitoAnio, datos.comprasCxPAnio, datos.gastosManuales, datos.yaCerrado, datos.fechaCierre));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -4174,7 +4638,7 @@ async function startServer() {
       if (datos.yaCerrado) return res.status(409).json({ error: `Ya existe una liquidación de Renta para el año ${anio}.` });
 
       const creadoEn = new Date().toISOString();
-      const reporte = construirReporteD101(anio, datos.company, datos.facturasAnio, datos.comprasCxPAnio, datos.gastosManuales, true, creadoEn);
+      const reporte = construirReporteD101(anio, datos.company, datos.facturasAnio, datos.notasDebitoAnio, datos.comprasCxPAnio, datos.gastosManuales, true, creadoEn);
 
       if (dbConnected && pool) {
         try {

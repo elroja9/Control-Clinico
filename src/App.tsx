@@ -719,6 +719,30 @@ export default function App() {
     return data;
   };
 
+  const handleEmitirNotaCredito = async (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }>; modoPrueba: boolean }): Promise<Factura> => {
+    const res = await fetch(`/api/facturas/${idFactura}/nota-credito`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo emitir la Nota de Crédito.');
+    setFacturas(prev => [...prev, data]);
+    return data;
+  };
+
+  const handleEmitirNotaDebito = async (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }>; medioPago?: string; modoPrueba: boolean }): Promise<Factura> => {
+    const res = await fetch(`/api/facturas/${idFactura}/nota-debito`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'No se pudo emitir la Nota de Débito.');
+    setFacturas(prev => [...prev, data]);
+    return data;
+  };
+
   const handleVerificarEstadoFactura = async (idFactura: number): Promise<Factura> => {
     const res = await fetch(`/api/facturas/${idFactura}/estado`, { method: 'POST' });
     const data = await res.json();
@@ -1966,7 +1990,10 @@ export default function App() {
                   facturas={facturas.filter(f => f.idCompania === selectedCompanyId)}
                   patients={filteredPatientsByCompany}
                   company={activeCompany}
+                  servicios={servicios}
                   onAnularFactura={handleAnularFactura}
+                  onEmitirNotaCredito={handleEmitirNotaCredito}
+                  onEmitirNotaDebito={handleEmitirNotaDebito}
                   onVerificarEstadoFactura={handleVerificarEstadoFactura}
                   onReenviarCorreo={handleReenviarFacturaCorreo}
                 />

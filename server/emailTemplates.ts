@@ -289,7 +289,8 @@ export function renderFacturaEmail(params: {
 }): RenderedEmail {
   const { company, patient, factura } = params;
   const esNotaCredito = factura.tipoDocumento === "03";
-  const title = esNotaCredito ? "Nota de Crédito Electrónica" : "Factura Electrónica";
+  const esNotaDebito = factura.tipoDocumento === "02";
+  const title = esNotaCredito ? "Nota de Crédito Electrónica" : esNotaDebito ? "Nota de Débito Electrónica" : "Factura Electrónica";
   const subject = `${title} ${factura.consecutivo} - ${company.nombreComercial}`;
   const colones = (n: number) => `₡${n.toLocaleString("es-CR", { maximumFractionDigits: 2 })}`;
 
@@ -323,7 +324,8 @@ export function renderFacturaEmail(params: {
     infoCard("Consecutivo", escapeHtml(factura.consecutivo)) +
     infoCard("Fecha de Emisión", new Date(factura.fechaEmision).toLocaleString("es-CR")) +
     infoCard("Estado", escapeHtml(factura.estado)) +
-    (!esNotaCredito ? infoCard("Medio de Pago", escapeHtml(MEDIO_PAGO_LABEL[factura.medioPago] || factura.medioPago)) : "");
+    (!esNotaCredito ? infoCard("Medio de Pago", escapeHtml(MEDIO_PAGO_LABEL[factura.medioPago] || factura.medioPago)) : "") +
+    ((esNotaCredito || esNotaDebito) && factura.motivoAnulacion ? infoCard("Motivo", escapeHtml(factura.motivoAnulacion)) : "");
 
   const bodyHtml = `
     <p>Estimado(a) ${escapeHtml(patient.nombreCompleto)},</p>

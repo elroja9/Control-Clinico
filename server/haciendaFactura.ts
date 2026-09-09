@@ -1,14 +1,21 @@
-// Generador de XML "Factura Electrónica" v4.4 de Hacienda Costa Rica.
+// Generador de XML "Factura Electrónica"/"Nota de Crédito"/"Nota de Débito" v4.4 de Hacienda
+// Costa Rica.
 //
-// Estructura y catálogos verificados contra el XSD oficial
-// (https://atv.hacienda.go.cr/ATV/ComprobanteElectronico/docs/esquemas/2024/v4.4/FacturaElectronica_V4.4.xsd)
-// y la resolución MH-DGT-RES-0027-2024 / MH-DGT-RES-0001-2025 (v4.4 obligatoria desde el
-// 1 de setiembre de 2025). Los códigos de CodigoTarifaIVA por debajo de 13% (00.5%, exenta,
-// 0% sin derecho a crédito) NO se pudieron confirmar contra el XSD en esta sesión — antes de
-// facturar con esas tarifas en producción, verificar el catálogo "Códigos de Tarifa de IVA" del
-// PDF oficial "ANEXOS Y ESTRUCTURAS_V4.4.pdf".
+// Estructura, catálogos y nombres de campo verificados textualmente contra el documento oficial
+// "ANEXOS Y ESTRUCTURAS_V4.4.pdf" (descargado de https://www.hacienda.go.cr/docs/ANEXOS_Y_ESTRUCTURAS_V4.4.pdf,
+// 99 páginas) y la resolución MH-DGT-RES-0027-2024 / MH-DGT-RES-0001-2025 (v4.4 obligatoria
+// desde el 1 de setiembre de 2025) — incluye el catálogo completo "Código de Tarifa de IVA"
+// (Nota 8.1), "Condiciones de la Venta" (Nota 5), "Medios de Pago" (Nota 6), "Código de
+// Referencia" (Nota 9), y la estructura completa de ResumenFactura/InformacionReferencia. Lo
+// único que sigue sin confirmarse contra un envío real es la aceptación efectiva por parte de
+// Hacienda (ver comentario en server/haciendaApi.ts) — probar en SANDBOX antes de producción.
 //
 // Import exclusivo del servidor.
+
+/** Plazo de crédito (en días) usado tanto en el nodo <PlazoCredito> del XML como al calcular el
+ * vencimiento de la Cuenta por Cobrar (server.ts) cuando condicionVenta = '02' — una sola fuente
+ * de verdad para que ambos nunca queden desincronizados. */
+export const PLAZO_CREDITO_DIAS_DEFECTO = 30;
 
 export interface EmisorFactura {
   nombre: string;
@@ -51,16 +58,37 @@ export interface LineaFacturaCalculada extends LineaFacturaInput {
 }
 
 /**
- * Catálogo "Código de Tarifa de IVA". 01/02/03/04/08 confirmados contra fuentes cruzadas
- * (0%, 1%, 2%, 4%, 13% general). 09 (0.5%) y 10 (exenta) no confirmados contra el PDF oficial
- * en esta sesión — no se usan aquí salvo el caso 0% general, que usa "01".
+ * Catálogo "Código de Tarifa de IVA" (Nota 8.1, verificado textualmente contra
+ * ANEXOS_Y_ESTRUCTURAS_V4.4.pdf, página 71 de 99, sección "Notas sobre el Anexo 1"):
+ *   01 Tarifa 0% (Artículo 32, num 1, RLIVA) — SOLO transacciones específicas con derecho a
+ *      crédito pleno (ventas a la CCSS, municipalidades, etc.), NO un "0% genérico".
+ *   02 Tarifa reducida 1%      03 Tarifa reducida 2%      04 Tarifa reducida 4%
+ *   05/06/07 Transitorio 0%/4%/8% — uso exclusivo en Notas de Crédito/Débito, no aplica aquí.
+ *   08 Tarifa general 13%      09 Tarifa reducida 0.5%
+ *   10 Tarifa Exenta (Ley 9635, Art. 8)
+ *   11 Tarifa 0% sin derecho a crédito (no sujeto)
+ *
+ * Corrección importante: la versión anterior de esta función mapeaba TODO porcentaje 0% al
+ * código "01", que en realidad es una categoría legal angosta (ventas a CCSS/municipalidades).
+ * Los servicios de salud exentos de esta clínica (Art. 9 Ley IVA) corresponden al código "10"
+ * (Tarifa Exenta), no al "01" — se corrige el valor por defecto de 0% a "10" porque es el caso
+ * real de este negocio; si alguna vez se factura una venta que sí califica bajo el artículo 32
+ * num. 1 RLIVA, debe codificarse aparte (no hay forma de distinguirlo hoy solo con el %).
  */
 function mapearCodigoTarifaIva(porcentajeIva: number): string {
   if (porcentajeIva >= 12.5) return "08"; // 13% general
   if (porcentajeIva >= 3.5) return "04"; // 4%
   if (porcentajeIva >= 1.5) return "03"; // 2%
-  if (porcentajeIva >= 0.5) return "02"; // 1%
-  return "01"; // 0%
+  if (porcentajeIva >= 0.75) return "02"; // 1%
+  if (porcentajeIva >= 0.25) return "09"; // 0.5%
+  return "10"; // 0% → Exenta (ver comentario arriba)
+}
+
+/** CABYS: los códigos que inician en 0-4 son mercancías; 5-9 son servicios (Nota, página 50-52
+ * de ANEXOS_Y_ESTRUCTURAS_V4.4.pdf) — el desglose de ResumenFactura exige reportar cada total
+ * en el bucket correcto (TotalServ* vs TotalMercancias*), no alcanza con TotalGravado/Exento. */
+function esMercanciaPorCabys(codigoCabys: string): boolean {
+  return /^[0-4]/.test(codigoCabys);
 }
 
 // mysql2 devuelve columnas DECIMAL como strings, no numbers (mismo patrón documentado en
@@ -105,32 +133,91 @@ export function calcularLineas(lineas: LineaFacturaInput[]): LineaFacturaCalcula
   });
 }
 
+export interface DesgloseImpuestoCalculado {
+  codigoTarifaIva: string;
+  monto: number;
+}
+
 export interface ResumenCalculado {
   totalServGravados: number;
   totalServExentos: number;
+  totalMercanciasGravadas: number;
+  totalMercanciasExentas: number;
   totalGravado: number;
   totalExento: number;
+  totalExonerado: number; // siempre 0: la app no modela exoneraciones (ver comentario abajo)
+  totalNoSujeto: number; // siempre 0: no se emiten líneas con tarifa 01/11 (no sujeto)
   totalVenta: number;
   totalVentaNeta: number;
   totalImpuesto: number;
+  totalImpAsumEmisorFabrica: number; // siempre 0: la app no asume impuestos por el emisor
+  totalIVADevuelto: number; // siempre 0, ver comentario abajo
+  desgloseImpuesto: DesgloseImpuestoCalculado[];
   totalComprobante: number;
 }
 
+/**
+ * Campos de ResumenFactura verificados en orden y condición contra
+ * ANEXOS_Y_ESTRUCTURAS_V4.4.pdf, páginas 49-56 de 99 ("Resumen del comprobante").
+ *
+ * TotalServGravados/Exentos vs TotalMercanciasGravadas/Exentas: el desglose por CABYS es
+ * obligatorio ("se rechazará el comprobante" si no cuadra) — no basta con TotalGravado/Exento
+ * agregados. Se clasifica cada línea como mercancía (CABYS 0-4) o servicio (CABYS 5-9), cruzado
+ * con gravada (porcentajeIva > 0) vs exenta (código de tarifa 10) — ver esMercanciaPorCabys.
+ *
+ * TotalExonerado/TotalNoSujeto quedan en 0 porque esta app no modela exoneraciones ni ventas "no
+ * sujetas" (tarifas 01/11 de la nota 8.1) — si nunca se emiten esas tarifas, estos campos son
+ * legítimamente cero, no se omiten (varias validaciones de Hacienda asumen su presencia).
+ *
+ * TotalDesgloseImpuesto es un nodo NUEVO en v4.4 (no existía en esta implementación): repite por
+ * cada tarifa de IVA usada en el detalle el monto total cobrado. Es obligatorio cuando hay líneas
+ * gravadas — se omite el nodo por completo si todas las líneas son exentas (nada que desglosar).
+ *
+ * TotalIVADevuelto es el beneficio de "IVA devuelto" para servicios de salud pagados con tarjeta
+ * (obligatorio solo en ese caso específico, con una fórmula propia). Se deja en 0 deliberadamente:
+ * activarlo requiere que el negocio decida acogerse al programa y confirmar qué CABYS califican
+ * como "servicio de salud" — dejar 0 es siempre válido (equivale a no reclamar el beneficio), a
+ * diferencia de calcularlo mal, que sí generaría un comprobante fiscalmente incorrecto.
+ */
 export function calcularResumen(lineas: LineaFacturaCalculada[]): ResumenCalculado {
-  const gravadas = lineas.filter(l => l.porcentajeIva > 0);
-  const exentas = lineas.filter(l => l.porcentajeIva === 0);
-  const totalServGravados = redondear(gravadas.reduce((s, l) => s + l.subTotal, 0), 5);
-  const totalServExentos = redondear(exentas.reduce((s, l) => s + l.subTotal, 0), 5);
+  const esGravada = (l: LineaFacturaCalculada) => l.codigoTarifaIva !== "10";
+  const esServicio = (l: LineaFacturaCalculada) => !esMercanciaPorCabys(l.codigoCabys);
+
+  const sumaSubtotal = (pred: (l: LineaFacturaCalculada) => boolean) =>
+    redondear(lineas.filter(pred).reduce((s, l) => s + l.subTotal, 0), 5);
+
+  const totalServGravados = sumaSubtotal(l => esServicio(l) && esGravada(l));
+  const totalServExentos = sumaSubtotal(l => esServicio(l) && !esGravada(l));
+  const totalMercanciasGravadas = sumaSubtotal(l => !esServicio(l) && esGravada(l));
+  const totalMercanciasExentas = sumaSubtotal(l => !esServicio(l) && !esGravada(l));
+
   const totalVenta = redondear(lineas.reduce((s, l) => s + l.subTotal, 0), 5);
   const totalImpuesto = redondear(lineas.reduce((s, l) => s + l.montoIva, 0), 5);
+
+  const desglosePorTarifa = new Map<string, number>();
+  for (const l of lineas.filter(esGravada)) {
+    desglosePorTarifa.set(l.codigoTarifaIva, (desglosePorTarifa.get(l.codigoTarifaIva) || 0) + l.montoIva);
+  }
+  const desgloseImpuesto = Array.from(desglosePorTarifa.entries()).map(([codigoTarifaIva, monto]) => ({
+    codigoTarifaIva,
+    monto: redondear(monto, 5)
+  }));
+
   return {
     totalServGravados,
     totalServExentos,
-    totalGravado: totalServGravados,
-    totalExento: totalServExentos,
+    totalMercanciasGravadas,
+    totalMercanciasExentas,
+    totalGravado: redondear(totalServGravados + totalMercanciasGravadas, 5),
+    totalExento: redondear(totalServExentos + totalMercanciasExentas, 5),
+    totalExonerado: 0,
+    totalNoSujeto: 0,
     totalVenta,
     totalVentaNeta: totalVenta,
     totalImpuesto,
+    totalImpAsumEmisorFabrica: 0,
+    totalIVADevuelto: 0,
+    desgloseImpuesto,
     totalComprobante: redondear(totalVenta + totalImpuesto, 5)
   };
 }
@@ -255,7 +342,7 @@ function construirCuerpoComprobante(datos: DatosFacturaXml): string {
     ${receptor.correoElectronico ? `<CorreoElectronico>${escapeXml(receptor.correoElectronico)}</CorreoElectronico>` : ""}
   </Receptor>
   <CondicionVenta>${condicionVenta}</CondicionVenta>
-  <DetalleServicio>${lineasXml}
+  ${condicionVenta === "02" ? `<PlazoCredito>${PLAZO_CREDITO_DIAS_DEFECTO}</PlazoCredito>\n  ` : ""}<DetalleServicio>${lineasXml}
   </DetalleServicio>
   <ResumenFactura>
     <CodigoTipoMoneda>
@@ -264,12 +351,27 @@ function construirCuerpoComprobante(datos: DatosFacturaXml): string {
     </CodigoTipoMoneda>
     <TotalServGravados>${fmtDinero(resumen.totalServGravados)}</TotalServGravados>
     <TotalServExentos>${fmtDinero(resumen.totalServExentos)}</TotalServExentos>
+    <TotalServExonerado>${fmtDinero(0)}</TotalServExonerado>
+    <TotalServNoSujeto>${fmtDinero(0)}</TotalServNoSujeto>
+    <TotalMercanciasGravadas>${fmtDinero(resumen.totalMercanciasGravadas)}</TotalMercanciasGravadas>
+    <TotalMercanciasExentas>${fmtDinero(resumen.totalMercanciasExentas)}</TotalMercanciasExentas>
+    <TotalMercExonerada>${fmtDinero(0)}</TotalMercExonerada>
+    <TotalMercNoSujeta>${fmtDinero(0)}</TotalMercNoSujeta>
     <TotalGravado>${fmtDinero(resumen.totalGravado)}</TotalGravado>
     <TotalExento>${fmtDinero(resumen.totalExento)}</TotalExento>
+    <TotalExonerado>${fmtDinero(resumen.totalExonerado)}</TotalExonerado>
+    <TotalNoSujeto>${fmtDinero(resumen.totalNoSujeto)}</TotalNoSujeto>
     <TotalVenta>${fmtDinero(resumen.totalVenta)}</TotalVenta>
     <TotalDescuentos>${fmtDinero(0)}</TotalDescuentos>
-    <TotalVentaNeta>${fmtDinero(resumen.totalVentaNeta)}</TotalVentaNeta>
+    <TotalVentaNeta>${fmtDinero(resumen.totalVentaNeta)}</TotalVentaNeta>${resumen.desgloseImpuesto.length > 0 ? `
+    ${resumen.desgloseImpuesto.map(d => `<TotalDesgloseImpuesto>
+      <Codigo>01</Codigo>
+      <CodigoTarifaIVA>${d.codigoTarifaIva}</CodigoTarifaIVA>
+      <TotalMontoImpuesto>${fmtDinero(d.monto)}</TotalMontoImpuesto>
+    </TotalDesgloseImpuesto>`).join("\n    ")}` : ""}
     <TotalImpuesto>${fmtDinero(resumen.totalImpuesto)}</TotalImpuesto>
+    <TotalImpAsumEmisorFabrica>${fmtDinero(resumen.totalImpAsumEmisorFabrica)}</TotalImpAsumEmisorFabrica>
+    <TotalIVADevuelto>${fmtDinero(resumen.totalIVADevuelto)}</TotalIVADevuelto>
     <MedioPago>
       <TipoMedioPago>${medioPago}</TipoMedioPago>
       <TotalMedioPago>${fmtDinero(resumen.totalComprobante)}</TotalMedioPago>
@@ -300,28 +402,48 @@ export interface DatosNotaCreditoXml extends DatosFacturaXml {
   referencia: InformacionReferenciaFactura;
 }
 
-/**
- * Construye el XML sin firmar de una Nota de Crédito Electrónica v4.4 — usada aquí únicamente
- * para anular una Factura Electrónica ya emitida (referencia.codigo = '01').
- *
- * El orden y nombres de campos de <InformacionReferencia> (TipoDoc/Numero/FechaEmision/Codigo/
- * Razon, después de </ResumenFactura>) se armaron cruzando fuentes públicas — el sitio de
- * Hacienda bloqueó el acceso automatizado al XSD oficial en esta sesión, así que esto NO quedó
- * verificado contra el XSD como sí lo está el resto de este archivo (ver comentario al inicio).
- * Antes de usar en producción: generar una Nota de Crédito de prueba contra el ambiente SANDBOX
- * de Hacienda y confirmar que la acepte.
- */
+/** Bloque <InformacionReferencia>, compartido por Nota de Crédito y Nota de Débito — verificado
+ * textualmente contra ANEXOS_Y_ESTRUCTURAS_V4.4.pdf, páginas 57-58 de 99 ("Información de
+ * referencia"). Corrección importante respecto a la versión anterior: v4.4 renombró dos campos
+ * que en v4.3 se llamaban distinto (ver bitácora de cambios del propio PDF, ítem 126): el tipo de
+ * documento referenciado es <TipoDocIR> (no <TipoDoc>) y su fecha es <FechaEmisionIR> (no
+ * <FechaEmision>, que ya identifica la fecha del propio comprobante en la sección superior). Con
+ * los nombres viejos, Hacienda habría rechazado toda Nota de Crédito/Débito emitida hasta ahora. */
+function construirInformacionReferencia(referencia: InformacionReferenciaFactura): string {
+  return `  <InformacionReferencia>
+    <TipoDocIR>${referencia.tipoDocumento}</TipoDocIR>
+    <Numero>${referencia.numero}</Numero>
+    <FechaEmisionIR>${fechaEmisionCR(referencia.fechaEmision)}</FechaEmisionIR>
+    <Codigo>${referencia.codigo}</Codigo>
+    <Razon>${escapeXml(referencia.razon)}</Razon>
+  </InformacionReferencia>`;
+}
+
+/** Construye el XML sin firmar de una Nota de Crédito Electrónica v4.4 — anula una Factura
+ * Electrónica ya emitida (referencia.codigo = '01', total) o corrige un monto (código '02',
+ * parcial, ver server.ts POST /api/facturas/:id/nota-credito). */
 export function construirXmlNotaCredito(datos: DatosNotaCreditoXml): string {
-  const { referencia } = datos;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <NotaCreditoElectronica xmlns="${NAMESPACE_NOTA_CREDITO}" xmlns:ds="${NAMESPACE_DS}">
 ${construirCuerpoComprobante(datos)}
-  <InformacionReferencia>
-    <TipoDoc>${referencia.tipoDocumento}</TipoDoc>
-    <Numero>${referencia.numero}</Numero>
-    <FechaEmision>${fechaEmisionCR(referencia.fechaEmision)}</FechaEmision>
-    <Codigo>${referencia.codigo}</Codigo>
-    <Razon>${escapeXml(referencia.razon)}</Razon>
-  </InformacionReferencia>
+${construirInformacionReferencia(datos.referencia)}
 </NotaCreditoElectronica>`;
+}
+
+const NAMESPACE_NOTA_DEBITO = "https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/notaDebitoElectronica";
+
+export interface DatosNotaDebitoXml extends DatosFacturaXml {
+  referencia: InformacionReferenciaFactura;
+}
+
+/** Construye el XML sin firmar de una Nota de Débito Electrónica v4.4 — agrega un cargo adicional
+ * (total o parcial) sobre una Factura Electrónica ya emitida (referencia.codigo = '02', "Corrige
+ * monto"). Mismo cuerpo que Factura/Nota de Crédito, solo cambia la etiqueta raíz y el namespace
+ * (ver Nota 2, página 64 de 99 de ANEXOS_Y_ESTRUCTURAS_V4.4.pdf). */
+export function construirXmlNotaDebito(datos: DatosNotaDebitoXml): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<NotaDebitoElectronica xmlns="${NAMESPACE_NOTA_DEBITO}" xmlns:ds="${NAMESPACE_DS}">
+${construirCuerpoComprobante(datos)}
+${construirInformacionReferencia(datos.referencia)}
+</NotaDebitoElectronica>`;
 }

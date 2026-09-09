@@ -240,7 +240,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
                 </div>
               </div>
 
-              <p className="text-[10px] text-slate-400">{d104.cantidadFacturas} factura(s) · {d104.cantidadNotasCredito} nota(s) de crédito en este período.</p>
+              <p className="text-[10px] text-slate-400">{d104.cantidadFacturas} factura(s) · {d104.cantidadNotasCredito} nota(s) de crédito · {d104.cantidadNotasDebito} nota(s) de débito en este período.</p>
 
               {!d104.yaCerrado && (
                 <button
@@ -355,7 +355,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
                 </ul>
               </details>
 
-              <p className="text-[10px] text-slate-400">{d101.cantidadFacturas} factura(s) emitidas en {d101.anio}.</p>
+              <p className="text-[10px] text-slate-400">{d101.cantidadFacturas} factura(s) · {d101.cantidadNotasDebito} nota(s) de débito emitidas en {d101.anio}.</p>
 
               {!d101.yaCerrado && (
                 <button

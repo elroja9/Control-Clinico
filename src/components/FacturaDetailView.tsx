@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Factura, Patient, Company, NotificationLog } from '../data/mockData';
-import { Printer, Mail, RefreshCw, X, FileMinus, Receipt } from 'lucide-react';
+import { Printer, Mail, RefreshCw, X, FileMinus, FilePlus, Receipt } from 'lucide-react';
 
 interface FacturaDetailViewProps {
   factura: Factura;
@@ -41,6 +41,8 @@ export default function FacturaDetailView({ factura, patient, company, onClose, 
   const [enviado, setEnviado] = useState(false);
   const [error, setError] = useState('');
   const esNotaCredito = factura.tipoDocumento === '03';
+  const esNotaDebito = factura.tipoDocumento === '02';
+  const esNota = esNotaCredito || esNotaDebito;
 
   const triggerPrint = () => window.print();
 
@@ -70,7 +72,7 @@ export default function FacturaDetailView({ factura, patient, company, onClose, 
       {/* Top action toolbar - hidden in Print */}
       <div className="max-w-3xl mx-auto mb-6 bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
         <div>
-          <h3 className="text-sm font-bold text-slate-800">{esNotaCredito ? 'Nota de Crédito' : 'Factura'} {factura.consecutivo}</h3>
+          <h3 className="text-sm font-bold text-slate-800">{esNotaCredito ? 'Nota de Crédito' : esNotaDebito ? 'Nota de Débito' : 'Factura'} {factura.consecutivo}</h3>
           <p className="text-[11px] text-slate-500">Imprime o reenvía el comprobante al paciente</p>
         </div>
         <div className="flex flex-wrap gap-2 text-xs items-center w-full sm:w-auto">
@@ -121,8 +123,8 @@ export default function FacturaDetailView({ factura, patient, company, onClose, 
           </div>
           <div className="text-right font-mono text-xs text-slate-500">
             <span className="block font-bold inline-flex items-center gap-1.5 justify-end" style={{ color: company.colorPrimario }}>
-              {esNotaCredito ? <FileMinus className="w-4 h-4" /> : <Receipt className="w-4 h-4" />}
-              {esNotaCredito ? 'NOTA DE CRÉDITO ELECTRÓNICA' : 'FACTURA ELECTRÓNICA'}
+              {esNotaCredito ? <FileMinus className="w-4 h-4" /> : esNotaDebito ? <FilePlus className="w-4 h-4" /> : <Receipt className="w-4 h-4" />}
+              {esNotaCredito ? 'NOTA DE CRÉDITO ELECTRÓNICA' : esNotaDebito ? 'NOTA DE DÉBITO ELECTRÓNICA' : 'FACTURA ELECTRÓNICA'}
             </span>
             <span className="block mt-1">Consecutivo: {factura.consecutivo}</span>
             <span className="block break-all">Clave: {factura.clave}</span>
@@ -155,9 +157,9 @@ export default function FacturaDetailView({ factura, patient, company, onClose, 
           </div>
         </div>
 
-        {esNotaCredito && factura.motivoAnulacion && (
-          <div className="p-3 rounded-xl bg-rose-50 border border-rose-100 text-xs text-rose-700">
-            <span className="font-bold block mb-0.5">Motivo de Anulación</span>
+        {esNota && factura.motivoAnulacion && (
+          <div className={`p-3 rounded-xl border text-xs ${esNotaCredito ? 'bg-rose-50 border-rose-100 text-rose-700' : 'bg-amber-50 border-amber-100 text-amber-700'}`}>
+            <span className="font-bold block mb-0.5">Motivo</span>
             {factura.motivoAnulacion}
           </div>
         )}
@@ -201,7 +203,7 @@ export default function FacturaDetailView({ factura, patient, company, onClose, 
               <span className="text-slate-800 font-bold">Total</span>
               <span className="font-bold text-slate-900 text-sm">{colones(factura.total)}</span>
             </div>
-            {!esNotaCredito && factura.montoRecibido != null && (
+            {!esNota && factura.montoRecibido != null && (
               <div className="flex justify-between text-slate-500">
                 <span>Vuelto</span>
                 <span>{colones(factura.montoRecibido - factura.total)}</span>

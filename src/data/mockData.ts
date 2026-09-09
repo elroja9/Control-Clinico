@@ -782,13 +782,14 @@ export interface FacturaLinea {
 }
 
 export type EstadoFactura = 'FIRMADA' | 'ENVIADA' | 'ACEPTADA' | 'RECHAZADA' | 'ERROR' | 'ANULADA' | 'SIMULADA';
-export type TipoDocumentoFactura = '01' | '03'; // 01 = Factura Electrónica, 03 = Nota de Crédito Electrónica
+// 01 = Factura Electrónica, 02 = Nota de Débito Electrónica, 03 = Nota de Crédito Electrónica
+export type TipoDocumentoFactura = '01' | '02' | '03';
 
 export interface Factura {
   id: number;
   idCompania: number;
   idCita: number | null;
-  idConsulta: number | null; // solo en Facturas (no Notas de Crédito) — impide refacturar la misma consulta (UNIQUE en BD)
+  idConsulta: number | null; // solo en Facturas (no en NC/ND) — impide refacturar la misma consulta (UNIQUE en BD)
   idPaciente: number;
   clave: string; // 50 dígitos
   consecutivo: string; // 20 dígitos
@@ -803,8 +804,8 @@ export interface Factura {
   creadaEn: string;
   condicionVenta: string; // '01' contado, '02' crédito, etc. — catálogo de Hacienda
   tipoDocumento: TipoDocumentoFactura;
-  idFacturaReferencia: number | null; // solo en Notas de Crédito: id de la Factura que anulan
-  motivoAnulacion: string | null; // solo en Notas de Crédito
+  idFacturaReferencia: number | null; // solo en NC/ND: id de la Factura que referencian
+  motivoAnulacion: string | null; // solo en NC/ND: motivo de la anulación o el ajuste
   medioPago: string; // '01' Efectivo, '02' Tarjeta, '06' SINPE Móvil — catálogo de Hacienda
   montoRecibido: number | null; // solo informativo, para trazabilidad del vuelto entregado
 }
@@ -918,11 +919,12 @@ export interface ReporteD104 {
     t1: TarifaIvaDesglose;
     exento: TarifaIvaDesglose;
   };
-  debitoFiscal: number; // suma de IVA de todas las tarifas (ventas - notas de crédito del período)
+  debitoFiscal: number; // suma de IVA de todas las tarifas (ventas + notas de débito - notas de crédito del período)
   creditoFiscal: number; // IVA acreditable de compras (CXP) registradas en el período
   saldoAPagar: number; // debitoFiscal - creditoFiscal (negativo = saldo a favor)
   cantidadFacturas: number;
   cantidadNotasCredito: number;
+  cantidadNotasDebito: number;
   yaCerrado: boolean;
   fechaCierre: string | null;
 }
@@ -947,6 +949,7 @@ export interface ReporteD101 {
   impuestoRenta: number;
   tramos: string[];
   cantidadFacturas: number;
+  cantidadNotasDebito: number;
   yaCerrado: boolean;
   fechaCierre: string | null;
 }
