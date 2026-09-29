@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../data/mockData';
-import { MapPin, Clock, Save } from 'lucide-react';
+import { MapPin, Clock, Save, Check } from 'lucide-react';
 import { loadGoogleMapsScript } from '../utils/loadGoogleMaps';
 
 interface MyProfileProps {
@@ -79,8 +79,8 @@ export default function MyProfile({ currentUser, onSaveUser }: MyProfileProps) {
           />
         </div>
         <button type="submit" className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-semibold">
-          <Save className="w-3.5 h-3.5" />
-          {guardado ? 'Guardado ✓' : 'Guardar'}
+          {guardado ? <Check className="w-3.5 h-3.5" aria-hidden="true" /> : <Save className="w-3.5 h-3.5" aria-hidden="true" />}
+          {guardado ? 'Guardado' : 'Guardar'}
         </button>
       </form>
     </div>

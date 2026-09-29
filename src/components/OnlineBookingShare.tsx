@@ -39,7 +39,7 @@ export default function OnlineBookingShare({ company }: OnlineBookingShareProps)
       </div>
 
       <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-3">
-        <span className="block text-slate-500 text-[10px] font-semibold uppercase mb-1">Tu enlace de reservas</span>
+        <span className="block text-slate-500 text-[11px] font-semibold uppercase mb-1">Tu enlace de reservas</span>
         <a href={bookingUrl} target="_blank" rel="noreferrer" className="font-mono text-teal-700 break-all hover:underline">{bookingUrl}</a>
       </div>
 

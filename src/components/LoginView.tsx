@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Company, User, DEFAULT_HORARIO_ATENCION } from '../data/mockData';
-import { Building, Key, User as UserIcon, Shield, Sparkles, AlertCircle, ArrowRight, Clipboard, CheckCircle2 } from 'lucide-react';
+import { Building, Key, User as UserIcon, Shield, Sparkles, AlertCircle, ArrowRight, ArrowLeft, Clipboard, CheckCircle2, Eye, EyeOff, Loader2 } from 'lucide-react';
 
 interface LoginViewProps {
   onLoginSuccess: (user: User, company: Company | undefined) => void;
@@ -18,10 +18,12 @@ export default function LoginView({
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   // Forgot-password states
   const [forgotUsuario, setForgotUsuario] = useState('');
   const [forgotMessage, setForgotMessage] = useState('');
+  const [forgotOk, setForgotOk] = useState(false);
   const [forgotSubmitting, setForgotSubmitting] = useState(false);
 
   // Register Company states
@@ -75,8 +77,10 @@ export default function LoginView({
         body: JSON.stringify({ usuario: forgotUsuario.trim() })
       });
       const data = await res.json();
+      setForgotOk(res.ok);
       setForgotMessage(res.ok ? data.message : (data.error || 'No se pudo procesar la solicitud.'));
     } catch (err: any) {
+      setForgotOk(false);
       setForgotMessage('No se pudo conectar con el servidor. Intente de nuevo.');
     } finally {
       setForgotSubmitting(false);
@@ -155,41 +159,46 @@ export default function LoginView({
     }
   };
 
+  const inputBase = 'w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl text-sm text-white placeholder:text-slate-500 hover:border-slate-600 focus:border-teal-400 transition-colors';
+  const labelBase = 'block text-slate-300 text-xs font-semibold mb-1.5';
+  const primaryBtn = 'w-full min-h-12 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 disabled:opacity-60 text-white font-bold text-sm rounded-xl transition-colors shadow-md flex items-center justify-center gap-2';
+
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col justify-center items-center p-4 relative overflow-hidden font-sans">
+    <div className="surface-dark min-h-screen bg-slate-900 flex flex-col justify-center items-center px-4 py-8 relative overflow-hidden font-sans">
 
       {/* Decorative gradient background */}
-      <div className="absolute top-0 left-0 w-full h-full bg-linear-to-b from-teal-950/20 to-slate-950/90 pointer-events-none z-0" />
-      <div className="absolute -top-40 -left-40 w-96 h-96 rounded-full bg-teal-500/10 blur-3xl" />
-      <div className="absolute -bottom-40 -right-40 w-96 h-96 rounded-full bg-amber-500/10 blur-3xl" />
+      <div className="absolute top-0 left-0 w-full h-full bg-linear-to-b from-teal-950/20 to-slate-950/90 pointer-events-none z-0" aria-hidden="true" />
+      <div className="absolute -top-40 -left-40 w-96 h-96 rounded-full bg-teal-500/10 blur-3xl pointer-events-none" aria-hidden="true" />
+      <div className="absolute -bottom-40 -right-40 w-96 h-96 rounded-full bg-amber-500/10 blur-3xl pointer-events-none" aria-hidden="true" />
 
       {/* Main card */}
-      <div className="w-full max-w-xl bg-slate-900/80 backdrop-blur-md rounded-3xl border border-slate-800 shadow-2xl relative z-10 p-6 sm:p-8">
+      <main className="w-full max-w-xl bg-slate-900/80 backdrop-blur-md rounded-3xl border border-slate-800 shadow-2xl relative z-10 p-6 sm:p-8">
 
         {/* Logo and header */}
         <div className="text-center mb-6">
-          <img src="/logo_tuanisBooking.png" alt="TuanisBooking" className="w-20 h-20 mx-auto mb-3 drop-shadow-lg" />
-          <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">TuanisBooking</h2>
-          <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-            Plataforma costarricense multiempresa para atencion de Clientes y Pacientes, con agenda de citas, recordatorios automáticos, facturación electrónica y reportes de gestión.
+          <img src="/logo-tuanis-192.webp" alt="" width={80} height={80} className="w-20 h-20 mx-auto mb-3 drop-shadow-lg" />
+          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">TuanisBooking</h1>
+          <p className="text-sm text-slate-400 mt-1.5 max-w-sm mx-auto leading-relaxed">
+            Agenda, expedientes clínicos y facturación electrónica para clínicas y centros de bienestar en Costa Rica.
           </p>
         </div>
 
         {view === 'pendiente' ? (
-          <div className="text-center py-6 space-y-4">
+          <div className="text-center py-6 space-y-4" role="status">
             <div className="inline-flex p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
-              <Clipboard className="w-8 h-8" />
+              <Clipboard className="w-8 h-8" aria-hidden="true" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-white">Registro recibido</h3>
-              <p className="text-xs text-slate-400 mt-2 max-w-sm mx-auto">
+              <h2 className="text-lg font-bold text-white">Registro recibido</h2>
+              <p className="text-sm text-slate-300 mt-2 max-w-sm mx-auto">
                 Tu empresa fue registrada correctamente y está pendiente de aprobación.
                 Te contactaremos pronto para activar tu cuenta.
               </p>
             </div>
             <button
+              type="button"
               onClick={() => { setView('login'); setUsername(''); setPassword(''); }}
-              className="w-full bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white font-bold text-xs py-3 rounded-xl transition-all shadow-md"
+              className={primaryBtn}
             >
               Volver al inicio de sesión
             </button>
@@ -197,89 +206,112 @@ export default function LoginView({
         ) : (
           <>
         {/* View switcher tab buttons */}
-        <div className="grid grid-cols-2 p-1 bg-slate-950/80 border border-slate-800/80 rounded-xl mb-6">
-          <button
-            onClick={() => { setView('login'); setLoginError(''); }}
-            className={`py-2 rounded-lg text-xs font-bold transition-all ${
-              view === 'login'
-                ? 'bg-slate-800 text-white shadow-xs'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Ingreso al Sistema
-          </button>
-          <button
-            onClick={() => { setView('register'); setRegisterError(''); }}
-            className={`py-2 rounded-lg text-xs font-bold transition-all ${
-              view === 'register'
-                ? 'bg-slate-800 text-white shadow-xs'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Registrar Empresa (MySQL)
-          </button>
-        </div>
+        {view !== 'olvide' && (
+          <div className="grid grid-cols-2 p-1 bg-slate-950/80 border border-slate-800/80 rounded-xl mb-6" role="group" aria-label="Elegir acción">
+            <button
+              type="button"
+              aria-pressed={view === 'login'}
+              onClick={() => { setView('login'); setLoginError(''); }}
+              className={`min-h-10 rounded-lg text-sm font-bold transition-colors ${
+                view === 'login'
+                  ? 'bg-slate-800 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-slate-100'
+              }`}
+            >
+              Iniciar sesión
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === 'register'}
+              onClick={() => { setView('register'); setRegisterError(''); }}
+              className={`min-h-10 rounded-lg text-sm font-bold transition-colors ${
+                view === 'register'
+                  ? 'bg-slate-800 text-white shadow-xs'
+                  : 'text-slate-400 hover:text-slate-100'
+              }`}
+            >
+              Registrar empresa
+            </button>
+          </div>
+        )}
 
         {/* 1. LOGIN VIEW */}
         {view === 'login' && (
-          <form onSubmit={handleLoginSubmit} className="space-y-4">
+          <form onSubmit={handleLoginSubmit} className="space-y-4" noValidate={false}>
             {loginError && (
-              <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center gap-2.5">
-                <AlertCircle className="w-4 h-4 shrink-0" />
+              <div role="alert" className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-center gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
                 <span>{loginError}</span>
               </div>
             )}
 
-            <div className="space-y-3.5">
+            <div className="space-y-4">
               <div>
-                <label className="block text-slate-400 text-xs font-semibold mb-1.5">Usuario de Acceso</label>
+                <label htmlFor="login-usuario" className={labelBase}>Usuario</label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500" aria-hidden="true">
                     <UserIcon className="w-4 h-4" />
                   </div>
                   <input
+                    id="login-usuario"
                     type="text"
                     required
+                    autoFocus
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     placeholder="ej: admin_escazu"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-hidden focus:border-teal-500 transition-colors"
+                    aria-invalid={!!loginError}
+                    className={`${inputBase} pl-9 pr-4`}
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-400 text-xs font-semibold mb-1.5">Contraseña de Seguridad</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label htmlFor="login-password" className="block text-slate-300 text-xs font-semibold">Contraseña</label>
+                  <button
+                    type="button"
+                    onClick={() => { setView('olvide'); setForgotMessage(''); setForgotUsuario(username); }}
+                    className="text-xs text-teal-300 hover:text-teal-200 hover:underline underline-offset-2 transition-colors"
+                  >
+                    ¿Olvidó su contraseña?
+                  </button>
+                </div>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500" aria-hidden="true">
                     <Key className="w-4 h-4" />
                   </div>
                   <input
-                    type="password"
+                    id="login-password"
+                    type={showPassword ? 'text' : 'password'}
                     required
+                    autoComplete="current-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-hidden focus:border-teal-500 transition-colors"
+                    aria-invalid={!!loginError}
+                    className={`${inputBase} pl-9 pr-12`}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(v => !v)}
+                    className="absolute inset-y-0 right-0 w-11 flex items-center justify-center text-slate-400 hover:text-white rounded-r-xl transition-colors"
+                    aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    aria-pressed={showPassword}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => { setView('olvide'); setForgotMessage(''); setForgotUsuario(username); }}
-                  className="text-[11px] text-slate-400 hover:text-teal-400 transition-colors mt-1.5"
-                >
-                  ¿Olvidó su contraseña?
-                </button>
               </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={loginSubmitting}
-              className="w-full bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 disabled:opacity-60 text-white font-bold text-xs py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
-            >
-              {loginSubmitting ? 'Ingresando…' : 'Iniciar Sesión'}
-              <ArrowRight className="w-3.5 h-3.5" />
+            <button type="submit" disabled={loginSubmitting} className={primaryBtn}>
+              {loginSubmitting ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : null}
+              {loginSubmitting ? 'Ingresando…' : 'Iniciar sesión'}
+              {!loginSubmitting && <ArrowRight className="w-4 h-4" aria-hidden="true" />}
             </button>
           </form>
         )}
@@ -288,48 +320,55 @@ export default function LoginView({
         {view === 'olvide' && (
           <div className="space-y-4">
             <button
+              type="button"
               onClick={() => { setView('login'); setForgotMessage(''); }}
-              className="text-xs text-slate-500 hover:text-slate-300 flex items-center gap-1 mb-1"
+              className="min-h-10 -ml-2 px-2 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800/60 flex items-center gap-1.5 transition-colors"
             >
-              ← Volver al inicio de sesión
+              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+              Volver al inicio de sesión
             </button>
             <div>
-              <h3 className="text-sm font-bold text-white">Restablecer Contraseña</h3>
-              <p className="text-[11px] text-slate-400 mt-1">
+              <h2 className="text-base font-bold text-white">Restablecer contraseña</h2>
+              <p className="text-sm text-slate-400 mt-1">
                 Indique su usuario o correo. Si la cuenta existe, le enviaremos una contraseña temporal de 8 dígitos.
               </p>
             </div>
 
             {forgotMessage && (
-              <div className="p-3.5 rounded-xl bg-teal-500/10 border border-teal-500/20 text-teal-300 text-xs flex items-center gap-2.5">
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <div
+                role={forgotOk ? 'status' : 'alert'}
+                className={`p-3.5 rounded-xl text-sm flex items-center gap-2.5 border ${forgotOk ? 'bg-teal-500/10 border-teal-500/30 text-teal-200' : 'bg-rose-500/10 border-rose-500/30 text-rose-300'}`}
+              >
+                {forgotOk ? <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" /> : <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />}
                 <span>{forgotMessage}</span>
               </div>
             )}
 
-            <form onSubmit={handleForgotSubmit} className="space-y-3.5">
+            <form onSubmit={handleForgotSubmit} className="space-y-4">
               <div>
-                <label className="block text-slate-400 text-xs font-semibold mb-1.5">Usuario o Correo</label>
+                <label htmlFor="olvide-usuario" className={labelBase}>Usuario o correo</label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500" aria-hidden="true">
                     <UserIcon className="w-4 h-4" />
                   </div>
                   <input
+                    id="olvide-usuario"
                     type="text"
                     required
+                    autoFocus
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     value={forgotUsuario}
                     onChange={(e) => setForgotUsuario(e.target.value)}
                     placeholder="ej: admin_escazu"
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-hidden focus:border-teal-500 transition-colors"
+                    className={`${inputBase} pl-9 pr-4`}
                   />
                 </div>
               </div>
-              <button
-                type="submit"
-                disabled={forgotSubmitting}
-                className="w-full bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 disabled:opacity-60 text-white font-bold text-xs py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
-              >
-                {forgotSubmitting ? 'Enviando…' : 'Enviar Contraseña Temporal'}
+              <button type="submit" disabled={forgotSubmitting} className={primaryBtn}>
+                {forgotSubmitting && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
+                {forgotSubmitting ? 'Enviando…' : 'Enviar contraseña temporal'}
               </button>
             </form>
           </div>
@@ -337,180 +376,212 @@ export default function LoginView({
 
         {/* 2. REGISTER NEW COMPANY / SIGNUP VIEW */}
         {view === 'register' && (
-          <form onSubmit={handleRegisterSubmit} className="space-y-4 max-h-[500px] overflow-y-auto pr-1">
-            {registerError && (
-              <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center gap-2.5">
-                <AlertCircle className="w-4 h-4" />
-                <span>{registerError}</span>
-              </div>
-            )}
+          <form onSubmit={handleRegisterSubmit} className="space-y-5">
+            <p className="text-xs text-slate-400">Los campos marcados con <span className="text-slate-200 font-semibold">*</span> son obligatorios.</p>
 
             {/* A. COMPANY DATA */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-teal-400 uppercase tracking-wider">
-                <Building className="w-3.5 h-3.5" />
-                <span>Información de la Clínica / Empresa</span>
-              </div>
+            <fieldset className="space-y-3">
+              <legend className="flex items-center gap-1.5 text-xs font-bold text-teal-300 uppercase tracking-wider mb-3">
+                <Building className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Información de la clínica / empresa</span>
+              </legend>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 text-[10px] font-bold mb-1">Nombre Comercial *</label>
+                  <label htmlFor="reg-nombre-comercial" className={labelBase}>Nombre comercial *</label>
                   <input
+                    id="reg-nombre-comercial"
                     type="text"
                     required
+                    autoComplete="organization"
                     value={compName}
                     onChange={(e) => setCompName(e.target.value)}
                     placeholder="ej: Clínica FisioMas"
-                    className="w-full bg-slate-950 border border-slate-850 rounded-lg p-2 text-xs text-white placeholder-slate-700 focus:outline-hidden focus:border-teal-500"
+                    className={`${inputBase} px-3`}
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-400 text-[10px] font-bold mb-1">Razón Social Jurídica *</label>
+                  <label htmlFor="reg-razon-social" className={labelBase}>Razón social *</label>
                   <input
+                    id="reg-razon-social"
                     type="text"
                     required
                     value={compRazon}
                     onChange={(e) => setCompRazon(e.target.value)}
                     placeholder="ej: Rehab S.A."
-                    className="w-full bg-slate-950 border border-slate-850 rounded-lg p-2 text-xs text-white placeholder-slate-700 focus:outline-hidden focus:border-teal-500"
+                    className={`${inputBase} px-3`}
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 text-[10px] font-bold mb-1">Cédula Física o Jurídica *</label>
+                  <label htmlFor="reg-cedula" className={labelBase}>Cédula física o jurídica *</label>
                   <input
+                    id="reg-cedula"
                     type="text"
                     required
+                    inputMode="numeric"
                     value={compIdent}
                     onChange={(e) => setCompIdent(e.target.value)}
                     placeholder="ej: 3-102-345678"
-                    className="w-full bg-slate-950 border border-slate-850 rounded-lg p-2 text-xs text-white placeholder-slate-700 focus:outline-hidden focus:border-teal-500"
+                    className={`${inputBase} px-3`}
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-400 text-[10px] font-bold mb-1">Email Emisor (Factura Hacienda) *</label>
+                  <label htmlFor="reg-correo-emisor" className={labelBase}>Correo emisor de facturas *</label>
                   <input
+                    id="reg-correo-emisor"
                     type="email"
                     required
+                    autoComplete="email"
                     value={compCorreo}
                     onChange={(e) => setCompCorreo(e.target.value)}
-                    placeholder="ej: facturacion@clinca.com"
-                    className="w-full bg-slate-950 border border-slate-850 rounded-lg p-2 text-xs text-white placeholder-slate-700 focus:outline-hidden focus:border-teal-500"
+                    placeholder="ej: facturacion@clinica.com"
+                    className={`${inputBase} px-3`}
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 text-[10px] font-bold mb-1">Perfil Compañía (Servicios) *</label>
+                  <label htmlFor="reg-perfil" className={labelBase}>Tipo de servicios *</label>
                   <select
+                    id="reg-perfil"
                     value={compPerfil}
                     onChange={(e) => setCompPerfil(e.target.value as 'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa')}
-                    className="w-full bg-slate-950 border border-slate-850 rounded-lg p-2 text-xs text-white focus:outline-hidden focus:border-teal-500"
+                    className={`${inputBase} px-3`}
                   >
-                    <option value="Ambas">Ambas (Fisio y Nutrición)</option>
-                    <option value="Fisioterapia">Sólo Fisioterapia</option>
-                    <option value="Nutrición">Sólo Nutrición</option>
-                    <option value="Spa">Spa / Bienestar (Sauna, Cold Plunge, Masajes...)</option>
+                    <option value="Ambas">Fisioterapia y nutrición</option>
+                    <option value="Fisioterapia">Solo fisioterapia</option>
+                    <option value="Nutrición">Solo nutrición</option>
+                    <option value="Spa">Spa / bienestar (sauna, cold plunge, masajes…)</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-slate-400 text-[10px] font-bold mb-1">Color Identitario Primario *</label>
+                  <label htmlFor="reg-color" className={labelBase}>Color de la marca *</label>
                   <div className="flex gap-2">
                     <input
                       type="color"
                       value={compColor}
                       onChange={(e) => setCompColor(e.target.value)}
-                      className="w-8 h-8 rounded-md bg-transparent cursor-pointer border border-slate-800 p-0"
+                      aria-label="Elegir un color personalizado"
+                      className="w-11 h-11 shrink-0 rounded-xl bg-transparent border border-slate-700 p-1"
                     />
                     <select
+                      id="reg-color"
                       value={compColor}
                       onChange={(e) => setCompColor(e.target.value)}
-                      className="flex-1 bg-slate-950 border border-slate-850 rounded-lg px-2 text-xs text-white"
+                      className={`${inputBase} px-3 flex-1`}
                     >
-                      <option value="#0f766e">Teal Verde (#0f766e)</option>
-                      <option value="#d97706">Amber Naranja (#d97706)</option>
-                      <option value="#2563eb">Azul Clínico (#2563eb)</option>
-                      <option value="#9333ea">Púrpura (#9333ea)</option>
+                      <option value="#0f766e">Verde azulado</option>
+                      <option value="#d97706">Ámbar</option>
+                      <option value="#2563eb">Azul clínico</option>
+                      <option value="#9333ea">Púrpura</option>
+                      {!['#0f766e', '#d97706', '#2563eb', '#9333ea'].includes(compColor) && (
+                        <option value={compColor}>Personalizado ({compColor})</option>
+                      )}
                     </select>
                   </div>
                 </div>
               </div>
-            </div>
+            </fieldset>
 
             {/* B. ADMIN USER DATA */}
-            <div className="space-y-3 pt-3 border-t border-slate-800/60">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400 uppercase tracking-wider">
-                <Shield className="w-3.5 h-3.5" />
-                <span>Usuario Administrador (Credenciales de Acceso)</span>
-              </div>
+            <fieldset className="space-y-3 pt-4 border-t border-slate-800/60">
+              <legend className="flex items-center gap-1.5 text-xs font-bold text-amber-300 uppercase tracking-wider mb-3 pt-4">
+                <Shield className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Usuario administrador</span>
+              </legend>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 text-[10px] font-bold mb-1">Nombre Completo del Profesional *</label>
+                  <label htmlFor="reg-admin-nombre" className={labelBase}>Nombre completo *</label>
                   <input
+                    id="reg-admin-nombre"
                     type="text"
                     required
+                    autoComplete="name"
                     value={adminNombre}
                     onChange={(e) => setAdminNombre(e.target.value)}
                     placeholder="ej: Dra. Sofía Blanco"
-                    className="w-full bg-slate-950 border border-slate-850 rounded-lg p-2 text-xs text-white placeholder-slate-700 focus:outline-hidden focus:border-teal-500"
+                    className={`${inputBase} px-3`}
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-400 text-[10px] font-bold mb-1">Email Profesional *</label>
+                  <label htmlFor="reg-admin-correo" className={labelBase}>Correo profesional *</label>
                   <input
+                    id="reg-admin-correo"
                     type="email"
                     required
+                    autoComplete="email"
                     value={adminCorreo}
                     onChange={(e) => setAdminCorreo(e.target.value)}
                     placeholder="ej: s.blanco@clinica.com"
-                    className="w-full bg-slate-950 border border-slate-850 rounded-lg p-2 text-xs text-white placeholder-slate-700 focus:outline-hidden focus:border-teal-500"
+                    className={`${inputBase} px-3`}
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-400 text-[10px] font-bold mb-1">Nombre de Usuario *</label>
+                  <label htmlFor="reg-admin-usuario" className={labelBase}>Nombre de usuario *</label>
                   <input
+                    id="reg-admin-usuario"
                     type="text"
                     required
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     value={adminUser}
                     onChange={(e) => setAdminUser(e.target.value)}
                     placeholder="ej: s_blanco"
-                    className="w-full bg-slate-950 border border-slate-850 rounded-lg p-2 text-xs text-white placeholder-slate-700 focus:outline-hidden focus:border-teal-500"
+                    className={`${inputBase} px-3`}
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-400 text-[10px] font-bold mb-1">Contraseña de Acceso *</label>
-                  <input
-                    type="password"
-                    required
-                    value={adminPass}
-                    onChange={(e) => setAdminPass(e.target.value)}
-                    placeholder="Contraseña segura"
-                    className="w-full bg-slate-950 border border-slate-850 rounded-lg p-2 text-xs text-white placeholder-slate-700 focus:outline-hidden focus:border-teal-500"
-                  />
+                  <label htmlFor="reg-admin-password" className={labelBase}>Contraseña *</label>
+                  <div className="relative">
+                    <input
+                      id="reg-admin-password"
+                      type={showPassword ? 'text' : 'password'}
+                      required
+                      autoComplete="new-password"
+                      value={adminPass}
+                      onChange={(e) => setAdminPass(e.target.value)}
+                      placeholder="Contraseña segura"
+                      className={`${inputBase} pl-3 pr-12`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(v => !v)}
+                      className="absolute inset-y-0 right-0 w-11 flex items-center justify-center text-slate-400 hover:text-white rounded-r-xl transition-colors"
+                      aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                      aria-pressed={showPassword}
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
+            </fieldset>
 
-            <button
-              type="submit"
-              disabled={registerSubmitting}
-              className="w-full bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 disabled:opacity-60 text-white font-bold text-xs py-3 rounded-xl transition-all shadow-md mt-2 flex items-center justify-center gap-1.5"
-            >
-              {registerSubmitting ? 'Registrando…' : 'Registrar Empresa y Cuenta Admin'}
-              <Sparkles className="w-4 h-4 text-amber-300" />
+            {registerError && (
+              <div role="alert" className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-center gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>{registerError}</span>
+              </div>
+            )}
+
+            <button type="submit" disabled={registerSubmitting} className={primaryBtn}>
+              {registerSubmitting ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Sparkles className="w-4 h-4 text-amber-300" aria-hidden="true" />}
+              {registerSubmitting ? 'Registrando…' : 'Registrar empresa y cuenta'}
             </button>
           </form>
         )}
           </>
         )}
-      </div>
+      </main>
     </div>
   );
 }

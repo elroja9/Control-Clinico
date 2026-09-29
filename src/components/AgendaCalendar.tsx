@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Patient, User, Cita, CompaniaSmtpConfig, NotificationLog, CalendarBlock, Servicio, Factura } from '../data/mockData';
 import FacturarModal from './FacturarModal';
+import { notify, confirmar } from './ui/Feedback';
+import { useDialog } from '../hooks/useDialog';
 import {
   Calendar as CalendarIcon,
   Clock,
@@ -109,6 +111,7 @@ export default function AgendaCalendar({
   const [formPatientId, setFormPatientId] = useState<string>('');
   const [formPatientSearch, setFormPatientSearch] = useState<string>('');
   const [isPatientDropdownOpen, setIsPatientDropdownOpen] = useState(false);
+  const [patientActiveIndex, setPatientActiveIndex] = useState(0);
   const [formDate, setFormDate] = useState<string>('');
   const [formTime, setFormTime] = useState<string>('');
   const [formDuration, setFormDuration] = useState<number>(30);
@@ -134,16 +137,18 @@ export default function AgendaCalendar({
   // Electrónica de Hacienda para una cita)
   const [facturaCita, setFacturaCita] = useState<Cita | null>(null);
 
-  // Auto-switch view on resize (Responsive view constraints)
+  // Auto-switch view on resize (Responsive view constraints). Solo cambia al cruzar el
+  // breakpoint: antes cualquier resize (incluido abrir el teclado en móvil o ajustar la
+  // ventana) devolvía la vista a "Mes" y se perdía la que el usuario había elegido.
   useEffect(() => {
+    let esMovil = window.innerWidth < 768;
+    setView(esMovil ? 'day' : 'month');
     const handleResize = () => {
-      if (window.innerWidth < 768) {
-        setView('day'); // Mobile forces 'day'
-      } else {
-        setView('month'); // Tablet/Desktop defaults to 'month'
-      }
+      const ahoraMovil = window.innerWidth < 768;
+      if (ahoraMovil === esMovil) return;
+      esMovil = ahoraMovil;
+      setView(ahoraMovil ? 'day' : 'month');
     };
-    handleResize(); // trigger on mount
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -168,9 +173,24 @@ export default function AgendaCalendar({
     recordatorioHorasAntes: 24
   };
 
-  // Helper: Date formatters
+  // Helper: Date formatters. Fecha LOCAL: toISOString() la pasaba a UTC y en Costa Rica
+  // (UTC-6) después de las 6 p. m. la vista Día mostraba las citas de mañana.
   const formatDateString = (date: Date) => {
-    return date.toISOString().split('T')[0];
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  };
+  const todayStr = formatDateString(new Date());
+
+  // Celdas y tarjetas del calendario son <div> clicables: se vuelven operables con Enter/Espacio
+  const activarConTeclado = (fn: () => void) => (e: KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      e.stopPropagation();
+      fn();
+    }
+  };
+
+  const avisarBloqueo = (block: CalendarBlock, esDia: boolean) => {
+    notify.info(`${esDia ? 'Este día está bloqueado' : 'Este horario está bloqueado'}${block.motivo ? `: ${block.motivo}` : '.'} Elija otra fecha u hora.`);
   };
 
   // Returns the block covering (dateStr, timeStr) for the currently-filtered specialist, or undefined.
@@ -249,8 +269,8 @@ export default function AgendaCalendar({
   };
 
   // Open edit form
-  const handleOpenEditCita = (cita: Cita, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleOpenEditCita = (cita: Cita, e?: { stopPropagation: () => void }) => {
+    e?.stopPropagation();
     setSelectedCita(cita);
     setFormPatientId(cita.idPaciente.toString());
     const citaPatient = patients.find(p => p.id === cita.idPaciente);
@@ -324,13 +344,20 @@ export default function AgendaCalendar({
 
     onSaveCalendarBlock(savedBlock);
     setIsBlockFormOpen(false);
+    notify.success(selectedBlock ? 'Bloqueo actualizado.' : 'Horario bloqueado.');
   };
 
-  const handleDeleteBlock = (id: number) => {
-    if (confirm('¿Está seguro de que desea eliminar este bloqueo de agenda?')) {
-      onDeleteCalendarBlock(id);
-      setIsBlockFormOpen(false);
-    }
+  const handleDeleteBlock = async (id: number) => {
+    const ok = await confirmar({
+      title: '¿Eliminar este bloqueo?',
+      message: 'El horario volverá a quedar disponible para agendar citas.',
+      confirmText: 'Eliminar bloqueo',
+      tone: 'danger'
+    });
+    if (!ok) return;
+    onDeleteCalendarBlock(id);
+    setIsBlockFormOpen(false);
+    notify.success('Bloqueo eliminado.');
   };
 
   const myCalendarBlocks = calendarBlocks.filter(b => b.idCompania === activeCompanyId && b.idUsuarioNutricionista === currentUser.id);
@@ -414,6 +441,9 @@ export default function AgendaCalendar({
 
     onSaveCita(savedCita);
     setIsFormOpen(false);
+    notify.success(
+      !selectedCita ? `Cita creada para ${patient.nombreCompleto}.` : estado === 'CANCELADA' && selectedCita.estadoCita !== 'CANCELADA' ? 'Cita cancelada.' : 'Cita actualizada.'
+    );
 
     // --- Real SMTP Notification Triggers ---
     if (activeSmtp.activo) {
@@ -444,7 +474,7 @@ export default function AgendaCalendar({
         })
         .catch((err: any) => {
           console.error('Error enviando notificación SMTP:', err);
-          alert(`La cita se guardó, pero no se pudo enviar la notificación por correo: ${err.message}`);
+          notify.warning(`La cita se guardó, pero no se pudo enviar la notificación por correo: ${err.message}`);
         });
     }
   };
@@ -456,29 +486,42 @@ export default function AgendaCalendar({
   const facturaVigenteDeCita = (citaId: number) =>
     facturas.find(f => f.idCita === citaId && (f.estado === 'ACEPTADA' || f.estado === 'ENVIADA'));
 
-  const confirmarCambioEstadoFacturada = (cita: Cita | null, nuevoEstado: Cita['estadoCita']): boolean => {
+  const confirmarCambioEstadoFacturada = async (cita: Cita | null, nuevoEstado: Cita['estadoCita']): Promise<boolean> => {
     if (!cita || cita.estadoCita !== 'COMPLETADA' || cita.estadoCita === nuevoEstado) return true;
     const factura = facturaVigenteDeCita(cita.id);
     if (!factura) return true;
-    return confirm(`Esta cita ya fue facturada (factura ${factura.consecutivo}, estado ${factura.estado}). Cambiar el estado de la cita NO anula esa factura. ¿Deseas continuar de todos modos?`);
+    return confirmar({
+      title: 'Esta cita ya fue facturada',
+      message: `Factura ${factura.consecutivo} (estado ${factura.estado}). Cambiar el estado de la cita NO anula esa factura.`,
+      confirmText: 'Cambiar de todos modos',
+      tone: 'warning'
+    });
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!confirmarCambioEstadoFacturada(selectedCita, formStatus)) return;
+    if (!(await confirmarCambioEstadoFacturada(selectedCita, formStatus))) return;
     guardarCita(formStatus);
   };
 
   // Las citas nunca se eliminan de la agenda — solo cambian a estado
   // CANCELADA (conserva el historial y dispara la notificación de
   // cancelación al paciente, igual que si se cambiara el estado a mano).
-  const handleCancelarCita = () => {
+  const handleCancelarCita = async () => {
     if (!selectedCita) return;
-    if (!confirmarCambioEstadoFacturada(selectedCita, 'CANCELADA')) return;
-    if (confirm('¿Está seguro de que desea cancelar esta cita? No se elimina, solo cambia su estado a CANCELADA.')) {
-      guardarCita('CANCELADA');
-    }
+    if (!(await confirmarCambioEstadoFacturada(selectedCita, 'CANCELADA'))) return;
+    const ok = await confirmar({
+      title: '¿Cancelar esta cita?',
+      message: 'La cita no se elimina: queda en el historial con estado CANCELADA y, si los correos están activos, se avisa al paciente.',
+      confirmText: 'Cancelar cita',
+      cancelText: 'Volver',
+      tone: 'danger'
+    });
+    if (ok) guardarCita('CANCELADA');
   };
+
+  const citaFormRef = useDialog<HTMLDivElement>(isFormOpen, () => setIsFormOpen(false));
+  const blockFormRef = useDialog<HTMLDivElement>(isBlockFormOpen, () => setIsBlockFormOpen(false));
 
   const handleAbrirFacturar = (cita: Cita) => {
     setFacturaCita(cita);
@@ -525,23 +568,26 @@ export default function AgendaCalendar({
       const dayCitas = filteredCitas.filter(c => c.fechaHora.startsWith(dateStr));
       const dayBlock = isSlotBlocked(dateStr);
 
+      const isToday = dateStr === todayStr;
+      const abrirDia = () => {
+        if (dayBlock) { avisarBloqueo(dayBlock, true); return; }
+        handleOpenNewCita(dateStr);
+      };
       days.push(
         <div
           key={`day-${day}`}
-          onClick={() => {
-            if (dayBlock) {
-              alert(`Este día está bloqueado${dayBlock.motivo ? `: ${dayBlock.motivo}` : '.'}`);
-              return;
-            }
-            handleOpenNewCita(dateStr);
-          }}
-          className={`h-28 border border-slate-100 p-1.5 transition-colors cursor-pointer relative flex flex-col justify-between ${
-            dayBlock ? 'bg-slate-100/70 bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(100,116,139,0.08)_6px,rgba(100,116,139,0.08)_12px)]' : 'hover:bg-slate-50/40'
+          role="button"
+          tabIndex={0}
+          aria-label={`${day} de ${currentDate.toLocaleDateString('es-CR', { month: 'long' })}${isToday ? ', hoy' : ''}: ${dayCitas.length} cita${dayCitas.length === 1 ? '' : 's'}${dayBlock ? ', bloqueado' : '. Crear cita'}`}
+          onClick={abrirDia}
+          onKeyDown={activarConTeclado(abrirDia)}
+          className={`h-28 border border-slate-100 p-1.5 transition-colors cursor-pointer relative flex flex-col justify-between focus-visible:z-10 ${
+            dayBlock ? 'bg-slate-100/70 bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(100,116,139,0.08)_6px,rgba(100,116,139,0.08)_12px)]' : isToday ? 'bg-teal-50/60 hover:bg-teal-50' : 'hover:bg-slate-50'
           }`}
         >
-          <span className="text-xs font-bold text-slate-500 flex items-center gap-1">
-            {day}
-            {dayBlock && <Lock className="w-3 h-3 text-slate-400" />}
+          <span className="text-xs font-bold text-slate-600 flex items-center gap-1">
+            <span className={isToday ? 'inline-flex items-center justify-center w-6 h-6 rounded-full text-white' : ''} style={isToday ? { backgroundColor: themeColor } : undefined}>{day}</span>
+            {dayBlock && <Lock className="w-3 h-3 text-slate-500" aria-hidden="true" />}
           </span>
           <div className="flex-1 overflow-y-auto space-y-1 mt-1 scrollbar-thin">
             {dayCitas.map(cita => {
@@ -551,9 +597,13 @@ export default function AgendaCalendar({
               return (
                 <div
                   key={cita.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={(e) => handleOpenEditCita(cita, e)}
-                  className={`p-1 rounded-md text-[9px] font-extrabold truncate border flex items-center gap-0.5 ${getStatusColor(cita.estadoCita)}`}
+                  onKeyDown={activarConTeclado(() => handleOpenEditCita(cita))}
+                  className={`px-1 py-0.5 rounded-md text-[11px] font-bold truncate border flex items-center gap-0.5 ${getStatusColor(cita.estadoCita)}`}
                   title={`${time} - ${patient?.nombreCompleto}${esDomicilio ? ` · Domicilio: ${cita.direccionDomicilio || 'sin dirección'}` : ''}`}
+                  aria-label={`Cita ${time} con ${patient?.nombreCompleto || 'paciente'}, ${cita.estadoCita.toLowerCase().replace('_', ' ')}`}
                 >
                   {esDomicilio && <MapPin className="w-2.5 h-2.5 shrink-0" />}
                   <span className="truncate">{time} - {patient?.nombreCompleto || 'Paciente'}</span>
@@ -562,7 +612,7 @@ export default function AgendaCalendar({
             })}
           </div>
           {dayCitas.length > 0 && (
-            <span className="absolute bottom-1 right-1 bg-slate-200 text-slate-800 text-[8px] font-black px-1.5 py-0.2 rounded-full">
+            <span className="absolute bottom-1 right-1 bg-slate-200 text-slate-800 text-[11px] font-bold px-1.5 rounded-full tabular-nums" aria-hidden="true">
               {dayCitas.length}
             </span>
           )}
@@ -572,7 +622,7 @@ export default function AgendaCalendar({
 
     return (
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="grid grid-cols-7 bg-slate-100 text-center font-bold text-xs py-2.5 text-slate-500 border-b border-slate-200">
+        <div className="grid grid-cols-7 bg-slate-100 text-center font-bold text-xs py-2.5 text-slate-600 border-b border-slate-200" aria-hidden="true">
           <div>Dom</div>
           <div>Lun</div>
           <div>Mar</div>
@@ -608,12 +658,12 @@ export default function AgendaCalendar({
     return (
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="grid grid-cols-8 bg-slate-100 border-b border-slate-200 text-center font-bold text-xs py-2.5 text-slate-500">
-          <div className="border-r border-slate-200 flex items-center justify-center text-[10px]">Hora</div>
+          <div className="border-r border-slate-200 flex items-center justify-center text-[11px]">Hora</div>
           {weekDays.map((wd, i) => {
-            const isToday = formatDateString(wd) === formatDateString(new Date());
+            const isToday = formatDateString(wd) === todayStr;
             return (
-              <div key={i} className={`flex flex-col py-1 ${isToday ? 'bg-teal-50 text-teal-700 rounded-lg mx-1 font-black' : ''}`}>
-                <span className="text-[10px] uppercase">{['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][i]}</span>
+              <div key={i} className={`flex flex-col py-1 ${isToday ? 'bg-teal-50 text-teal-800 rounded-lg mx-1 font-extrabold' : ''}`}>
+                <span className="text-[11px] uppercase">{['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][i]}</span>
                 <span className="text-xs">{wd.getDate()}</span>
               </div>
             );
@@ -625,7 +675,7 @@ export default function AgendaCalendar({
             const timeStr = `${String(h).padStart(2, '0')}:00`;
             return (
               <div key={h} className="grid grid-cols-8 min-h-16">
-                <div className="border-r border-slate-100 text-[10px] text-slate-400 font-bold flex items-center justify-center bg-slate-50/50">
+                <div className="border-r border-slate-100 text-[11px] text-slate-500 font-bold flex items-center justify-center bg-slate-50/50">
                   {timeStr}
                 </div>
                 {weekDays.map((wd, i) => {
@@ -637,22 +687,24 @@ export default function AgendaCalendar({
 
                   const slotBlock = isSlotBlocked(dateStr, timeStr);
 
+                  const abrirHora = () => {
+                    if (slotBlock) { avisarBloqueo(slotBlock, false); return; }
+                    handleOpenNewCita(dateStr, timeStr);
+                  };
                   return (
                     <div
                       key={i}
-                      onClick={() => {
-                        if (slotBlock) {
-                          alert(`Este horario está bloqueado${slotBlock.motivo ? `: ${slotBlock.motivo}` : '.'}`);
-                          return;
-                        }
-                        handleOpenNewCita(dateStr, timeStr);
-                      }}
-                      className={`border-r border-slate-100 p-1 relative cursor-pointer min-h-16 flex flex-col gap-1 transition-colors ${
-                        slotBlock ? 'bg-slate-100/70 bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(100,116,139,0.08)_6px,rgba(100,116,139,0.08)_12px)]' : 'hover:bg-slate-50/30'
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${wd.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric' })} a las ${timeStr}${slotBlock ? ', bloqueado' : hourCitas.length ? `, ${hourCitas.length} cita(s)` : ', disponible'}`}
+                      onClick={abrirHora}
+                      onKeyDown={activarConTeclado(abrirHora)}
+                      className={`border-r border-slate-100 p-1 relative cursor-pointer min-h-16 flex flex-col gap-1 transition-colors focus-visible:z-10 ${
+                        slotBlock ? 'bg-slate-100/70 bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(100,116,139,0.08)_6px,rgba(100,116,139,0.08)_12px)]' : 'hover:bg-slate-50'
                       }`}
                     >
                       {slotBlock && hourCitas.length === 0 && (
-                        <Lock className="w-3 h-3 text-slate-400 m-auto" />
+                        <Lock className="w-3 h-3 text-slate-500 m-auto" />
                       )}
                       {hourCitas.map(cita => {
                         const patient = patients.find(p => p.id === cita.idPaciente);
@@ -660,8 +712,11 @@ export default function AgendaCalendar({
                         return (
                           <div
                             key={cita.id}
+                            role="button"
+                            tabIndex={0}
                             onClick={(e) => handleOpenEditCita(cita, e)}
-                            className={`p-1.5 rounded-lg text-[9px] font-black border leading-tight ${getStatusColor(cita.estadoCita)}`}
+                            onKeyDown={activarConTeclado(() => handleOpenEditCita(cita))}
+                            className={`p-1.5 rounded-lg text-[11px] font-bold border leading-tight ${getStatusColor(cita.estadoCita)}`}
                           >
                             <span className="block font-bold">{cita.fechaHora.split('T')[1]} ({cita.duracionMinutos}m)</span>
                             <span className="block text-slate-800 truncate">{patient?.nombreCompleto}</span>
@@ -708,13 +763,13 @@ export default function AgendaCalendar({
         {/* Quick Day summary cards */}
         <div className="bg-slate-900 text-white rounded-2xl p-4 flex justify-between items-center shadow-xs">
           <div>
-            <span className="text-[10px] font-extrabold text-teal-400 uppercase tracking-widest block">Resumen del Día</span>
+            <span className="text-[11px] font-extrabold text-teal-400 uppercase tracking-widest block">Resumen del Día</span>
             <h3 className="text-sm font-bold mt-0.5">
               {currentDate.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long' })}
             </h3>
           </div>
           <div className="bg-teal-500/10 border border-teal-500/20 px-3.5 py-1.5 rounded-xl text-center">
-            <span className="text-[10px] block font-extrabold text-teal-300">CITAS HOY</span>
+            <span className="text-[11px] block font-extrabold text-teal-300">CITAS HOY</span>
             <span className="text-xl font-black text-white">{dayCitas.length}</span>
           </div>
         </div>
@@ -727,32 +782,36 @@ export default function AgendaCalendar({
               const [, cTime] = c.fechaHora.split('T');
               return cTime.startsWith(String(h).padStart(2, '0'));
             });
+            const slotBlock = isSlotBlocked(dateStr, timeStr);
+            const abrirHora = () => {
+              if (slotBlock) { avisarBloqueo(slotBlock, false); return; }
+              handleOpenNewCita(dateStr, timeStr);
+            };
 
             return (
               <div key={h} className="flex min-h-16">
-                <div className="w-20 border-r border-slate-100 text-xs text-slate-400 font-bold flex items-center justify-center bg-slate-50/50">
+                <div className="w-16 sm:w-20 shrink-0 border-r border-slate-100 text-xs text-slate-600 font-bold flex items-center justify-center bg-slate-50/50 tabular-nums">
                   {timeStr}
                 </div>
                 <div
-                  onClick={() => {
-                    const slotBlock = isSlotBlocked(dateStr, timeStr);
-                    if (slotBlock) {
-                      alert(`Este horario está bloqueado${slotBlock.motivo ? `: ${slotBlock.motivo}` : '.'}`);
-                      return;
-                    }
-                    handleOpenNewCita(dateStr, timeStr);
-                  }}
-                  className={`flex-1 p-2 transition-colors cursor-pointer flex flex-col gap-1.5 ${
-                    isSlotBlocked(dateStr, timeStr) ? 'bg-slate-100/70 bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(100,116,139,0.08)_6px,rgba(100,116,139,0.08)_12px)]' : 'hover:bg-slate-50/40'
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${timeStr}${slotBlock ? ', bloqueado' : hourCitas.length ? `, ${hourCitas.length} cita(s)` : ', disponible. Crear cita'}`}
+                  onClick={abrirHora}
+                  onKeyDown={activarConTeclado(abrirHora)}
+                  className={`flex-1 min-w-0 p-2 transition-colors cursor-pointer flex flex-col gap-1.5 ${
+                    slotBlock ? 'bg-slate-100/70 bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(100,116,139,0.08)_6px,rgba(100,116,139,0.08)_12px)]' : 'hover:bg-slate-50'
                   }`}
                 >
                   {hourCitas.length === 0 ? (
-                    isSlotBlocked(dateStr, timeStr) ? (
-                      <span className="text-[10px] text-slate-400 italic font-bold flex items-center gap-1 my-auto pl-2">
-                        <Lock className="w-3 h-3" /> Bloqueado{isSlotBlocked(dateStr, timeStr)?.motivo ? `: ${isSlotBlocked(dateStr, timeStr)?.motivo}` : ''}
+                    slotBlock ? (
+                      <span className="text-xs text-slate-600 font-semibold flex items-center gap-1 my-auto pl-2">
+                        <Lock className="w-3 h-3" aria-hidden="true" /> Bloqueado{slotBlock.motivo ? `: ${slotBlock.motivo}` : ''}
                       </span>
                     ) : (
-                      <span className="text-[10px] text-slate-300 italic font-medium block my-auto pl-2">Ranura disponible</span>
+                      <span className="text-xs text-slate-500 font-medium my-auto pl-2 flex items-center gap-1">
+                        <Plus className="w-3 h-3" aria-hidden="true" /> Disponible
+                      </span>
                     )
                   ) : (
                     hourCitas.map(cita => {
@@ -761,22 +820,25 @@ export default function AgendaCalendar({
                       return (
                         <div
                           key={cita.id}
+                          role="button"
+                          tabIndex={0}
                           onClick={(e) => handleOpenEditCita(cita, e)}
-                          className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shadow-xs transition-all ${getStatusColor(cita.estadoCita)}`}
+                          onKeyDown={activarConTeclado(() => handleOpenEditCita(cita))}
+                          className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shadow-xs transition-colors ${getStatusColor(cita.estadoCita)}`}
                         >
                           <div className="space-y-0.5">
                             <div className="flex items-center gap-1.5">
                               <span className="text-xs font-black">{cita.fechaHora.split('T')[1]}</span>
-                              <span className="text-[9px] font-black uppercase bg-white/60 px-1.5 py-0.5 rounded-md border border-slate-300/20">{cita.estadoCita}</span>
+                              <span className="text-[11px] font-bold uppercase bg-white/70 px-1.5 py-0.5 rounded-md border border-slate-300/40">{cita.estadoCita.replace('_', ' ')}</span>
                               {esDomicilio && (
-                                <span className="text-[9px] font-black uppercase bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md border border-amber-200 flex items-center gap-0.5">
+                                <span className="text-[11px] font-black uppercase bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md border border-amber-200 flex items-center gap-0.5">
                                   <MapPin className="w-2.5 h-2.5" /> Domicilio
                                 </span>
                               )}
                             </div>
                             <h4 className="text-xs font-bold text-slate-800">{patient?.nombreCompleto || 'Paciente'}</h4>
                             {esDomicilio && (
-                              <p className="text-[10px] text-amber-700 font-semibold truncate max-w-sm flex items-center gap-1">
+                              <p className="text-[11px] text-amber-700 font-semibold truncate max-w-sm flex items-center gap-1">
                                 <MapPin className="w-3 h-3 shrink-0" />
                                 <span className="truncate">
                                   {cita.direccionDomicilio || 'Dirección no especificada'}
@@ -797,13 +859,14 @@ export default function AgendaCalendar({
                                 )}
                               </p>
                             )}
-                            <p className="text-[10px] text-slate-600 truncate max-w-sm">{cita.notas || 'Sin notas internas'}</p>
+                            <p className="text-xs text-slate-600 truncate max-w-sm">{cita.notas || 'Sin notas internas'}</p>
                           </div>
 
                           <div className="flex items-center gap-2 mt-1 sm:mt-0">
                             {cita.idConsulta ? (
-                              <span className="text-[9px] font-bold bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-md px-2 py-0.5">
-                                Consulta Atendida ✓
+                              <span className="text-[11px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-md px-2 py-0.5 flex items-center gap-1">
+                                <Check className="w-3 h-3" aria-hidden="true" />
+                                Consulta atendida
                               </span>
                             ) : (
                               <button
@@ -811,10 +874,10 @@ export default function AgendaCalendar({
                                   e.stopPropagation();
                                   if (patient) onStartConsultation(patient, cita.id);
                                 }}
-                                className="bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-extrabold px-3 py-1.5 rounded-xl flex items-center gap-1 shadow-xs cursor-pointer transition-all shrink-0"
+                                className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold min-h-9 px-3 rounded-xl flex items-center gap-1.5 shadow-xs transition-colors shrink-0"
                               >
-                                <Activity className="w-3 h-3 text-emerald-400" />
-                                Iniciar Consulta SOAP
+                                <Activity className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
+                                Iniciar consulta
                               </button>
                             )}
                           </div>
@@ -841,22 +904,23 @@ export default function AgendaCalendar({
             <CalendarIcon className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-slate-800">Agenda Médica y Citas</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Control unificado de agenda clínica. Google Calendar Style.</p>
+            <h2 className="text-base font-bold text-slate-900">Agenda y citas</h2>
+            <p className="text-xs text-slate-600 mt-0.5">Toque un día u horario libre para agendar; toque una cita para gestionarla.</p>
           </div>
         </div>
 
         {/* Filters and View selectors */}
-        <div className="flex flex-wrap items-center gap-3.5 w-full md:w-auto">
+        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
           {/* Doctor filter dropdown */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-extrabold text-slate-400 uppercase">Profesional:</span>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <label htmlFor="filtro-profesional" className="text-xs font-semibold text-slate-600 shrink-0">Profesional</label>
             <select
+              id="filtro-profesional"
               value={selectedDoctorId}
               onChange={(e) => setSelectedDoctorId(parseInt(e.target.value))}
-              className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-700 font-bold focus:outline-hidden"
+              className="flex-1 sm:flex-none min-h-10 bg-slate-50 border border-slate-200 rounded-xl px-2.5 text-xs text-slate-800 font-semibold"
             >
-              <option value={0}>Todos los Especialistas</option>
+              <option value={0}>Todos los especialistas</option>
               {users.filter(u => u.idCompania === activeCompanyId).map(doc => (
                 <option key={doc.id} value={doc.id}>{doc.nombre}</option>
               ))}
@@ -864,74 +928,69 @@ export default function AgendaCalendar({
           </div>
 
           {/* View Toggles (Hidden/Disabled on Mobile since it forces 'day' view) */}
-          <div className="hidden md:flex bg-slate-100 p-1 rounded-xl border border-slate-200">
-            <button
-              onClick={() => setView('month')}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                view === 'month' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-500'
-              }`}
-            >
-              Mes
-            </button>
-            <button
-              onClick={() => setView('week')}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                view === 'week' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-500'
-              }`}
-            >
-              Semana
-            </button>
-            <button
-              onClick={() => setView('day')}
-              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
-                view === 'day' ? 'bg-white text-slate-800 shadow-xs' : 'text-slate-500'
-              }`}
-            >
-              Día
-            </button>
+          <div className="hidden md:flex bg-slate-100 p-1 rounded-xl border border-slate-200" role="group" aria-label="Vista del calendario">
+            {([['month', 'Mes'], ['week', 'Semana'], ['day', 'Día']] as const).map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                aria-pressed={view === v}
+                className={`min-h-8 px-3 rounded-lg text-xs font-bold transition-colors ${
+                  view === v ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
 
           <button
+            type="button"
             onClick={handleOpenNewBlock}
-            className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-extrabold px-4 py-2.5 rounded-xl flex items-center gap-1.5 shadow-xs cursor-pointer ml-auto md:ml-0"
+            className="flex-1 sm:flex-none min-h-10 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold px-4 rounded-xl flex items-center justify-center gap-1.5 shadow-xs transition-colors md:ml-0"
           >
-            <Lock className="w-4 h-4" />
-            Bloquear Horario
+            <Lock className="w-4 h-4" aria-hidden="true" />
+            Bloquear horario
           </button>
 
           <button
+            type="button"
             onClick={() => handleOpenNewCita()}
-            className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-extrabold px-4 py-2.5 rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer"
+            className="flex-1 sm:flex-none min-h-10 text-white text-xs font-bold px-4 rounded-xl flex items-center justify-center gap-1.5 shadow-sm hover:brightness-110 transition-[filter]"
+            style={{ backgroundColor: themeColor }}
           >
-            <Plus className="w-4 h-4" />
-            Nueva Cita
+            <Plus className="w-4 h-4" aria-hidden="true" />
+            Nueva cita
           </button>
         </div>
       </div>
 
       {/* Navigation Controller */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <button onClick={handlePrev} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 p-2 rounded-xl transition-all">
+          <button type="button" onClick={handlePrev} aria-label={view === 'month' ? 'Mes anterior' : view === 'week' ? 'Semana anterior' : 'Día anterior'} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 w-10 h-10 flex items-center justify-center rounded-xl transition-colors">
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <button onClick={handleToday} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold px-3 py-2 rounded-xl transition-all">
+          <button type="button" onClick={handleToday} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold px-3.5 h-10 rounded-xl transition-colors">
             Hoy
           </button>
-          <button onClick={handleNext} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 p-2 rounded-xl transition-all">
+          <button type="button" onClick={handleNext} aria-label={view === 'month' ? 'Mes siguiente' : view === 'week' ? 'Semana siguiente' : 'Día siguiente'} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 w-10 h-10 flex items-center justify-center rounded-xl transition-colors">
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
 
-        <h3 className="text-sm font-black text-slate-800 uppercase tracking-wide">
+        <h3 className="text-sm font-extrabold text-slate-900 first-letter:uppercase order-first sm:order-none w-full sm:w-auto" aria-live="polite">
           {view === 'month' && currentDate.toLocaleDateString('es-CR', { month: 'long', year: 'numeric' })}
           {view === 'week' && `Semana del ${currentDate.toLocaleDateString('es-CR', { day: 'numeric', month: 'short' })}`}
-          {view === 'day' && currentDate.toLocaleDateString('es-CR', { day: 'numeric', month: 'long', year: 'numeric' })}
+          {view === 'day' && currentDate.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
         </h3>
 
-        <div className="flex items-center gap-1.5 text-[10px] bg-slate-100 border border-slate-200 rounded-lg px-2.5 py-1 text-slate-600 font-bold uppercase">
-          <Bell className="w-3.5 h-3.5 text-orange-500" />
-          <span>SMTP: {activeSmtp.activo ? 'NOTIFICACIONES ACTIVADAS (SMS/EMAIL)' : 'NOTIFICACIONES APAGADAS'}</span>
+        <div
+          className={`flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 font-semibold border ${activeSmtp.activo ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-slate-100 border-slate-200 text-slate-600'}`}
+          title="Se configura en Personalizar Clínica › Correo"
+        >
+          <Bell className="w-3.5 h-3.5" aria-hidden="true" />
+          <span>Avisos por correo: {activeSmtp.activo ? 'activos' : 'apagados'}</span>
         </div>
       </div>
 
@@ -947,19 +1006,19 @@ export default function AgendaCalendar({
             <Lock className="w-4 h-4 text-slate-500" />
             <h3 className="text-xs font-black uppercase text-slate-700 tracking-wider">Bloqueos de Agenda</h3>
           </div>
-          <span className="text-[10px] bg-slate-100 text-slate-600 font-bold border border-slate-200 px-2.5 py-0.5 rounded-full uppercase">
+          <span className="text-[11px] bg-slate-100 text-slate-600 font-bold border border-slate-200 px-2.5 py-0.5 rounded-full uppercase">
             {myCalendarBlocks.length} activo{myCalendarBlocks.length !== 1 ? 's' : ''}
           </span>
         </div>
 
         {myCalendarBlocks.length === 0 ? (
-          <div className="text-center py-6 text-xs text-slate-400 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
+          <div className="text-center py-6 text-xs text-slate-500 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
             No tienes horarios bloqueados. Usa "Bloquear Horario" para marcar fechas u horas no disponibles.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {myCalendarBlocks.map(block => (
-              <div key={block.id} className="p-3.5 rounded-2xl border border-slate-150 bg-slate-50/50 hover:bg-slate-50 transition-all flex items-center justify-between gap-2 text-xs">
+              <div key={block.id} className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-all flex items-center justify-between gap-2 text-xs">
                 <div>
                   <span className="font-bold text-slate-700 block">
                     {block.fechaInicio === block.fechaFin ? block.fechaInicio : `${block.fechaInicio} al ${block.fechaFin}`}
@@ -968,11 +1027,13 @@ export default function AgendaCalendar({
                   {block.motivo && <span className="text-slate-500 block mt-0.5">{block.motivo}</span>}
                 </div>
                 <button
+                  type="button"
                   onClick={() => handleOpenEditBlock(block)}
-                  className="text-slate-400 hover:text-rose-600 p-1.5 shrink-0 cursor-pointer"
+                  className="text-slate-500 hover:text-slate-900 hover:bg-white p-2 -m-1 rounded-lg shrink-0 transition-colors"
                   title="Editar o eliminar"
+                  aria-label={`Editar o eliminar el bloqueo del ${block.fechaInicio}`}
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  <Edit className="w-4 h-4" />
                 </button>
               </div>
             ))}
@@ -985,23 +1046,23 @@ export default function AgendaCalendar({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Mail className="w-4 h-4 text-slate-500" />
-            <h3 className="text-xs font-black uppercase text-slate-700 tracking-wider">Historial de Notificaciones SMTP Enviadas</h3>
+            <h3 className="text-xs font-bold uppercase text-slate-700 tracking-wider">Correos enviados a pacientes</h3>
           </div>
-          <span className="text-[10px] bg-teal-50 text-teal-700 font-bold border border-teal-200 px-2.5 py-0.5 rounded-full uppercase">
-            Log en Tiempo Real
+          <span className="text-[11px] bg-slate-100 text-slate-700 font-bold border border-slate-200 px-2.5 py-0.5 rounded-full tabular-nums">
+            {logs.filter(l => l.idCompania === activeCompanyId).length}
           </span>
         </div>
-        
+
         {logs.filter(l => l.idCompania === activeCompanyId).length === 0 ? (
-          <div className="text-center py-6 text-xs text-slate-400 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-            No se han registrado envíos de correos SMTP aún. Las alertas se guardan al agendar o modificar citas.
+          <div className="text-center py-6 px-4 text-xs text-slate-600 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
+            Todavía no se ha enviado ningún correo. Se registran aquí al agendar, modificar o cancelar citas con los avisos por correo activos.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-80 overflow-y-auto">
             {logs.filter(l => l.idCompania === activeCompanyId).map(log => (
-              <div key={log.id} className="p-4 rounded-2xl border border-slate-150 bg-slate-50/50 hover:bg-slate-50 transition-all space-y-2 text-xs">
+              <div key={log.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-all space-y-2 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${
+                  <span className={`text-[11px] font-black px-2 py-0.5 rounded-full ${
                     log.tipo === 'CANCELACION' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
                     log.tipo === 'CONFIRMACION' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
                     log.tipo === 'CONSULTA' ? 'bg-violet-100 text-violet-700 border border-violet-200' :
@@ -1009,15 +1070,15 @@ export default function AgendaCalendar({
                   }`}>
                     {log.tipo}
                   </span>
-                  <span className="text-[9px] text-slate-400 font-mono font-bold">
-                    {new Date(log.enviadoEn).toLocaleTimeString()}
+                  <span className="text-[11px] text-slate-600 font-semibold tabular-nums">
+                    {new Date(log.enviadoEn).toLocaleString('es-CR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                   </span>
                 </div>
                 <div>
                   <span className="font-bold text-slate-700 block">Destinatario: <span className="font-medium text-slate-500">{log.destinatario}</span></span>
                   <span className="font-bold text-slate-700 block">Asunto: <span className="font-medium text-slate-500">{log.asunto}</span></span>
                 </div>
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200/60 text-[10px] font-mono text-slate-600 whitespace-pre-wrap max-h-24 overflow-y-auto">
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200/60 text-[11px] font-mono text-slate-600 whitespace-pre-wrap max-h-24 overflow-y-auto">
                   {log.cuerpo}
                 </div>
               </div>
@@ -1028,71 +1089,109 @@ export default function AgendaCalendar({
 
       {/* SCHEDULING FORM MODAL */}
       {isFormOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
-          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[85vh] overflow-y-auto">
-            <div className="p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
+          <div
+            ref={citaFormRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titulo-form-cita"
+            tabIndex={-1}
+            className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden"
+          >
+            <div className="surface-dark sticky top-0 z-10 p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
               <div className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-teal-400" />
-                <h3 className="text-sm font-bold">{selectedCita ? 'Gestionar Cita de Agenda' : 'Programar Nueva Cita Médica'}</h3>
+                <Clock className="w-5 h-5 text-white/80" aria-hidden="true" />
+                <h3 id="titulo-form-cita" className="text-sm font-bold">{selectedCita ? 'Gestionar cita' : 'Nueva cita'}</h3>
               </div>
-              <button onClick={() => setIsFormOpen(false)} className="text-white hover:text-slate-200 p-1">
+              <button type="button" onClick={() => setIsFormOpen(false)} className="text-white hover:bg-white/15 w-9 h-9 -m-1.5 flex items-center justify-center rounded-lg transition-colors" aria-label="Cerrar">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleFormSubmit} className="p-5 space-y-4">
               {formError && (
-                <div className="p-3 rounded-xl bg-rose-50 border border-rose-100 text-rose-600 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
+                <div role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
                   <span>{formError}</span>
                 </div>
               )}
 
               {/* Patient Selection */}
               <div className="relative">
-                <label className="block text-slate-600 text-xs font-bold mb-1.5">Paciente Emisor *</label>
+                <label htmlFor="cita-paciente" className="block text-slate-700 text-xs font-bold mb-1.5">Paciente *</label>
                 <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
                   <input
+                    id="cita-paciente"
                     type="text"
+                    role="combobox"
+                    aria-expanded={isPatientDropdownOpen}
+                    aria-controls="cita-paciente-lista"
+                    aria-autocomplete="list"
+                    aria-activedescendant={isPatientDropdownOpen && filteredPatients[patientActiveIndex] ? `cita-paciente-op-${filteredPatients[patientActiveIndex].id}` : undefined}
+                    autoComplete="off"
                     value={formPatientSearch}
                     onChange={(e) => {
                       setFormPatientSearch(e.target.value);
                       setFormPatientId('');
                       setIsPatientDropdownOpen(true);
+                      setPatientActiveIndex(0);
                     }}
                     onFocus={() => setIsPatientDropdownOpen(true)}
                     onBlur={() => setTimeout(() => setIsPatientDropdownOpen(false), 150)}
-                    placeholder="Buscar por nombre o cédula..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setIsPatientDropdownOpen(true);
+                        setPatientActiveIndex(i => Math.min(i + 1, filteredPatients.length - 1));
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setPatientActiveIndex(i => Math.max(i - 1, 0));
+                      } else if (e.key === 'Enter' && isPatientDropdownOpen && filteredPatients[patientActiveIndex]) {
+                        e.preventDefault();
+                        handleSelectPatient(filteredPatients[patientActiveIndex]);
+                      } else if (e.key === 'Escape' && isPatientDropdownOpen) {
+                        // Cierra solo la lista, no el modal completo
+                        e.stopPropagation();
+                        setIsPatientDropdownOpen(false);
+                      }
+                    }}
+                    placeholder="Buscar por nombre o cédula…"
+                    className={`w-full min-h-10 bg-slate-50 border rounded-xl pl-8 pr-3 text-xs ${formPatientId ? 'border-emerald-300' : 'border-slate-200'}`}
                   />
                 </div>
                 {isPatientDropdownOpen && (
-                  <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg">
+                  <ul id="cita-paciente-lista" role="listbox" aria-label="Pacientes" className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg animate-slide-down">
                     {filteredPatients.length > 0 ? (
-                      filteredPatients.map(p => (
-                        <button
-                          type="button"
+                      filteredPatients.map((p, i) => (
+                        <li
                           key={p.id}
+                          id={`cita-paciente-op-${p.id}`}
+                          role="option"
+                          aria-selected={formPatientId === p.id.toString()}
                           onMouseDown={() => handleSelectPatient(p)}
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
+                          onMouseEnter={() => setPatientActiveIndex(i)}
+                          className={`w-full text-left px-3 py-2.5 text-xs cursor-pointer border-b border-slate-100 last:border-b-0 flex items-center justify-between gap-2 ${i === patientActiveIndex ? 'bg-slate-100' : ''}`}
                         >
-                          <span className="font-semibold text-slate-800 block">{p.nombreCompleto}</span>
-                          <span className="text-slate-500">{p.identificacion}</span>
-                        </button>
+                          <span className="min-w-0">
+                            <span className="font-semibold text-slate-900 block truncate">{p.nombreCompleto}</span>
+                            <span className="text-slate-600">{p.identificacion}</span>
+                          </span>
+                          {formPatientId === p.id.toString() && <Check className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />}
+                        </li>
                       ))
                     ) : (
-                      <div className="px-3 py-2 text-xs text-slate-500">Sin resultados para "{formPatientSearch}"</div>
+                      <li className="px-3 py-3 text-xs text-slate-600">Ningún paciente coincide con “{formPatientSearch}”. Regístrelo primero en Pacientes.</li>
                     )}
-                  </div>
+                  </ul>
                 )}
               </div>
 
               {/* Servicio (opcional — autocompleta la duración de la cita) */}
               {companyServicios.length > 0 && (
                 <div>
-                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Servicio</label>
-                  <select
+                  <label htmlFor="agendacale-servicio" className="block text-slate-600 text-xs font-bold mb-1.5">Servicio</label>
+                  <select id="agendacale-servicio"
                     value={formServicioId}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -1113,8 +1212,8 @@ export default function AgendaCalendar({
               {/* Date, Time, Duration */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Fecha *</label>
-                  <input
+                  <label htmlFor="agendacale-fecha" className="block text-slate-600 text-xs font-bold mb-1.5">Fecha *</label>
+                  <input id="agendacale-fecha"
                     type="date"
                     required
                     value={formDate}
@@ -1123,8 +1222,8 @@ export default function AgendaCalendar({
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Hora Inicio *</label>
-                  <input
+                  <label htmlFor="agendacale-hora-inicio" className="block text-slate-600 text-xs font-bold mb-1.5">Hora Inicio *</label>
+                  <input id="agendacale-hora-inicio"
                     type="time"
                     required
                     value={formTime}
@@ -1133,8 +1232,8 @@ export default function AgendaCalendar({
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Duración (Min) *</label>
-                  <select
+                  <label htmlFor="agendacale-duracion-min" className="block text-slate-600 text-xs font-bold mb-1.5">Duración (Min) *</label>
+                  <select id="agendacale-duracion-min"
                     value={formDuration}
                     onChange={(e) => setFormDuration(parseInt(e.target.value))}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
@@ -1152,8 +1251,8 @@ export default function AgendaCalendar({
               {/* Specialist & Status */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Profesional Asignado *</label>
-                  <select
+                  <label htmlFor="agendacale-profesional-asignado" className="block text-slate-600 text-xs font-bold mb-1.5">Profesional Asignado *</label>
+                  <select id="agendacale-profesional-asignado"
                     value={formDoctorId}
                     onChange={(e) => setFormDoctorId(parseInt(e.target.value))}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
@@ -1164,8 +1263,8 @@ export default function AgendaCalendar({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Estado de la Cita *</label>
-                  <select
+                  <label htmlFor="agendacale-estado-de-la-cita" className="block text-slate-600 text-xs font-bold mb-1.5">Estado de la Cita *</label>
+                  <select id="agendacale-estado-de-la-cita"
                     value={formStatus}
                     onChange={(e) => setFormStatus(e.target.value as Cita['estadoCita'])}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
@@ -1206,8 +1305,8 @@ export default function AgendaCalendar({
 
               {/* Notes */}
               <div>
-                <label className="block text-slate-600 text-xs font-bold mb-1.5">Notas Internas de Agenda (No se envían al paciente)</label>
-                <textarea
+                <label htmlFor="agendacale-notas-internas-de-agenda" className="block text-slate-600 text-xs font-bold mb-1.5">Notas Internas de Agenda (No se envían al paciente)</label>
+                <textarea id="agendacale-notas-internas-de-agenda"
                   value={formNotes}
                   onChange={(e) => setFormNotes(e.target.value)}
                   placeholder="ej: Paciente reporta dolor irradiado. Solicita enfoque suave."
@@ -1217,25 +1316,25 @@ export default function AgendaCalendar({
               </div>
 
               {/* Actions Footer */}
-              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
                 {selectedCita ? (
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1 -ml-2">
                     {selectedCita.estadoCita !== 'CANCELADA' && (
                       <button
                         type="button"
                         onClick={handleCancelarCita}
-                        className="text-rose-600 hover:text-rose-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        className="min-h-10 px-2 rounded-lg text-rose-700 hover:bg-rose-50 text-xs font-bold flex items-center gap-1.5 transition-colors"
                       >
-                        <Ban className="w-4 h-4" />
-                        Cancelar Cita
+                        <Ban className="w-4 h-4" aria-hidden="true" />
+                        Cancelar cita
                       </button>
                     )}
                     <button
                       type="button"
                       onClick={() => handleAbrirFacturar(selectedCita)}
-                      className="text-emerald-700 hover:text-emerald-800 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                      className="min-h-10 px-2 rounded-lg text-emerald-800 hover:bg-emerald-50 text-xs font-bold flex items-center gap-1.5 transition-colors"
                     >
-                      <Receipt className="w-4 h-4" />
+                      <Receipt className="w-4 h-4" aria-hidden="true" />
                       Facturar
                     </button>
                   </div>
@@ -1243,21 +1342,21 @@ export default function AgendaCalendar({
                   <div></div>
                 )}
 
-                <div className="flex gap-2">
+                <div className="flex gap-2 ml-auto">
                   <button
                     type="button"
                     onClick={() => setIsFormOpen(false)}
-                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-4 py-2 rounded-xl"
+                    className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold px-4 rounded-xl transition-colors"
                   >
-                    Cancelar
+                    Cerrar
                   </button>
                   <button
                     type="submit"
-                    className="text-white text-xs font-extrabold px-4 py-2 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                    className="min-h-10 text-white text-xs font-bold px-4 rounded-xl shadow-xs flex items-center gap-1.5 hover:brightness-110 transition-[filter]"
                     style={{ backgroundColor: themeColor }}
                   >
-                    <Check className="w-4 h-4" />
-                    {selectedCita ? 'Actualizar Cita' : 'Crear Cita'}
+                    <Check className="w-4 h-4" aria-hidden="true" />
+                    {selectedCita ? 'Guardar cambios' : 'Crear cita'}
                   </button>
                 </div>
               </div>
@@ -1283,29 +1382,36 @@ export default function AgendaCalendar({
       )}
 
       {isBlockFormOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
-          <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[85vh] overflow-y-auto">
-            <div className="p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
+          <div
+            ref={blockFormRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titulo-form-bloqueo"
+            tabIndex={-1}
+            className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden"
+          >
+            <div className="surface-dark sticky top-0 z-10 p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
               <div className="flex items-center gap-2">
-                <Lock className="w-5 h-5 text-teal-400" />
-                <h3 className="text-sm font-bold">{selectedBlock ? 'Editar Bloqueo de Agenda' : 'Bloquear Horario de Agenda'}</h3>
+                <Lock className="w-5 h-5 text-white/80" aria-hidden="true" />
+                <h3 id="titulo-form-bloqueo" className="text-sm font-bold">{selectedBlock ? 'Editar bloqueo de agenda' : 'Bloquear horario'}</h3>
               </div>
-              <button onClick={() => setIsBlockFormOpen(false)} className="text-white hover:text-slate-200 p-1">
+              <button type="button" onClick={() => setIsBlockFormOpen(false)} className="text-white hover:bg-white/15 w-9 h-9 -m-1.5 flex items-center justify-center rounded-lg transition-colors" aria-label="Cerrar">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleBlockFormSubmit} className="p-5 space-y-4">
               {blockFormError && (
-                <div className="p-3 rounded-xl bg-rose-50 border border-rose-100 text-rose-600 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
+                <div role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
                   <span>{blockFormError}</span>
                 </div>
               )}
 
               <div>
-                <label className="block text-slate-600 text-xs font-bold mb-1.5">Fecha de Inicio *</label>
-                <input
+                <label htmlFor="agendacale-fecha-de-inicio" className="block text-slate-600 text-xs font-bold mb-1.5">Fecha de Inicio *</label>
+                <input id="agendacale-fecha-de-inicio"
                   type="date"
                   required
                   value={blockFechaInicio}
@@ -1332,8 +1438,8 @@ export default function AgendaCalendar({
 
               {blockEsVariosDias && (
                 <div>
-                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Fecha de Fin *</label>
-                  <input
+                  <label htmlFor="agendacale-fecha-de-fin" className="block text-slate-600 text-xs font-bold mb-1.5">Fecha de Fin *</label>
+                  <input id="agendacale-fecha-de-fin"
                     type="date"
                     required
                     value={blockFechaFin}
@@ -1359,8 +1465,8 @@ export default function AgendaCalendar({
               {!blockEsVariosDias && !blockEsTodoElDia && (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-slate-600 text-xs font-bold mb-1.5">Hora Inicio *</label>
-                    <input
+                    <label htmlFor="agendacale-hora-inicio-2" className="block text-slate-600 text-xs font-bold mb-1.5">Hora Inicio *</label>
+                    <input id="agendacale-hora-inicio-2"
                       type="time"
                       required
                       value={blockHoraInicio}
@@ -1369,8 +1475,8 @@ export default function AgendaCalendar({
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs font-bold mb-1.5">Hora Fin *</label>
-                    <input
+                    <label htmlFor="agendacale-hora-fin" className="block text-slate-600 text-xs font-bold mb-1.5">Hora Fin *</label>
+                    <input id="agendacale-hora-fin"
                       type="time"
                       required
                       value={blockHoraFin}
@@ -1382,8 +1488,8 @@ export default function AgendaCalendar({
               )}
 
               <div>
-                <label className="block text-slate-600 text-xs font-bold mb-1.5">Motivo (opcional)</label>
-                <input
+                <label htmlFor="agendacale-motivo-opcional" className="block text-slate-600 text-xs font-bold mb-1.5">Motivo (opcional)</label>
+                <input id="agendacale-motivo-opcional"
                   type="text"
                   value={blockMotivo}
                   onChange={(e) => setBlockMotivo(e.target.value)}
@@ -1392,35 +1498,35 @@ export default function AgendaCalendar({
                 />
               </div>
 
-              <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
                 {selectedBlock ? (
                   <button
                     type="button"
                     onClick={() => handleDeleteBlock(selectedBlock.id)}
-                    className="text-rose-600 hover:text-rose-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                    className="min-h-10 px-2 -ml-2 rounded-lg text-rose-700 hover:bg-rose-50 text-xs font-bold flex items-center gap-1.5 transition-colors"
                   >
-                    <Trash2 className="w-4 h-4" />
-                    Eliminar
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                    Eliminar bloqueo
                   </button>
                 ) : (
                   <div></div>
                 )}
 
-                <div className="flex gap-2">
+                <div className="flex gap-2 ml-auto">
                   <button
                     type="button"
                     onClick={() => setIsBlockFormOpen(false)}
-                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-4 py-2 rounded-xl"
+                    className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold px-4 rounded-xl transition-colors"
                   >
-                    Cancelar
+                    Cerrar
                   </button>
                   <button
                     type="submit"
-                    className="text-white text-xs font-extrabold px-4 py-2 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                    className="min-h-10 text-white text-xs font-bold px-4 rounded-xl shadow-xs flex items-center gap-1.5 hover:brightness-110 transition-[filter]"
                     style={{ backgroundColor: themeColor }}
                   >
-                    <Check className="w-4 h-4" />
-                    {selectedBlock ? 'Actualizar Bloqueo' : 'Guardar Bloqueo'}
+                    <Check className="w-4 h-4" aria-hidden="true" />
+                    {selectedBlock ? 'Guardar cambios' : 'Bloquear'}
                   </button>
                 </div>
               </div>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Servicio, Factura } from '../data/mockData';
 import { Receipt, X, AlertCircle, Check, Loader2 } from 'lucide-react';
+import { useDialog } from '../hooks/useDialog';
 
 interface FacturarModalProps {
   idCompania: number;
@@ -48,6 +49,8 @@ export default function FacturarModal({
   const [facturaEnviando, setFacturaEnviando] = useState(false);
   const [facturaError, setFacturaError] = useState('');
   const [facturaResultado, setFacturaResultado] = useState<Factura | null>(null);
+  // Mientras se emite, Escape no cierra: la factura se está enviando a Hacienda
+  const dialogRef = useDialog<HTMLDivElement>(true, () => { if (!facturaEnviando) onClose(); });
 
   const facturaDesglosePreview = (Object.entries(facturaCantidades) as [string, number][]).reduce((acc, [idServicio, cantidad]) => {
     if (!cantidad || cantidad <= 0) return acc;
@@ -112,21 +115,21 @@ export default function FacturarModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
-      <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[85vh] overflow-y-auto">
-        <div className="p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
-          <div className="flex items-center gap-2">
-            <Receipt className="w-5 h-5 text-teal-400" />
-            <h3 className="text-sm font-bold">Facturar</h3>
+    <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="titulo-facturar" tabIndex={-1} className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden">
+        <div className="surface-dark sticky top-0 z-10 p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <Receipt className="w-5 h-5 text-white/80 shrink-0" aria-hidden="true" />
+            <h3 id="titulo-facturar" className="text-sm font-bold truncate">Facturar · {nombrePaciente}</h3>
           </div>
-          <button onClick={onClose} className="text-white hover:text-slate-200 p-1">
+          <button type="button" onClick={onClose} disabled={facturaEnviando} className="text-white hover:bg-white/15 w-9 h-9 -m-1.5 flex items-center justify-center rounded-lg transition-colors disabled:opacity-50" aria-label="Cerrar">
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <div className="p-5 space-y-4">
           {facturaError && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-100 text-rose-600 text-xs flex items-center gap-2">
+            <div role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{facturaError}</span>
             </div>
@@ -169,7 +172,7 @@ export default function FacturarModal({
                     <div key={s.id} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-lg">
                       <div className="min-w-0">
                         <span className="text-xs font-semibold text-slate-800 block truncate">{s.nombre}</span>
-                        <span className="text-[10px] text-slate-500">₡{s.precio.toLocaleString('es-CR')} {!s.codigoCabys && <span className="text-amber-600 font-bold">(sin CABYS)</span>}</span>
+                        <span className="text-[11px] text-slate-500">₡{s.precio.toLocaleString('es-CR')} {!s.codigoCabys && <span className="text-amber-600 font-bold">(sin CABYS)</span>}</span>
                       </div>
                       <input
                         type="number"
@@ -186,8 +189,8 @@ export default function FacturarModal({
               )}
 
               <div>
-                <label className="block text-slate-600 text-xs font-bold mb-1.5">Medio de Pago</label>
-                <select
+                <label htmlFor="facturarmo-medio-de-pago" className="block text-slate-600 text-xs font-bold mb-1.5">Medio de Pago</label>
+                <select id="facturarmo-medio-de-pago"
                   value={facturaMedioPago}
                   onChange={(e) => setFacturaMedioPago(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
@@ -214,8 +217,8 @@ export default function FacturarModal({
               </div>
 
               <div>
-                <label className="block text-slate-600 text-xs font-bold mb-1.5">Monto Recibido</label>
-                <input
+                <label htmlFor="facturarmo-monto-recibido" className="block text-slate-600 text-xs font-bold mb-1.5">Monto Recibido</label>
+                <input id="facturarmo-monto-recibido"
                   type="number"
                   min="0"
                   step="0.01"
@@ -225,7 +228,7 @@ export default function FacturarModal({
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
                 />
                 {facturaVuelto != null && (
-                  <p className={`text-[10px] mt-1 font-bold ${facturaVuelto < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                  <p className={`text-[11px] mt-1 font-bold ${facturaVuelto < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                     {facturaVuelto < 0
                       ? `Falta ₡${Math.abs(facturaVuelto).toLocaleString('es-CR', { maximumFractionDigits: 2 })}`
                       : `Vuelto: ₡${facturaVuelto.toLocaleString('es-CR', { maximumFractionDigits: 2 })}`}
@@ -240,7 +243,7 @@ export default function FacturarModal({
                   onChange={(e) => setFacturaModoPrueba(e.target.checked)}
                   className="mt-0.5"
                 />
-                <span className="text-[10px] text-sky-800">
+                <span className="text-[11px] text-sky-800">
                   <span className="font-bold block">Modo prueba (no enviar a Hacienda)</span>
                   Esta factura se numera y guarda igual que siempre, pero no se envía a Hacienda — queda marcada como SIMULADA. Útil para probar el flujo sin generar una presentación fiscal real.
                 </span>
@@ -250,7 +253,8 @@ export default function FacturarModal({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-4 py-2 rounded-xl"
+                  disabled={facturaEnviando}
+                  className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold px-4 rounded-xl transition-colors disabled:opacity-50"
                 >
                   Cancelar
                 </button>

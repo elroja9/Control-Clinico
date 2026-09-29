@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Patient, Consultation, PorcentajeDieta, PlantillaDieta } from '../data/mockData';
-import { Sparkles, Save, X, Calendar, ClipboardList, Activity, Heart, Dumbbell, ChevronRight, Calculator, TrendingDown, TrendingUp, Minus } from 'lucide-react';
+import { Sparkles, Save, X, Calendar, ClipboardList, Activity, Heart, Dumbbell, ChevronRight, Calculator, TrendingDown, TrendingUp, Minus, Apple, Check, AlertTriangle } from 'lucide-react';
 import PainMapSelector from './PainMapSelector';
 import { calcularTMB, calcularPromedioSemanal, aplicarPorcentaje, FACTORES_ACTIVIDAD, FormulaTMB, DireccionPrescripcion } from '../utils/calorieFormulas';
+import { notify } from './ui/Feedback';
 
 interface ConsultationFormProps {
   patient: Patient;
@@ -441,11 +442,11 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
     e.preventDefault();
     if (isSubmittingRef.current) return;
     if (!motivo.trim()) {
-      alert("Por favor indique el motivo de la consulta.");
+      notify.warning("Indique el motivo de la consulta.");
       return;
     }
     if (todosLosMacrosPctLlenos && sumaMacrosPct !== 100) {
-      alert("La distribución de macronutrientes (carbohidratos + proteínas + grasas) debe sumar 100% cuando los tres campos tienen valor.");
+      notify.warning("La distribución de macronutrientes (carbohidratos + proteínas + grasas) debe sumar 100% cuando los tres campos tienen valor.");
       return;
     }
     isSubmittingRef.current = true;
@@ -633,14 +634,14 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
   };
 
   return (
-    <form onSubmit={handleFormSubmit} className="bg-white rounded-2xl border border-slate-200 shadow-lg overflow-hidden text-xs sm:text-sm">
+    <form onSubmit={handleFormSubmit} className="bg-white rounded-2xl border border-slate-200 shadow-lg overflow-clip text-xs sm:text-sm">
       {/* Tab Selector */}
-      <div className="p-4 text-white flex flex-col sm:flex-row justify-between items-center gap-3" style={{ backgroundColor: themeColor }}>
-        <div className="flex items-center gap-2">
-          <ClipboardList className="w-5 h-5 animate-bounce" />
-          <div>
-            <h3 className="font-bold">{editingConsultation ? 'Editar Consulta Clínica' : 'Nueva Consulta Clínica'}</h3>
-            <p className="text-[10.5px] opacity-90">Paciente: {patient.nombreCompleto} (Identificación: {patient.identificacion})</p>
+      <div className="surface-dark p-4 text-white flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3" style={{ backgroundColor: themeColor }}>
+        <div className="flex items-center gap-2 min-w-0">
+          <ClipboardList className="w-5 h-5 shrink-0" aria-hidden="true" />
+          <div className="min-w-0">
+            <h2 className="font-bold">{editingConsultation ? 'Editar consulta clínica' : 'Nueva consulta clínica'}</h2>
+            <p className="text-xs text-white/90 truncate">{patient.nombreCompleto} · Cédula {patient.identificacion}</p>
           </div>
         </div>
         
@@ -650,36 +651,44 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
             <button
               type="button"
               onClick={() => setTipo('Nutrición')}
-              className={`px-4 py-1.5 rounded-lg font-bold text-xs transition-all ${
+              aria-pressed={tipo === 'Nutrición'}
+              className={`min-h-9 px-4 rounded-lg font-bold text-xs transition-colors flex items-center gap-1.5 ${
                 tipo === 'Nutrición' ? 'bg-white text-slate-900 shadow-sm' : 'text-white hover:bg-white/10'
               }`}
             >
-              🍎 Nutrición
+              <Apple className="w-3.5 h-3.5" aria-hidden="true" />
+              Nutrición
             </button>
             <button
               type="button"
               onClick={() => setTipo('Fisioterapia')}
-              className={`px-4 py-1.5 rounded-lg font-bold text-xs transition-all ${
+              aria-pressed={tipo === 'Fisioterapia'}
+              className={`min-h-9 px-4 rounded-lg font-bold text-xs transition-colors flex items-center gap-1.5 ${
                 tipo === 'Fisioterapia' ? 'bg-white text-slate-900 shadow-sm' : 'text-white hover:bg-white/10'
               }`}
             >
-              💪 Fisioterapia
+              <Dumbbell className="w-3.5 h-3.5" aria-hidden="true" />
+              Fisioterapia
             </button>
           </div>
         ) : (
           <div className="bg-black/30 px-3.5 py-1.5 rounded-xl text-xs font-bold border border-white/15 shadow-sm">
-            Especialidad: {tipo === 'Fisioterapia' ? '💪 Fisioterapia' : '🍎 Nutrición'}
+            <span className="flex items-center gap-1.5">
+              Especialidad:
+              {tipo === 'Fisioterapia' ? <Dumbbell className="w-3.5 h-3.5" aria-hidden="true" /> : <Apple className="w-3.5 h-3.5" aria-hidden="true" />}
+              {tipo}
+            </span>
           </div>
         )}
       </div>
 
-      <div className="p-5 space-y-6 max-h-[75vh] overflow-y-auto">
+      <div className="p-5 space-y-6">
         
         {/* Core fields */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
-            <label className="block text-slate-600 font-bold mb-1">Fecha de Consulta</label>
-            <input
+            <label htmlFor="consultati-fecha-de-consulta" className="block text-slate-600 font-bold mb-1">Fecha de Consulta</label>
+            <input id="consultati-fecha-de-consulta"
               type="date"
               value={fecha}
               onChange={(e) => setFecha(e.target.value)}
@@ -687,8 +696,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
             />
           </div>
           <div>
-            <label className="block text-slate-600 font-bold mb-1">Horas promedio de sueño</label>
-            <input
+            <label htmlFor="consultati-horas-promedio-de-sueno" className="block text-slate-600 font-bold mb-1">Horas promedio de sueño</label>
+            <input id="consultati-horas-promedio-de-sueno"
               type="number"
               step="0.5"
               value={horasSueno}
@@ -697,8 +706,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
             />
           </div>
           <div>
-            <label className="block text-slate-600 font-bold mb-1">Motivación del Paciente (1 al 10)</label>
-            <input
+            <label htmlFor="consultati-motivacion-del-paciente-1" className="block text-slate-600 font-bold mb-1">Motivación del Paciente (1 al 10)</label>
+            <input id="consultati-motivacion-del-paciente-1"
               type="number"
               min="1"
               max="10"
@@ -710,8 +719,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
         </div>
 
         <div>
-          <label className="block text-slate-600 font-bold mb-1">Motivo de la Cita *</label>
-          <input
+          <label htmlFor="consultati-motivo-de-la-cita" className="block text-slate-600 font-bold mb-1">Motivo de la Cita *</label>
+          <input id="consultati-motivo-de-la-cita"
             type="text"
             value={motivo}
             onChange={(e) => setMotivo(e.target.value)}
@@ -731,12 +740,12 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   <Activity className="w-4 h-4 text-rose-500" />
                   <span>Antropometría General y Valores Basales</span>
                 </div>
-                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-400" />
+                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-500" />
               </summary>
               <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">Peso (kg)</label>
-                  <input
+                  <label htmlFor="consultati-peso-kg" className="block text-slate-600 text-xs mb-1">Peso (kg)</label>
+                  <input id="consultati-peso-kg"
                     type="number"
                     step="0.1"
                     value={peso}
@@ -745,8 +754,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">Estatura / Talla (cm)</label>
-                  <input
+                  <label htmlFor="consultati-estatura-talla-cm" className="block text-slate-600 text-xs mb-1">Estatura / Talla (cm)</label>
+                  <input id="consultati-estatura-talla-cm"
                     type="number"
                     value={talla}
                     onChange={(e) => setTalla(parseInt(e.target.value) || 0)}
@@ -754,17 +763,17 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">IMC Calculado</label>
+                  <label htmlFor="consultati-imc-calculado-grasa-corporal" className="block text-slate-600 text-xs mb-1">IMC Calculado</label>
                   <div className="w-full bg-slate-100 border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700 font-extrabold flex justify-between items-center">
                     <span>{calculatedImc}</span>
-                    <span className="text-[9px] bg-slate-200 text-slate-800 px-1 rounded-sm">
+                    <span className="text-[11px] bg-slate-200 text-slate-800 px-1 rounded-sm">
                       {calculatedImc >= 30 ? 'Obesidad' : calculatedImc >= 25 ? 'Sobrepeso' : 'Normal'}
                     </span>
                   </div>
                 </div>
                 <div>
                   <label className="block text-slate-600 text-xs mb-1">Grasa Corporal (%)</label>
-                  <input
+                  <input id="consultati-imc-calculado-grasa-corporal"
                     type="number"
                     step="0.1"
                     value={grasaCorp}
@@ -773,8 +782,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">Grasa Visceral (Nivel)</label>
-                  <input
+                  <label htmlFor="consultati-grasa-visceral-nivel" className="block text-slate-600 text-xs mb-1">Grasa Visceral (Nivel)</label>
+                  <input id="consultati-grasa-visceral-nivel"
                     type="number"
                     value={grasaVisc}
                     onChange={(e) => setGrasaVisc(parseInt(e.target.value) || 0)}
@@ -782,8 +791,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">Masa Muscular (kg)</label>
-                  <input
+                  <label htmlFor="consultati-masa-muscular-kg" className="block text-slate-600 text-xs mb-1">Masa Muscular (kg)</label>
+                  <input id="consultati-masa-muscular-kg"
                     type="number"
                     step="0.1"
                     value={musculo}
@@ -792,8 +801,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">Cintura (cm)</label>
-                  <input
+                  <label htmlFor="consultati-cintura-cm" className="block text-slate-600 text-xs mb-1">Cintura (cm)</label>
+                  <input id="consultati-cintura-cm"
                     type="number"
                     value={cintura}
                     onChange={(e) => setCintura(parseInt(e.target.value) || 0)}
@@ -801,8 +810,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">Abdominal (cm)</label>
-                  <input
+                  <label htmlFor="consultati-abdominal-cm" className="block text-slate-600 text-xs mb-1">Abdominal (cm)</label>
+                  <input id="consultati-abdominal-cm"
                     type="number"
                     value={abdominal}
                     onChange={(e) => setAbdominal(parseInt(e.target.value) || 0)}
@@ -810,8 +819,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">Circunferencia Muñeca (cm)</label>
-                  <input
+                  <label htmlFor="consultati-circunferencia-muneca-cm" className="block text-slate-600 text-xs mb-1">Circunferencia Muñeca (cm)</label>
+                  <input id="consultati-circunferencia-muneca-cm"
                     type="number"
                     step="0.1"
                     value={cMuneca}
@@ -820,8 +829,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">Grasa Balanza (%)</label>
-                  <input
+                  <label htmlFor="consultati-grasa-balanza" className="block text-slate-600 text-xs mb-1">Grasa Balanza (%)</label>
+                  <input id="consultati-grasa-balanza"
                     type="number"
                     step="0.1"
                     value={pctGrasaBalanza}
@@ -830,8 +839,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">Porcentaje Agua (%)</label>
-                  <input
+                  <label htmlFor="consultati-porcentaje-agua" className="block text-slate-600 text-xs mb-1">Porcentaje Agua (%)</label>
+                  <input id="consultati-porcentaje-agua"
                     type="number"
                     step="0.1"
                     value={pctAgua}
@@ -840,8 +849,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">Kilogramos Magros (kg)</label>
-                  <input
+                  <label htmlFor="consultati-kilogramos-magros-kg" className="block text-slate-600 text-xs mb-1">Kilogramos Magros (kg)</label>
+                  <input id="consultati-kilogramos-magros-kg"
                     type="number"
                     step="0.1"
                     value={kgMagros}
@@ -850,8 +859,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">Masa Ósea (kg)</label>
-                  <input
+                  <label htmlFor="consultati-masa-osea-kg" className="block text-slate-600 text-xs mb-1">Masa Ósea (kg)</label>
+                  <input id="consultati-masa-osea-kg"
                     type="number"
                     step="0.1"
                     value={osea}
@@ -860,8 +869,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">TMB (Kcal/día)</label>
-                  <input
+                  <label htmlFor="consultati-tmb-kcal-dia" className="block text-slate-600 text-xs mb-1">TMB (Kcal/día)</label>
+                  <input id="consultati-tmb-kcal-dia"
                     type="number"
                     value={tmb}
                     onChange={(e) => setTmb(parseInt(e.target.value) || 0)}
@@ -869,8 +878,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 text-xs mb-1">Edad Metabólica (Años)</label>
-                  <input
+                  <label htmlFor="consultati-edad-metabolica-anos" className="block text-slate-600 text-xs mb-1">Edad Metabólica (Años)</label>
+                  <input id="consultati-edad-metabolica-anos"
                     type="number"
                     value={edadMetabolica}
                     onChange={(e) => setEdadMetabolica(parseInt(e.target.value) || 0)}
@@ -887,13 +896,13 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   <Activity className="w-4 h-4 text-emerald-600" />
                   <span>Pliegues Cutáneos y Perímetros (Calibrador)</span>
                 </div>
-                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-400" />
+                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-500" />
               </summary>
               <div className="p-4 space-y-4">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Pliegue Tríceps (mm)</label>
-                    <input
+                    <label htmlFor="consultati-pliegue-triceps-mm" className="block text-slate-600 text-xs mb-1">Pliegue Tríceps (mm)</label>
+                    <input id="consultati-pliegue-triceps-mm"
                       type="number"
                       step="0.1"
                       value={pliegueTriceps}
@@ -902,8 +911,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Pliegue Subescapular (mm)</label>
-                    <input
+                    <label htmlFor="consultati-pliegue-subescapular-mm" className="block text-slate-600 text-xs mb-1">Pliegue Subescapular (mm)</label>
+                    <input id="consultati-pliegue-subescapular-mm"
                       type="number"
                       step="0.1"
                       value={pliegueSubescapular}
@@ -912,8 +921,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Pliegue Bíceps (mm)</label>
-                    <input
+                    <label htmlFor="consultati-pliegue-biceps-mm" className="block text-slate-600 text-xs mb-1">Pliegue Bíceps (mm)</label>
+                    <input id="consultati-pliegue-biceps-mm"
                       type="number"
                       step="0.1"
                       value={pliegueBiceps}
@@ -922,8 +931,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Pliegue Cresta Ilíaca (mm)</label>
-                    <input
+                    <label htmlFor="consultati-pliegue-cresta-iliaca-mm" className="block text-slate-600 text-xs mb-1">Pliegue Cresta Ilíaca (mm)</label>
+                    <input id="consultati-pliegue-cresta-iliaca-mm"
                       type="number"
                       step="0.1"
                       value={pliegueCrestaIliaca}
@@ -932,8 +941,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Pliegue Supraespinal (mm)</label>
-                    <input
+                    <label htmlFor="consultati-pliegue-supraespinal-mm" className="block text-slate-600 text-xs mb-1">Pliegue Supraespinal (mm)</label>
+                    <input id="consultati-pliegue-supraespinal-mm"
                       type="number"
                       step="0.1"
                       value={pliegueSupraespinal}
@@ -942,8 +951,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Pliegue Abdominal (mm)</label>
-                    <input
+                    <label htmlFor="consultati-pliegue-abdominal-mm" className="block text-slate-600 text-xs mb-1">Pliegue Abdominal (mm)</label>
+                    <input id="consultati-pliegue-abdominal-mm"
                       type="number"
                       step="0.1"
                       value={pliegueAbdominal}
@@ -952,8 +961,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Pliegue Muslo Medio (mm)</label>
-                    <input
+                    <label htmlFor="consultati-pliegue-muslo-medio-mm" className="block text-slate-600 text-xs mb-1">Pliegue Muslo Medio (mm)</label>
+                    <input id="consultati-pliegue-muslo-medio-mm"
                       type="number"
                       step="0.1"
                       value={pliegueMusloMedio}
@@ -962,8 +971,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Pliegue Pierna Medial (mm)</label>
-                    <input
+                    <label htmlFor="consultati-pliegue-pierna-medial-mm" className="block text-slate-600 text-xs mb-1">Pliegue Pierna Medial (mm)</label>
+                    <input id="consultati-pliegue-pierna-medial-mm"
                       type="number"
                       step="0.1"
                       value={plieguePiernaMedial}
@@ -975,8 +984,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-slate-100 pt-3">
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Perímetro Brazo Relajado (cm)</label>
-                    <input
+                    <label htmlFor="consultati-perimetro-brazo-relajado-cm" className="block text-slate-600 text-xs mb-1">Perímetro Brazo Relajado (cm)</label>
+                    <input id="consultati-perimetro-brazo-relajado-cm"
                       type="number"
                       step="0.1"
                       value={perimetroBrazoRelajado}
@@ -985,8 +994,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Perímetro Brazo Contraído / Flexionado (cm)</label>
-                    <input
+                    <label htmlFor="consultati-perimetro-brazo-contraido-flexionado" className="block text-slate-600 text-xs mb-1">Perímetro Brazo Contraído / Flexionado (cm)</label>
+                    <input id="consultati-perimetro-brazo-contraido-flexionado"
                       type="number"
                       step="0.1"
                       value={perimetroBrazoContraido}
@@ -1005,7 +1014,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   <Activity className="w-4 h-4 text-purple-600" />
                   <span>Composición Corporal Segmentada (Brazos, Piernas, Tronco)</span>
                 </div>
-                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-400" />
+                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-500" />
               </summary>
               <div className="p-4 space-y-4 text-xs">
                 {/* Segmento Grasa */}
@@ -1013,8 +1022,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   <h5 className="font-bold text-rose-800 mb-2.5">Distribución de Grasa Segmentada</h5>
                   <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
                     <div>
-                      <label className="block text-slate-600 text-[11px] mb-1">Grasa Total (%)</label>
-                      <input
+                      <label htmlFor="consultati-grasa-total" className="block text-slate-600 text-[11px] mb-1">Grasa Total (%)</label>
+                      <input id="consultati-grasa-total"
                         type="number"
                         step="0.1"
                         value={grasaTotal}
@@ -1023,8 +1032,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 text-[11px] mb-1">Mano Izquierda (%)</label>
-                      <input
+                      <label htmlFor="consultati-mano-izquierda" className="block text-slate-600 text-[11px] mb-1">Mano Izquierda (%)</label>
+                      <input id="consultati-mano-izquierda"
                         type="number"
                         step="0.1"
                         value={grasaManoIzq}
@@ -1033,8 +1042,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 text-[11px] mb-1">Mano Derecha (%)</label>
-                      <input
+                      <label htmlFor="consultati-mano-derecha" className="block text-slate-600 text-[11px] mb-1">Mano Derecha (%)</label>
+                      <input id="consultati-mano-derecha"
                         type="number"
                         step="0.1"
                         value={grasaManoDer}
@@ -1043,8 +1052,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 text-[11px] mb-1">Pierna Izquierda (%)</label>
-                      <input
+                      <label htmlFor="consultati-pierna-izquierda" className="block text-slate-600 text-[11px] mb-1">Pierna Izquierda (%)</label>
+                      <input id="consultati-pierna-izquierda"
                         type="number"
                         step="0.1"
                         value={grasaPiernaIzq}
@@ -1053,8 +1062,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 text-[11px] mb-1">Pierna Derecha (%)</label>
-                      <input
+                      <label htmlFor="consultati-pierna-derecha" className="block text-slate-600 text-[11px] mb-1">Pierna Derecha (%)</label>
+                      <input id="consultati-pierna-derecha"
                         type="number"
                         step="0.1"
                         value={grasaPiernaDer}
@@ -1063,8 +1072,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 text-[11px] mb-1">Tronco (%)</label>
-                      <input
+                      <label htmlFor="consultati-tronco" className="block text-slate-600 text-[11px] mb-1">Tronco (%)</label>
+                      <input id="consultati-tronco"
                         type="number"
                         step="0.1"
                         value={grasaTronco}
@@ -1074,8 +1083,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     </div>
                   </div>
                   <div className="mt-3 w-48">
-                    <label className="block text-slate-600 text-[11px] mb-1">Calificación de Grasa</label>
-                    <input
+                    <label htmlFor="consultati-calificacion-de-grasa" className="block text-slate-600 text-[11px] mb-1">Calificación de Grasa</label>
+                    <input id="consultati-calificacion-de-grasa"
                       type="text"
                       value={grasaCalificacion}
                       onChange={(e) => setGrasaCalificacion(e.target.value)}
@@ -1090,8 +1099,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   <h5 className="font-bold text-blue-800 mb-2.5">Distribución de Músculo Segmentado</h5>
                   <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
                     <div>
-                      <label className="block text-slate-600 text-[11px] mb-1">Músculo Total (kg)</label>
-                      <input
+                      <label htmlFor="consultati-musculo-total-kg" className="block text-slate-600 text-[11px] mb-1">Músculo Total (kg)</label>
+                      <input id="consultati-musculo-total-kg"
                         type="number"
                         step="0.1"
                         value={musculoTotal}
@@ -1100,8 +1109,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 text-[11px] mb-1">Mano Izquierda (kg)</label>
-                      <input
+                      <label htmlFor="consultati-mano-izquierda-kg" className="block text-slate-600 text-[11px] mb-1">Mano Izquierda (kg)</label>
+                      <input id="consultati-mano-izquierda-kg"
                         type="number"
                         step="0.1"
                         value={musculoManoIzq}
@@ -1110,8 +1119,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 text-[11px] mb-1">Mano Derecha (kg)</label>
-                      <input
+                      <label htmlFor="consultati-mano-derecha-kg" className="block text-slate-600 text-[11px] mb-1">Mano Derecha (kg)</label>
+                      <input id="consultati-mano-derecha-kg"
                         type="number"
                         step="0.1"
                         value={musculoManoDer}
@@ -1120,8 +1129,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 text-[11px] mb-1">Pierna Izquierda (kg)</label>
-                      <input
+                      <label htmlFor="consultati-pierna-izquierda-kg" className="block text-slate-600 text-[11px] mb-1">Pierna Izquierda (kg)</label>
+                      <input id="consultati-pierna-izquierda-kg"
                         type="number"
                         step="0.1"
                         value={musculoPiernaIzq}
@@ -1130,8 +1139,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 text-[11px] mb-1">Pierna Derecha (kg)</label>
-                      <input
+                      <label htmlFor="consultati-pierna-derecha-kg" className="block text-slate-600 text-[11px] mb-1">Pierna Derecha (kg)</label>
+                      <input id="consultati-pierna-derecha-kg"
                         type="number"
                         step="0.1"
                         value={musculoPiernaDer}
@@ -1140,8 +1149,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 text-[11px] mb-1">Tronco (kg)</label>
-                      <input
+                      <label htmlFor="consultati-tronco-kg" className="block text-slate-600 text-[11px] mb-1">Tronco (kg)</label>
+                      <input id="consultati-tronco-kg"
                         type="number"
                         step="0.1"
                         value={musculoTronco}
@@ -1161,13 +1170,13 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   <Heart className="w-4 h-4 text-blue-500" />
                   <span>Evaluación Bioquímica (Exámenes de Laboratorio)</span>
                 </div>
-                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-400" />
+                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-500" />
               </summary>
               <div className="p-4 space-y-4">
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Glicemia (mg/dL)</label>
-                    <input
+                    <label htmlFor="consultati-glicemia-mg-dl" className="block text-slate-600 text-xs mb-1">Glicemia (mg/dL)</label>
+                    <input id="consultati-glicemia-mg-dl"
                       type="number"
                       value={glicemia}
                       onChange={(e) => setGlicemia(parseInt(e.target.value) || 0)}
@@ -1175,8 +1184,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Insulinemia (µUI/mL)</label>
-                    <input
+                    <label htmlFor="consultati-insulinemia-ui-ml" className="block text-slate-600 text-xs mb-1">Insulinemia (µUI/mL)</label>
+                    <input id="consultati-insulinemia-ui-ml"
                       type="number"
                       step="0.1"
                       value={insulinemia}
@@ -1185,8 +1194,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Índice HOMA-IR</label>
-                    <input
+                    <label htmlFor="consultati-indice-homa-ir" className="block text-slate-600 text-xs mb-1">Índice HOMA-IR</label>
+                    <input id="consultati-indice-homa-ir"
                       type="number"
                       step="0.1"
                       value={indiceHoma}
@@ -1195,8 +1204,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">HbA1c Glicosilada (%)</label>
-                    <input
+                    <label htmlFor="consultati-hba1c-glicosilada" className="block text-slate-600 text-xs mb-1">HbA1c Glicosilada (%)</label>
+                    <input id="consultati-hba1c-glicosilada"
                       type="number"
                       step="0.1"
                       value={hb1ac}
@@ -1205,8 +1214,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Vitamina D (ng/mL)</label>
-                    <input
+                    <label htmlFor="consultati-vitamina-d-ng-ml" className="block text-slate-600 text-xs mb-1">Vitamina D (ng/mL)</label>
+                    <input id="consultati-vitamina-d-ng-ml"
                       type="number"
                       value={vitD}
                       onChange={(e) => setVitD(parseInt(e.target.value) || 0)}
@@ -1214,8 +1223,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Hemoglobina (g/dL)</label>
-                    <input
+                    <label htmlFor="consultati-hemoglobina-g-dl" className="block text-slate-600 text-xs mb-1">Hemoglobina (g/dL)</label>
+                    <input id="consultati-hemoglobina-g-dl"
                       type="number"
                       step="0.1"
                       value={hemoglobina}
@@ -1224,8 +1233,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Hematocrito (%)</label>
-                    <input
+                    <label htmlFor="consultati-hematocrito" className="block text-slate-600 text-xs mb-1">Hematocrito (%)</label>
+                    <input id="consultati-hematocrito"
                       type="number"
                       value={hematocrito}
                       onChange={(e) => setHematocrito(parseInt(e.target.value) || 0)}
@@ -1233,8 +1242,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Albúmina (g/dL)</label>
-                    <input
+                    <label htmlFor="consultati-albumina-g-dl" className="block text-slate-600 text-xs mb-1">Albúmina (g/dL)</label>
+                    <input id="consultati-albumina-g-dl"
                       type="number"
                       step="0.1"
                       value={albumina}
@@ -1243,8 +1252,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Ácido Úrico (mg/dL)</label>
-                    <input
+                    <label htmlFor="consultati-acido-urico-mg-dl" className="block text-slate-600 text-xs mb-1">Ácido Úrico (mg/dL)</label>
+                    <input id="consultati-acido-urico-mg-dl"
                       type="number"
                       step="0.1"
                       value={acidoUrico}
@@ -1253,8 +1262,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Triglicéridos (mg/dL)</label>
-                    <input
+                    <label htmlFor="consultati-trigliceridos-mg-dl" className="block text-slate-600 text-xs mb-1">Triglicéridos (mg/dL)</label>
+                    <input id="consultati-trigliceridos-mg-dl"
                       type="number"
                       value={trigliceridos}
                       onChange={(e) => setTrigliceridos(parseInt(e.target.value) || 0)}
@@ -1262,8 +1271,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Colesterol Total (mg/dL)</label>
-                    <input
+                    <label htmlFor="consultati-colesterol-total-mg-dl" className="block text-slate-600 text-xs mb-1">Colesterol Total (mg/dL)</label>
+                    <input id="consultati-colesterol-total-mg-dl"
                       type="number"
                       value={colesterolTotal}
                       onChange={(e) => setColesterolTotal(parseInt(e.target.value) || 0)}
@@ -1271,8 +1280,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Colesterol HDL (mg/dL)</label>
-                    <input
+                    <label htmlFor="consultati-colesterol-hdl-mg-dl" className="block text-slate-600 text-xs mb-1">Colesterol HDL (mg/dL)</label>
+                    <input id="consultati-colesterol-hdl-mg-dl"
                       type="number"
                       value={colesterolHdl}
                       onChange={(e) => setColesterolHdl(parseInt(e.target.value) || 0)}
@@ -1280,8 +1289,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1">Colesterol LDL (mg/dL)</label>
-                    <input
+                    <label htmlFor="consultati-colesterol-ldl-mg-dl" className="block text-slate-600 text-xs mb-1">Colesterol LDL (mg/dL)</label>
+                    <input id="consultati-colesterol-ldl-mg-dl"
                       type="number"
                       value={colesterolLdl}
                       onChange={(e) => setColesterolLdl(parseInt(e.target.value) || 0)}
@@ -1292,8 +1301,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-slate-100 pt-3">
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1 font-semibold">Intolerancias Alimentarias</label>
-                    <input
+                    <label htmlFor="consultati-intolerancias-alimentarias" className="block text-slate-600 text-xs mb-1 font-semibold">Intolerancias Alimentarias</label>
+                    <input id="consultati-intolerancias-alimentarias"
                       type="text"
                       value={intolerancias}
                       onChange={(e) => setIntolerancias(e.target.value)}
@@ -1302,8 +1311,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 text-xs mb-1 font-semibold">Alergias Clínicas</label>
-                    <input
+                    <label htmlFor="consultati-alergias-clinicas" className="block text-slate-600 text-xs mb-1 font-semibold">Alergias Clínicas</label>
+                    <input id="consultati-alergias-clinicas"
                       type="text"
                       value={alergiasNutri}
                       onChange={(e) => setAlergiasNutri(e.target.value)}
@@ -1322,13 +1331,13 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   <ClipboardList className="w-4 h-4 text-emerald-500" />
                   <span>Evaluación Dietética & Hábitos de Consumo Diario</span>
                 </div>
-                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-400" />
+                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-500" />
               </summary>
               <div className="p-4 space-y-4 text-xs">
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                   <div>
-                    <label className="block text-slate-600 font-semibold mb-1">Tiempos de comida al día</label>
-                    <select
+                    <label htmlFor="consultati-tiempos-de-comida-al" className="block text-slate-600 font-semibold mb-1">Tiempos de comida al día</label>
+                    <select id="consultati-tiempos-de-comida-al"
                       value={tiemposComida}
                       onChange={(e) => setTiemposComida(e.target.value as any)}
                       className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1"
@@ -1339,8 +1348,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     </select>
                   </div>
                   <div>
-                    <label className="block text-slate-600 font-semibold mb-1">Lugar de Consumo Habitual</label>
-                    <select
+                    <label htmlFor="consultati-lugar-de-consumo-habitual" className="block text-slate-600 font-semibold mb-1">Lugar de Consumo Habitual</label>
+                    <select id="consultati-lugar-de-consumo-habitual"
                       value={lugarConsumo}
                       onChange={(e) => setLugarConsumo(e.target.value as any)}
                       className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1"
@@ -1351,8 +1360,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     </select>
                   </div>
                   <div>
-                    <label className="block text-slate-600 font-semibold mb-1">¿Quién prepara los alimentos?</label>
-                    <input
+                    <label htmlFor="consultati-quien-prepara-los-alimentos" className="block text-slate-600 font-semibold mb-1">¿Quién prepara los alimentos?</label>
+                    <input id="consultati-quien-prepara-los-alimentos"
                       type="text"
                       value={quienPrepara}
                       onChange={(e) => setQuienPrepara(e.target.value)}
@@ -1361,8 +1370,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 font-semibold mb-1">Calificación del Apetito</label>
-                    <select
+                    <label htmlFor="consultati-calificacion-del-apetito" className="block text-slate-600 font-semibold mb-1">Calificación del Apetito</label>
+                    <select id="consultati-calificacion-del-apetito"
                       value={calificacionApetito}
                       onChange={(e) => setCalificacionApetito(e.target.value as any)}
                       className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 font-bold"
@@ -1476,8 +1485,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 font-semibold mb-1">Experiencia con Dietas Anteriores</label>
-                    <input
+                    <label htmlFor="consultati-experiencia-con-dietas-anteriores" className="block text-slate-600 font-semibold mb-1">Experiencia con Dietas Anteriores</label>
+                    <input id="consultati-experiencia-con-dietas-anteriores"
                       type="text"
                       value={dietasAnteriores}
                       onChange={(e) => setDietasAnteriores(e.target.value)}
@@ -1522,8 +1531,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 font-semibold mb-1">Alimentos Preferidos (Apetencia)</label>
-                    <textarea
+                    <label htmlFor="consultati-alimentos-preferidos-apetencia" className="block text-slate-600 font-semibold mb-1">Alimentos Preferidos (Apetencia)</label>
+                    <textarea id="consultati-alimentos-preferidos-apetencia"
                       rows={2}
                       value={alimentosPreferidos}
                       onChange={(e) => setAlimentosPreferidos(e.target.value)}
@@ -1542,7 +1551,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   <Sparkles className="w-4 h-4 text-amber-500" />
                   <span>Estilo de Vida, Ejercicio & Hábitos Nocivos</span>
                 </div>
-                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-400" />
+                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-500" />
               </summary>
               <div className="p-4 space-y-4 text-xs">
                 {/* Bloque Actividad Fisica */}
@@ -1563,8 +1572,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   {realizaEjercicio && (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
                       <div>
-                        <label className="block text-slate-600 text-[11px] mb-1">Tipo de Ejercicio</label>
-                        <input
+                        <label htmlFor="consultati-tipo-de-ejercicio" className="block text-slate-600 text-[11px] mb-1">Tipo de Ejercicio</label>
+                        <input id="consultati-tipo-de-ejercicio"
                           type="text"
                           value={tipoEjercicio}
                           onChange={(e) => setTipoEjercicio(e.target.value)}
@@ -1573,8 +1582,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                         />
                       </div>
                       <div>
-                        <label className="block text-slate-600 text-[11px] mb-1">Frecuencia Semanal</label>
-                        <input
+                        <label htmlFor="consultati-frecuencia-semanal" className="block text-slate-600 text-[11px] mb-1">Frecuencia Semanal</label>
+                        <input id="consultati-frecuencia-semanal"
                           type="text"
                           value={frecuenciaEjercicioSemana}
                           onChange={(e) => setFrecuenciaEjercicioSemana(e.target.value)}
@@ -1583,8 +1592,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                         />
                       </div>
                       <div>
-                        <label className="block text-slate-600 text-[11px] mb-1">Duración (Sesión)</label>
-                        <input
+                        <label htmlFor="consultati-duracion-sesion" className="block text-slate-600 text-[11px] mb-1">Duración (Sesión)</label>
+                        <input id="consultati-duracion-sesion"
                           type="text"
                           value={duracionEjercicio}
                           onChange={(e) => setDuracionEjercicio(e.target.value)}
@@ -1593,8 +1602,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                         />
                       </div>
                       <div>
-                        <label className="block text-slate-600 text-[11px] mb-1">Hora del Entreno</label>
-                        <input
+                        <label htmlFor="consultati-hora-del-entreno" className="block text-slate-600 text-[11px] mb-1">Hora del Entreno</label>
+                        <input id="consultati-hora-del-entreno"
                           type="text"
                           value={horaEntreno}
                           onChange={(e) => setHoraEntreno(e.target.value)}
@@ -1603,8 +1612,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                         />
                       </div>
                       <div>
-                        <label className="block text-slate-600 text-[11px] mb-1">Tiempo de Entrenar (Meses/Años)</label>
-                        <input
+                        <label htmlFor="consultati-tiempo-de-entrenar-meses" className="block text-slate-600 text-[11px] mb-1">Tiempo de Entrenar (Meses/Años)</label>
+                        <input id="consultati-tiempo-de-entrenar-meses"
                           type="text"
                           value={tiempoEntrenar}
                           onChange={(e) => setTiempoEntrenar(e.target.value)}
@@ -1618,8 +1627,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
                 {/* Suplementos */}
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Suplementos deportivos o nutricionales consumidos</label>
-                  <input
+                  <label htmlFor="consultati-suplementos-deportivos-o-nutricionales" className="block text-slate-600 font-semibold mb-1">Suplementos deportivos o nutricionales consumidos</label>
+                  <input id="consultati-suplementos-deportivos-o-nutricionales"
                     type="text"
                     value={suplementos}
                     onChange={(e) => setSuplementos(e.target.value)}
@@ -1645,8 +1654,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     {consumeAlcohol && (
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
                         <div>
-                          <label className="block text-[10px] text-slate-500">Tipo</label>
-                          <input
+                          <label htmlFor="consultati-tipo" className="block text-[11px] text-slate-500">Tipo</label>
+                          <input id="consultati-tipo"
                             type="text"
                             value={tipoAlcohol}
                             onChange={(e) => setTipoAlcohol(e.target.value)}
@@ -1655,8 +1664,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] text-slate-500">Frecuencia</label>
-                          <input
+                          <label htmlFor="consultati-frecuencia" className="block text-[11px] text-slate-500">Frecuencia</label>
+                          <input id="consultati-frecuencia"
                             type="text"
                             value={frecuenciaAlcohol}
                             onChange={(e) => setFrecuenciaAlcohol(e.target.value)}
@@ -1665,8 +1674,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] text-slate-500">Cantidad</label>
-                          <input
+                          <label htmlFor="consultati-cantidad" className="block text-[11px] text-slate-500">Cantidad</label>
+                          <input id="consultati-cantidad"
                             type="text"
                             value={cantidadAlcohol}
                             onChange={(e) => setCantidadAlcohol(e.target.value)}
@@ -1693,8 +1702,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     {fuma && (
                       <div className="grid grid-cols-2 gap-2 pt-1">
                         <div>
-                          <label className="block text-[10px] text-slate-500">Frecuencia</label>
-                          <input
+                          <label htmlFor="consultati-frecuencia-2" className="block text-[11px] text-slate-500">Frecuencia</label>
+                          <input id="consultati-frecuencia-2"
                             type="text"
                             value={frecuenciaFumado}
                             onChange={(e) => setFrecuenciaFumado(e.target.value)}
@@ -1703,8 +1712,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] text-slate-500">Cantidad</label>
-                          <input
+                          <label htmlFor="consultati-cantidad-2" className="block text-[11px] text-slate-500">Cantidad</label>
+                          <input id="consultati-cantidad-2"
                             type="text"
                             value={cantidadFumado}
                             onChange={(e) => setCantidadFumado(e.target.value)}
@@ -1726,7 +1735,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   <Heart className="w-4 h-4 text-emerald-600 animate-pulse" />
                   <span>Diseño del Menú Semanal & Generador de Recetas</span>
                 </div>
-                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-400" />
+                <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90 text-slate-500" />
               </summary>
               <div className="p-4 space-y-4">
                 <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-4">
@@ -1742,7 +1751,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   ) : (
                     <>
                       <div>
-                        <label className="block text-slate-600 font-semibold mb-1.5">1. Elija la fórmula de TMB</label>
+                        <label htmlFor="consultati-1-elija-la-formula" className="block text-slate-600 font-semibold mb-1.5">1. Elija la fórmula de TMB</label>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                           {(['HARRIS_BENEDICT_OBESOS', 'MIFFLIN_ST_JEOR', 'MULLER'] as FormulaTMB[]).map(f => {
                             const tmbCalculado = tmbPorFormula ? tmbPorFormula[f] : 0;
@@ -1760,7 +1769,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                                 className={`p-2.5 rounded-lg border text-left ${seleccionada ? 'border-teal-500 bg-teal-50' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
                               >
                                 <div className="font-semibold text-slate-700">{etiquetas[f]}</div>
-                                <div className="text-lg font-black text-slate-800">{Math.round(tmbCalculado)} <span className="text-[10px] font-normal text-slate-400">kcal/día</span></div>
+                                <div className="text-lg font-black text-slate-800">{Math.round(tmbCalculado)} <span className="text-[11px] font-normal text-slate-500">kcal/día</span></div>
                               </button>
                             );
                           })}
@@ -1773,7 +1782,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                               <label className="block text-slate-600 font-semibold mb-1">Días de descanso / semana</label>
-                              <input
+                              <input id="consultati-1-elija-la-formula"
                                 type="number"
                                 min={0}
                                 max={7}
@@ -1794,8 +1803,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                               </select>
                             </div>
                             <div>
-                              <label className="block text-slate-600 font-semibold mb-1">Días de entrenamiento / semana</label>
-                              <input
+                              <label htmlFor="consultati-dias-de-entrenamiento-semana" className="block text-slate-600 font-semibold mb-1">Días de entrenamiento / semana</label>
+                              <input id="consultati-dias-de-entrenamiento-semana"
                                 type="number"
                                 min={0}
                                 max={7}
@@ -1816,7 +1825,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                               </select>
                             </div>
                           </div>
-                          <p className="text-[10px] text-slate-400">Nota: pacientes de menos de 60kg — se recomienda usar actividad ligera (Solís, L. 2020).</p>
+                          <p className="text-[11px] text-slate-500">Nota: pacientes de menos de 60kg — se recomienda usar actividad ligera (Solís, L. 2020).</p>
 
                           {promedioMantenimiento != null && (
                             <p className="text-slate-700 font-semibold">
@@ -1825,7 +1834,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                           )}
 
                           <div>
-                            <label className="block text-slate-600 font-semibold mb-1.5">3. Dirección y porcentaje</label>
+                            <label htmlFor="consultati-3-direccion-y-porcentaje" className="block text-slate-600 font-semibold mb-1.5">3. Dirección y porcentaje</label>
                             <div className="flex flex-wrap gap-2 mb-2">
                               {(['DEFICIT', 'MANTENIMIENTO', 'SUPERAVIT'] as DireccionPrescripcion[]).map(d => (
                                 <button
@@ -1860,7 +1869,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                           {prescripcionFinal != null && (
                             <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 flex items-center justify-between">
                               <div>
-                                <div className="text-[10px] text-teal-700 uppercase font-bold">Resultado calculado</div>
+                                <div className="text-[11px] text-teal-700 uppercase font-bold">Resultado calculado</div>
                                 <div className="text-xl font-black text-teal-800">{Math.round(prescripcionFinal)} kcal/día</div>
                               </div>
                               <div className="text-right">
@@ -1872,7 +1881,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                                   Usar este valor
                                 </button>
                                 {prescripcionAplicada && (
-                                  <p className="text-[10px] text-teal-700 font-semibold mt-1">✓ Aplicado a TMB y Presupuesto Calórico</p>
+                                  <p className="text-[11px] text-teal-800 font-semibold mt-1 flex items-center gap-1" role="status"><Check className="w-3.5 h-3.5" aria-hidden="true" /> Aplicado a TMB y presupuesto calórico</p>
                                 )}
                               </div>
                             </div>
@@ -1882,7 +1891,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                             <div className="space-y-2">
                               {(patient.alergiasAlimentarias || alimentosNoConsume || alimentosPreferidos) && (
                                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-amber-800">
-                                  <p className="font-bold">⚠ Revisar antes de aplicar una plantilla:</p>
+                                  <p className="font-bold flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" /> Revisar antes de aplicar una plantilla:</p>
                                   {patient.alergiasAlimentarias && <p>Alergias: {patient.alergiasAlimentarias}</p>}
                                   {alimentosNoConsume && <p>No consume: {alimentosNoConsume}</p>}
                                   {alimentosPreferidos && <p>Prefiere: {alimentosPreferidos}</p>}
@@ -1898,7 +1907,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                                     className="p-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-left"
                                   >
                                     <div className="font-semibold text-slate-700">{pl.nombre}</div>
-                                    <div className="text-[10px] text-slate-500">{pl.caloriaMin}-{pl.caloriaMax} kcal · C:{pl.carbohidratosPct ?? '—'}% P:{pl.proteinasPct ?? '—'}% G:{pl.grasasPct ?? '—'}%</div>
+                                    <div className="text-[11px] text-slate-500">{pl.caloriaMin}-{pl.caloriaMax} kcal · C:{pl.carbohidratosPct ?? '—'}% P:{pl.proteinasPct ?? '—'}% G:{pl.grasasPct ?? '—'}%</div>
                                   </button>
                                 ))}
                               </div>
@@ -1913,7 +1922,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 w-56">
                     <label className="block text-slate-600 font-bold mb-1">Presupuesto Calórico Diario (kcal)</label>
-                    <input
+                    <input id="consultati-3-direccion-y-porcentaje"
                       type="number"
                       value={calorias}
                       onChange={(e) => setCalorias(parseInt(e.target.value) || 0)}
@@ -1921,11 +1930,11 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60">
-                    <label className="block text-slate-600 font-bold mb-1">Distribución de Macronutrientes (%)</label>
+                    <label htmlFor="consultati-distribucion-de-macronutrientes-carbohidratos" className="block text-slate-600 font-bold mb-1">Distribución de Macronutrientes (%)</label>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                       <div>
-                        <label className="block text-slate-500 text-[10px] mb-0.5">Carbohidratos</label>
-                        <input
+                        <label className="block text-slate-500 text-[11px] mb-0.5">Carbohidratos</label>
+                        <input id="consultati-distribucion-de-macronutrientes-carbohidratos"
                           type="number"
                           min={0}
                           max={100}
@@ -1936,8 +1945,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                         />
                       </div>
                       <div>
-                        <label className="block text-slate-500 text-[10px] mb-0.5">Proteínas</label>
-                        <input
+                        <label htmlFor="consultati-proteinas" className="block text-slate-500 text-[11px] mb-0.5">Proteínas</label>
+                        <input id="consultati-proteinas"
                           type="number"
                           min={0}
                           max={100}
@@ -1948,8 +1957,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                         />
                       </div>
                       <div>
-                        <label className="block text-slate-500 text-[10px] mb-0.5">Grasas</label>
-                        <input
+                        <label htmlFor="consultati-grasas" className="block text-slate-500 text-[11px] mb-0.5">Grasas</label>
+                        <input id="consultati-grasas"
                           type="number"
                           min={0}
                           max={100}
@@ -1961,8 +1970,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       </div>
                     </div>
                     {(macrosCarbohidratosPct !== '' || macrosProteinasPct !== '' || macrosGrasasPct !== '') && (
-                      <p className={`text-[10px] mt-1.5 font-semibold ${todosLosMacrosPctLlenos && sumaMacrosPct !== 100 ? 'text-rose-600' : 'text-slate-500'}`}>
-                        Suma actual: {sumaMacrosPct}% {todosLosMacrosPctLlenos ? (sumaMacrosPct === 100 ? '✓' : '(debe sumar 100%)') : '(opcional dejar campos en blanco)'}
+                      <p className={`text-[11px] mt-1.5 font-semibold ${todosLosMacrosPctLlenos && sumaMacrosPct !== 100 ? 'text-rose-600' : 'text-slate-500'}`}>
+                        Suma actual: {sumaMacrosPct}% {todosLosMacrosPctLlenos ? (sumaMacrosPct === 100 ? <Check className="inline w-3.5 h-3.5 text-emerald-600 align-text-bottom" aria-label="correcto" /> : '(debe sumar 100%)') : '(opcional dejar campos en blanco)'}
                       </p>
                     )}
                   </div>
@@ -1970,8 +1979,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
                 <div className="space-y-3 bg-teal-50/20 p-4 rounded-xl border border-teal-100 text-xs">
                   <div>
-                    <label className="block text-slate-600 font-semibold mb-1">Desayuno Saludable</label>
-                    <textarea
+                    <label htmlFor="consultati-desayuno-saludable" className="block text-slate-600 font-semibold mb-1">Desayuno Saludable</label>
+                    <textarea id="consultati-desayuno-saludable"
                       rows={2}
                       value={desayuno}
                       onChange={(e) => setDesayuno(e.target.value)}
@@ -1981,8 +1990,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-slate-600 font-semibold mb-1">Merienda Mañana</label>
-                      <input
+                      <label htmlFor="consultati-merienda-manana" className="block text-slate-600 font-semibold mb-1">Merienda Mañana</label>
+                      <input id="consultati-merienda-manana"
                         type="text"
                         value={meriendaMan}
                         onChange={(e) => setMeriendaMan(e.target.value)}
@@ -1991,8 +2000,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 font-semibold mb-1">Merienda Tarde</label>
-                      <input
+                      <label htmlFor="consultati-merienda-tarde" className="block text-slate-600 font-semibold mb-1">Merienda Tarde</label>
+                      <input id="consultati-merienda-tarde"
                         type="text"
                         value={meriendaTar}
                         onChange={(e) => setMeriendaTar(e.target.value)}
@@ -2002,8 +2011,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     </div>
                   </div>
                   <div>
-                    <label className="block text-slate-600 font-semibold mb-1">Almuerzo Nutritivo</label>
-                    <textarea
+                    <label htmlFor="consultati-almuerzo-nutritivo" className="block text-slate-600 font-semibold mb-1">Almuerzo Nutritivo</label>
+                    <textarea id="consultati-almuerzo-nutritivo"
                       rows={2}
                       value={almuerzo}
                       onChange={(e) => setAlmuerzo(e.target.value)}
@@ -2012,8 +2021,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 font-semibold mb-1">Cena Ligera</label>
-                    <textarea
+                    <label htmlFor="consultati-cena-ligera" className="block text-slate-600 font-semibold mb-1">Cena Ligera</label>
+                    <textarea id="consultati-cena-ligera"
                       rows={2}
                       value={cena}
                       onChange={(e) => setCena(e.target.value)}
@@ -2022,8 +2031,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 font-semibold mb-1">Indicaciones Clínicas Adicionales</label>
-                    <textarea
+                    <label htmlFor="consultati-indicaciones-clinicas-adicionales" className="block text-slate-600 font-semibold mb-1">Indicaciones Clínicas Adicionales</label>
+                    <textarea id="consultati-indicaciones-clinicas-adicionales"
                       rows={2}
                       value={indicacionesDieta}
                       onChange={(e) => setIndicacionesDieta(e.target.value)}
@@ -2041,7 +2050,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
         {tipo === 'Fisioterapia' && (
           <div className="space-y-4">
             <div className="flex justify-between items-center border-t border-slate-100 pt-4">
-              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
                 <Dumbbell className="w-4 h-4 text-teal-600" />
                 Valoración Mecánica, Dolor & Kinesiología
               </h4>
@@ -2060,8 +2069,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
               {/* Injury context */}
               <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-200/60 text-xs">
                 <div>
-                  <label className="block text-slate-600 font-bold mb-1">Mecanismo de Lesión (Origen)</label>
-                  <input
+                  <label htmlFor="consultati-mecanismo-de-lesion-origen" className="block text-slate-600 font-bold mb-1">Mecanismo de Lesión (Origen)</label>
+                  <input id="consultati-mecanismo-de-lesion-origen"
                     type="text"
                     value={mecanismoLesion}
                     onChange={(e) => setMecanismoLesion(e.target.value)}
@@ -2070,8 +2079,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-bold mb-1">Diagnóstico Médico / Referencia</label>
-                  <input
+                  <label htmlFor="consultati-diagnostico-medico-referencia" className="block text-slate-600 font-bold mb-1">Diagnóstico Médico / Referencia</label>
+                  <input id="consultati-diagnostico-medico-referencia"
                     type="text"
                     value={diagnosticoMedico}
                     onChange={(e) => setDiagnosticoMedico(e.target.value)}
@@ -2082,8 +2091,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-slate-600 font-bold mb-1">Tipo de Dolor</label>
-                    <select
+                    <label htmlFor="consultati-tipo-de-dolor" className="block text-slate-600 font-bold mb-1">Tipo de Dolor</label>
+                    <select id="consultati-tipo-de-dolor"
                       value={tipoDolor}
                       onChange={(e) => setTipoDolor(e.target.value)}
                       className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
@@ -2096,8 +2105,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                     </select>
                   </div>
                   <div>
-                    <label className="block text-slate-600 font-bold mb-1">Intensidad EVA (0-10)</label>
-                    <input
+                    <label htmlFor="consultati-intensidad-eva-0-10" className="block text-slate-600 font-bold mb-1">Intensidad EVA (0-10)</label>
+                    <input id="consultati-intensidad-eva-0-10"
                       type="number"
                       min="0"
                       max="10"
@@ -2109,8 +2118,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                 </div>
 
                 <div>
-                  <label className="block text-slate-600 font-bold mb-1">Factores Agravantes</label>
-                  <input
+                  <label htmlFor="consultati-factores-agravantes" className="block text-slate-600 font-bold mb-1">Factores Agravantes</label>
+                  <input id="consultati-factores-agravantes"
                     type="text"
                     value={factoresAgravantes}
                     onChange={(e) => setFactoresAgravantes(e.target.value)}
@@ -2120,8 +2129,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                 </div>
 
                 <div>
-                  <label className="block text-slate-600 font-bold mb-1">Factores Atenuantes</label>
-                  <input
+                  <label htmlFor="consultati-factores-atenuantes" className="block text-slate-600 font-bold mb-1">Factores Atenuantes</label>
+                  <input id="consultati-factores-atenuantes"
                     type="text"
                     value={factoresAtenuantes}
                     onChange={(e) => setFactoresAtenuantes(e.target.value)}
@@ -2134,11 +2143,11 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
             {/* Physical examination (ROM, Daniels) */}
             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/60 space-y-3.5">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Examen Físico Funcional</span>
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Examen Físico Funcional</span>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Inspección de Postura</label>
-                  <textarea
+                  <label htmlFor="consultati-inspeccion-de-postura" className="block text-slate-600 font-semibold mb-1">Inspección de Postura</label>
+                  <textarea id="consultati-inspeccion-de-postura"
                     rows={2}
                     value={posturaObservaciones}
                     onChange={(e) => setPosturaObservaciones(e.target.value)}
@@ -2147,8 +2156,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Hallazgos de Palpación</label>
-                  <textarea
+                  <label htmlFor="consultati-hallazgos-de-palpacion" className="block text-slate-600 font-semibold mb-1">Hallazgos de Palpación</label>
+                  <textarea id="consultati-hallazgos-de-palpacion"
                     rows={2}
                     value={palpacionHallazgos}
                     onChange={(e) => setPalpacionHallazgos(e.target.value)}
@@ -2160,8 +2169,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Rangos Articulares (ROM)</label>
-                  <input
+                  <label htmlFor="consultati-rangos-articulares-rom" className="block text-slate-600 font-semibold mb-1">Rangos Articulares (ROM)</label>
+                  <input id="consultati-rangos-articulares-rom"
                     type="text"
                     value={romMedido}
                     onChange={(e) => setRomMedido(e.target.value)}
@@ -2170,8 +2179,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Fuerza Escala Daniels (0-5)</label>
-                  <input
+                  <label htmlFor="consultati-fuerza-escala-daniels-0" className="block text-slate-600 font-semibold mb-1">Fuerza Escala Daniels (0-5)</label>
+                  <input id="consultati-fuerza-escala-daniels-0"
                     type="text"
                     value={fuerzaDaniels}
                     onChange={(e) => setFuerzaDaniels(e.target.value)}
@@ -2180,8 +2189,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Pruebas Ortopédicas Especiales</label>
-                  <input
+                  <label htmlFor="consultati-pruebas-ortopedicas-especiales" className="block text-slate-600 font-semibold mb-1">Pruebas Ortopédicas Especiales</label>
+                  <input id="consultati-pruebas-ortopedicas-especiales"
                     type="text"
                     value={pruebasEspeciales}
                     onChange={(e) => setPruebasEspeciales(e.target.value)}
@@ -2194,11 +2203,11 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
             {/* Prescribed physiotherapy interventions */}
             <div className="bg-teal-50/20 p-4 rounded-xl border border-teal-100 space-y-3">
-              <span className="text-[10px] font-bold text-teal-800 uppercase tracking-wider block">Prescripción e Intervenciones</span>
+              <span className="text-[11px] font-bold text-teal-800 uppercase tracking-wider block">Prescripción e Intervenciones</span>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Agentes Físicos (TENS, Ultrasonido...)</label>
-                  <input
+                  <label htmlFor="consultati-agentes-fisicos-tens-ultrasonido" className="block text-slate-600 font-semibold mb-1">Agentes Físicos (TENS, Ultrasonido...)</label>
+                  <input id="consultati-agentes-fisicos-tens-ultrasonido"
                     type="text"
                     value={agentesFisicos}
                     onChange={(e) => setAgentesFisicos(e.target.value)}
@@ -2207,8 +2216,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Terapia Manual Aplicada</label>
-                  <input
+                  <label htmlFor="consultati-terapia-manual-aplicada" className="block text-slate-600 font-semibold mb-1">Terapia Manual Aplicada</label>
+                  <input id="consultati-terapia-manual-aplicada"
                     type="text"
                     value={terapiaManual}
                     onChange={(e) => setTerapiaManual(e.target.value)}
@@ -2217,8 +2226,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Ejercicio Terapéutico Recetado</label>
-                  <input
+                  <label htmlFor="consultati-ejercicio-terapeutico-recetado" className="block text-slate-600 font-semibold mb-1">Ejercicio Terapéutico Recetado</label>
+                  <input id="consultati-ejercicio-terapeutico-recetado"
                     type="text"
                     value={ejercicioTerapeutico}
                     onChange={(e) => setEjercicioTerapeutico(e.target.value)}
@@ -2228,8 +2237,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                 </div>
               </div>
               <div className="w-48">
-                <label className="block text-slate-600 font-semibold mb-1">Sesiones sugeridas para el ciclo</label>
-                <input
+                <label htmlFor="consultati-sesiones-sugeridas-para-el" className="block text-slate-600 font-semibold mb-1">Sesiones sugeridas para el ciclo</label>
+                <input id="consultati-sesiones-sugeridas-para-el"
                   type="number"
                   value={sesionesSugeridas}
                   onChange={(e) => setSesionesSugeridas(parseInt(e.target.value))}
@@ -2240,11 +2249,11 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
             {/* SOAP Clinical evolution note */}
             <div className="bg-slate-900 text-white p-4 rounded-xl space-y-3">
-              <span className="text-[10px] font-bold text-teal-400 uppercase tracking-wider block">Nota de Evolución Clínica Diaria (Estándar SOAP)</span>
+              <span className="text-[11px] font-bold text-teal-400 uppercase tracking-wider block">Nota de Evolución Clínica Diaria (Estándar SOAP)</span>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">S (Subjetivo): Reporte del paciente</label>
-                  <textarea
+                  <label htmlFor="consultati-s-subjetivo-reporte-del" className="block text-slate-300 font-medium mb-1">S (Subjetivo): Reporte del paciente</label>
+                  <textarea id="consultati-s-subjetivo-reporte-del"
                     rows={2}
                     value={soapSubjetivo}
                     onChange={(e) => setSoapSubjetivo(e.target.value)}
@@ -2253,8 +2262,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">O (Objetivo): Mediciones de hoy</label>
-                  <textarea
+                  <label htmlFor="consultati-o-objetivo-mediciones-de" className="block text-slate-300 font-medium mb-1">O (Objetivo): Mediciones de hoy</label>
+                  <textarea id="consultati-o-objetivo-mediciones-de"
                     rows={2}
                     value={soapObjetivo}
                     onChange={(e) => setSoapObjetivo(e.target.value)}
@@ -2263,8 +2272,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">A (Análisis): Conclusión de la sesión</label>
-                  <textarea
+                  <label htmlFor="consultati-a-analisis-conclusion-de" className="block text-slate-300 font-medium mb-1">A (Análisis): Conclusión de la sesión</label>
+                  <textarea id="consultati-a-analisis-conclusion-de"
                     rows={2}
                     value={soapAnalisis}
                     onChange={(e) => setSoapAnalisis(e.target.value)}
@@ -2273,8 +2282,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-300 font-medium mb-1">P (Plan): Tareas y siguiente sesión</label>
-                  <textarea
+                  <label htmlFor="consultati-p-plan-tareas-y" className="block text-slate-300 font-medium mb-1">P (Plan): Tareas y siguiente sesión</label>
+                  <textarea id="consultati-p-plan-tareas-y"
                     rows={2}
                     value={soapPlan}
                     onChange={(e) => setSoapPlan(e.target.value)}
@@ -2289,8 +2298,8 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
         {/* General annotations */}
         <div className="border-t border-slate-100 pt-4">
-          <label className="block text-slate-600 font-bold mb-1">Observaciones Generales y Recomendaciones al Paciente</label>
-          <textarea
+          <label htmlFor="consultati-observaciones-generales-y-recomendaciones" className="block text-slate-600 font-bold mb-1">Observaciones Generales y Recomendaciones al Paciente</label>
+          <textarea id="consultati-observaciones-generales-y-recomendaciones"
             rows={2}
             value={anotaciones}
             onChange={(e) => setAnotaciones(e.target.value)}
@@ -2301,22 +2310,22 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
       </div>
 
       {/* Action triggers */}
-      <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-2.5">
+      <div className="sticky bottom-0 z-10 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-white/95 backdrop-blur-sm border-t border-slate-200 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] flex flex-wrap justify-end gap-2.5">
         <button
           type="button"
           onClick={onCancel}
-          className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold px-4 py-2 rounded-xl"
+          className="min-h-11 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-4 rounded-xl transition-colors"
         >
           Cancelar
         </button>
         <button
           type="submit"
           disabled={isSubmitting}
-          className="text-white font-semibold px-5 py-2 rounded-xl transition-all shadow-md flex items-center gap-1.5 disabled:opacity-60"
+          className="min-h-11 text-white font-semibold px-5 rounded-xl shadow-md flex items-center gap-1.5 disabled:opacity-60 hover:brightness-110 transition-[filter,opacity]"
           style={{ backgroundColor: themeColor }}
         >
-          <Save className="w-4 h-4" />
-          {isSubmitting ? 'Guardando...' : editingConsultation ? 'Actualizar Consulta y Reporte' : 'Guardar Consulta y Reporte'}
+          <Save className="w-4 h-4" aria-hidden="true" />
+          {isSubmitting ? 'Guardando…' : editingConsultation ? 'Guardar cambios y ver reporte' : 'Guardar consulta y ver reporte'}
         </button>
       </div>
     </form>

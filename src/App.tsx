@@ -6,27 +6,26 @@ import {
   Building2,
   Search,
   Plus,
-  TrendingDown,
   Trash2,
   Edit,
   ClipboardList,
-  Heart,
   Dumbbell,
-  CheckCircle,
-  Clock,
+  Apple,
   Printer,
-  ChevronRight,
   LogOut,
   Lock,
   Menu,
   X,
-  MapPin,
+  UserCircle,
   Share2,
   Receipt,
   Landmark,
   FileSpreadsheet,
-  BarChart3
+  BarChart3,
+  Loader2,
+  type LucideIcon
 } from 'lucide-react';
+import { notify, confirmar } from './components/ui/Feedback';
 import {
   LineChart,
   Line,
@@ -86,6 +85,32 @@ import ProveedorManager from './components/ProveedorManager';
 import CxPManager from './components/CxPManager';
 import ReportesFiscales from './components/ReportesFiscales';
 import ReporteriaClinica from './components/ReporteriaClinica';
+
+type TabId = 'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales' | 'reporteria';
+
+const TAB_IDS: TabId[] = ['dashboard', 'patients', 'consultations', 'agenda', 'branding', 'saas-admin', 'mi-perfil', 'reservas-online', 'facturacion', 'cxp', 'reportes-fiscales', 'reporteria'];
+
+// La pestaña activa vive en el hash (#/agenda): refrescar la página no la pierde, se puede
+// enlazar directo a una sección y el botón "Atrás" del navegador vuelve a la anterior.
+const tabFromHash = (): TabId => {
+  const h = window.location.hash.replace(/^#\/?/, '');
+  return (TAB_IDS as string[]).includes(h) ? (h as TabId) : 'dashboard';
+};
+
+// Fecha local YYYY-MM-DD (toISOString() usa UTC y en Costa Rica adelanta el día después de las 6 p. m.)
+const hoyLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+interface NavItem {
+  id: TabId;
+  label: string;
+  icon: LucideIcon;
+  iconClass?: string;
+  badge?: string | number;
+  badgeClass?: string;
+}
 
 export default function App() {
   // --- Persistent Storage Core (Synced with MySQL Backend) ---
@@ -356,9 +381,33 @@ export default function App() {
   // Active Company Context
   const activeCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
-  // App Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales' | 'reporteria'>('dashboard');
+  // App Navigation Tabs (sincronizadas con el hash de la URL, ver tabFromHash)
+  const [activeTab, setActiveTabState] = useState<TabId>(tabFromHash);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const setActiveTab = (tab: TabId) => {
+    setActiveTabState(tab);
+    if (tabFromHash() !== tab) window.location.hash = `/${tab}`;
+    window.scrollTo({ top: 0 });
+  };
+
+  useEffect(() => {
+    const onHashChange = () => {
+      setActiveTabState(tabFromHash());
+      // "Atrás" desde el reporte de una consulta vuelve a la lista (el reporte es de solo lectura)
+      setSelectedReportConsultation(null);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  // El menú móvil se cierra con Escape
+  useEffect(() => {
+    if (!isMobileMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsMobileMenuOpen(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [isMobileMenuOpen]);
 
   // --- Login and Company Registration Handlers ---
   const handleLoginSuccess = (user: User, company: Company | undefined) => {
@@ -418,14 +467,15 @@ export default function App() {
       // "de forma optimista" en el estado local pero nunca se guardó de verdad en la base de
       // datos, así que el cambio desaparece en el siguiente refresco.
       if (!res.ok) {
-        alert(data.error || 'No se pudo guardar la empresa.');
+        notify.error(data.error || 'No se pudo guardar la empresa.');
         return;
       }
       setCompanies(prev => prev.map(c => c.id === data.id ? data : c));
+      notify.success('Los datos de la clínica se guardaron.');
     })
     .catch(err => {
       console.error("Error updating company in MySQL:", err);
-      alert('Error de conexión al guardar la empresa.');
+      notify.error('Error de conexión al guardar la empresa.');
     });
   };
 
@@ -438,14 +488,15 @@ export default function App() {
     .then(async res => {
       const data = await res.json();
       if (!res.ok) {
-        alert(data.error || 'No se pudo crear la empresa.');
+        notify.error(data.error || 'No se pudo crear la empresa.');
         return;
       }
       setCompanies(prev => [...prev, data]);
+      notify.success('Empresa creada.');
     })
     .catch(err => {
       console.error("Error adding company to MySQL:", err);
-      alert('Error de conexión al crear la empresa.');
+      notify.error('Error de conexión al crear la empresa.');
     });
   };
 
@@ -508,15 +559,23 @@ export default function App() {
     setEditingPatient(null);
   };
 
-  const handleDeletePatient = (id: number) => {
-    if (!confirm("¿Está seguro de eliminar el expediente de este paciente? Esto no borrará sus consultas históricas.")) return;
+  const handleDeletePatient = async (id: number) => {
+    const paciente = patients.find(p => p.id === id);
+    const ok = await confirmar({
+      title: '¿Eliminar este expediente?',
+      message: `${paciente ? `Se eliminará el expediente de ${paciente.nombreCompleto}. ` : ''}Sus consultas históricas se conservan.`,
+      confirmText: 'Eliminar expediente',
+      tone: 'danger'
+    });
+    if (!ok) return;
     fetch(`/api/patients/${id}`, { method: 'DELETE' })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {
         if (!ok) throw new Error(data.error || 'No se pudo eliminar el paciente.');
         setPatients(prev => prev.filter(p => p.id !== id));
+        notify.success('Expediente eliminado.');
       })
-      .catch(err => alert(err.message || 'No se pudo eliminar el paciente.'));
+      .catch(err => notify.error(err.message || 'No se pudo eliminar el paciente.'));
   };
 
   const handleSaveConsultation = (newConsultation: Consultation) => {
@@ -547,15 +606,22 @@ export default function App() {
     setSelectedReportConsultation(consulta);
   };
 
-  const handleDeleteConsultation = (id: number) => {
-    if (!confirm("¿Eliminar este registro de consulta?")) return;
+  const handleDeleteConsultation = async (id: number) => {
+    const ok = await confirmar({
+      title: '¿Eliminar este registro de consulta?',
+      message: 'Esta acción no se puede deshacer.',
+      confirmText: 'Eliminar consulta',
+      tone: 'danger'
+    });
+    if (!ok) return;
     fetch(`/api/consultations/${id}`, { method: 'DELETE' })
       .then(res => res.json().then(data => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {
         if (!ok) throw new Error(data.error || 'No se pudo eliminar la consulta.');
         setConsultations(prev => prev.filter(c => c.id !== id));
+        notify.success('Consulta eliminada.');
       })
-      .catch(err => alert(err.message || 'No se pudo eliminar la consulta.'));
+      .catch(err => notify.error(err.message || 'No se pudo eliminar la consulta.'));
   };
 
   // --- Agenda / Citas / SMTP / SOAP Integration Handlers ---
@@ -943,17 +1009,18 @@ export default function App() {
     .then(async res => {
       const data = await res.json();
       if (!res.ok) {
-        alert(data.error || 'No se pudo guardar el colaborador.');
+        notify.error(data.error || 'No se pudo guardar el colaborador.');
         return;
       }
       setUsers(prev => {
         const exists = prev.some(u => u.id === data.id);
         return exists ? prev.map(u => u.id === data.id ? data : u) : [...prev, data];
       });
+      notify.success('Datos del colaborador guardados.');
     })
     .catch(err => {
       console.error("Error saving user to MySQL:", err);
-      alert('Error de conexión al guardar el colaborador.');
+      notify.error('Error de conexión al guardar el colaborador.');
     });
   };
 
@@ -1024,7 +1091,7 @@ export default function App() {
       setActiveConsultationPatient(matched);
       setActiveTab('consultations');
     } else {
-      alert('Paciente no encontrado en el sistema.');
+      notify.error('Paciente no encontrado en el sistema.');
     }
   };
 
@@ -1063,7 +1130,17 @@ export default function App() {
   if (!currentUser) {
     // Espera a que se resuelva GET /api/me antes de mostrar el login, para no parpadear la
     // pantalla de login un instante y luego saltar al dashboard si ya había una sesión válida.
-    if (!authChecked) return null;
+    if (!authChecked) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4" role="status">
+          <img src="/logo-tuanis-192.webp" alt="" width={64} height={64} className="w-16 h-16" />
+          <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
+            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+            Cargando TuanisBooking…
+          </div>
+        </div>
+      );
+    }
     return (
       <LoginView
         onLoginSuccess={handleLoginSuccess}
@@ -1072,276 +1149,255 @@ export default function App() {
     );
   }
 
+  // --- Datos derivados para la vista ---
+  const hoy = hoyLocal();
+  const citasDeLaCompania = citas.filter(c => c.idCompania === selectedCompanyId);
+  const citasProgramadas = citasDeLaCompania.filter(c => c.estadoCita === 'PROGRAMADA').length;
+  const citasHoy = citasDeLaCompania.filter(c => c.fechaHora.startsWith(hoy) && c.estadoCita !== 'CANCELADA').length;
+  const esSaasAdmin = currentUser.idCompania === 7 && currentUser.rol === 'Administrador';
+  const horaActual = new Date().getHours();
+  const saludo = horaActual < 12 ? 'Buenos días' : horaActual < 19 ? 'Buenas tardes' : 'Buenas noches';
+  // "Dr. Keneth Rojas" → "Dr. Keneth" (con título se conserva el nombre de pila)
+  const partesNombre = currentUser.nombre.trim().split(/\s+/);
+  const nombreSaludo = /^(dr|dra|lic|licda|msc|ing|mag)\.?$/i.test(partesNombre[0]) ? partesNombre.slice(0, 2).join(' ') : partesNombre[0];
+  const muestraNutricion = activeCompany.perfilCompania === 'Nutrición' || activeCompany.perfilCompania === 'Ambas';
+  const muestraFisioterapia = activeCompany.perfilCompania === 'Fisioterapia' || activeCompany.perfilCompania === 'Ambas';
+
+  // Consulta más reciente de cada paciente (por fecha, no por el orden en que llegó del servidor)
+  const ultimaConsultaPorPaciente = new Map<number, Consultation>();
+  filteredConsultationsByCompany.forEach(c => {
+    const previa = ultimaConsultaPorPaciente.get(c.idPaciente);
+    if (!previa || c.fecha > previa.fecha) ultimaConsultaPorPaciente.set(c.idPaciente, c);
+  });
+  const pacientesRecientes = [...filteredPatientsByCompany]
+    .sort((a, b) => (ultimaConsultaPorPaciente.get(b.id)?.fecha ?? '').localeCompare(ultimaConsultaPorPaciente.get(a.id)?.fecha ?? ''))
+    .slice(0, 5);
+  const consultasOrdenadas = [...searchedConsultations].sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+  const weightHistoryData = getWeightHistoryData();
+  const evaDistribution = getEvaDistribution();
+  const hayConsultasFisio = filteredConsultationsByCompany.some(c => c.tipo === 'Fisioterapia');
+
+  const navGroups: { label: string; items: NavItem[] }[] = [
+    {
+      label: 'Clínica',
+      items: [
+        { id: 'dashboard', label: 'Resumen Clínico', icon: Activity },
+        { id: 'patients', label: 'Pacientes / Expedientes', icon: Users, badge: filteredPatientsByCompany.length },
+        { id: 'agenda', label: 'Agenda y Calendario', icon: Calendar, iconClass: 'text-emerald-600', badge: citasProgramadas, badgeClass: 'bg-emerald-100 text-emerald-800' },
+        { id: 'consultations', label: 'Historial de Citas', icon: ClipboardList, badge: filteredConsultationsByCompany.length }
+      ]
+    },
+    {
+      label: 'Finanzas',
+      items: [
+        { id: 'facturacion', label: 'Facturación', icon: Receipt, badge: facturas.filter(f => f.idCompania === selectedCompanyId).length },
+        { id: 'cxp', label: 'Cuentas por Pagar', icon: Landmark, badge: cxp.filter(c => c.idCompania === selectedCompanyId && c.estado === 'PENDIENTE').length },
+        { id: 'reportes-fiscales', label: 'Reportes Fiscales', icon: FileSpreadsheet },
+        { id: 'reporteria', label: 'Reportería', icon: BarChart3 }
+      ]
+    },
+    {
+      label: 'Configuración',
+      items: [
+        { id: 'branding', label: 'Personalizar Clínica', icon: Building2 },
+        { id: 'mi-perfil', label: 'Mi Perfil', icon: UserCircle },
+        { id: 'reservas-online', label: 'Reservas en Línea', icon: Share2 },
+        ...(esSaasAdmin ? [{ id: 'saas-admin' as TabId, label: 'Administración SaaS', icon: Lock, iconClass: 'text-amber-600' }] : [])
+      ]
+    }
+  ];
+
+  const badgeLabel = (id: TabId) =>
+    id === 'agenda' ? 'citas sin confirmar' : id === 'cxp' ? 'cuentas pendientes' : id === 'facturacion' ? 'comprobantes' : 'registros';
+
+  const hayFormularioAbierto = !!activeConsultationPatient || isAddingPatient || !!editingPatient;
+
+  // Navegar desde el menú también cierra el reporte o el formulario abierto; si hay un
+  // formulario a medio llenar se pide confirmación para no perder lo digitado.
+  const navigateTo = async (tab: TabId) => {
+    setIsMobileMenuOpen(false);
+    if (hayFormularioAbierto) {
+      const ok = await confirmar({
+        title: '¿Salir sin guardar?',
+        message: 'Tiene un formulario abierto. Si sale ahora, los cambios que no ha guardado se perderán.',
+        confirmText: 'Salir sin guardar',
+        cancelText: 'Seguir editando',
+        tone: 'warning'
+      });
+      if (!ok) return;
+      setActiveConsultationPatient(null);
+      setEditingConsultation(null);
+      setIsAddingPatient(false);
+      setEditingPatient(null);
+    }
+    setSelectedReportConsultation(null);
+    setActiveTab(tab);
+  };
+
+  const vistaSecundariaAbierta = hayFormularioAbierto || !!selectedReportConsultation;
+
+  const renderNav = () => (
+    <nav aria-label="Secciones de la aplicación" className="space-y-4">
+      {navGroups.map(group => (
+        <div key={group.label}>
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider px-3 block mb-1.5">{group.label}</span>
+          <ul className="space-y-0.5">
+            {group.items.map(item => {
+              const active = activeTab === item.id && !vistaSecundariaAbierta;
+              const Icon = item.icon;
+              return (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    onClick={() => navigateTo(item.id)}
+                    aria-current={active ? 'page' : undefined}
+                    className={`w-full min-h-10 flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-sm font-semibold transition-colors duration-150 ${
+                      active ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2.5 min-w-0">
+                      <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-white' : item.iconClass ?? 'text-slate-500'}`} aria-hidden="true" />
+                      <span className="truncate">{item.label}</span>
+                    </span>
+                    {item.badge !== undefined && (
+                      <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full font-bold tabular-nums ${active ? 'bg-white/20 text-white' : item.badgeClass ?? 'bg-slate-100 text-slate-700'}`}>
+                        {item.badge}
+                        <span className="sr-only"> {badgeLabel(item.id)}</span>
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </nav>
+  );
+
+  const chartTooltipStyle = {
+    contentStyle: { borderRadius: 12, border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgba(15,23,42,0.08)', fontSize: 12 },
+    labelStyle: { fontWeight: 700, color: '#0f172a' }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans antialiased flex flex-col print:bg-white print:p-0">
-      
+
+      <a
+        href="#contenido"
+        onClick={(e) => { e.preventDefault(); document.getElementById('contenido')?.focus(); }}
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[90] focus:bg-white focus:text-slate-900 focus:px-4 focus:py-2.5 focus:rounded-xl focus:shadow-lg focus:text-sm focus:font-bold"
+      >
+        Saltar al contenido
+      </a>
+
+      {/* Fondo del menú móvil: tocar fuera lo cierra */}
+      {isMobileMenuOpen && (
+        <div
+          className="lg:hidden fixed inset-0 z-30 bg-slate-900/30 animate-fade-in print:hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
       {/* Top Brand Stripe */}
-      <header className="text-white py-3 px-4 shadow-sm transition-all duration-500 print:hidden" style={{ backgroundColor: activeCompany.colorSidebar }}>
+      <header className="surface-dark sticky top-0 z-40 text-white py-3 px-4 shadow-sm transition-colors duration-500 print:hidden" style={{ backgroundColor: activeCompany.colorSidebar }}>
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             {/* Burger menu button for mobile/tablet */}
             <button
+              type="button"
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="lg:hidden bg-white/10 hover:bg-white/20 text-white p-2 rounded-xl border border-white/10 transition-all cursor-pointer flex items-center justify-center"
-              aria-label="Abrir menú"
+              className="lg:hidden shrink-0 bg-white/10 hover:bg-white/20 text-white w-11 h-11 rounded-xl border border-white/15 transition-colors flex items-center justify-center"
+              aria-label={isMobileMenuOpen ? 'Cerrar menú' : 'Abrir menú'}
+              aria-expanded={isMobileMenuOpen}
+              aria-controls="menu-movil"
             >
-              {isMobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+              {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
 
             <img
               src={activeCompany.logoUrl}
-              alt={activeCompany.nombreComercial}
-              className="w-10 h-10 object-cover rounded-xl border border-white/20 shadow-xs"
+              alt=""
+              width={40}
+              height={40}
+              className="w-10 h-10 shrink-0 object-cover rounded-xl border border-white/20 shadow-xs bg-white/10"
               referrerPolicy="no-referrer"
             />
-            <div>
-              <div className="flex items-center gap-1.5">
-                <h1 className="font-extrabold text-sm tracking-tight">{activeCompany.nombreComercial}</h1>
-                <span className="bg-white/25 text-[9px] px-1.5 py-0.5 rounded-full font-mono uppercase tracking-widest font-semibold text-white/90">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <h1 className="font-extrabold text-sm sm:text-base tracking-tight truncate">{activeCompany.nombreComercial}</h1>
+                <span className="hidden sm:inline shrink-0 bg-white/20 text-[11px] px-2 py-0.5 rounded-full font-semibold text-white">
                   Hacienda CR
                 </span>
               </div>
-              <p className="text-[10px] text-white/80">Cédula: {activeCompany.identificacion} | IVA Salud: {activeCompany.ivaPorDefecto}%</p>
+              <p className="text-xs text-white/85 truncate">
+                Cédula {activeCompany.identificacion}<span className="hidden sm:inline"> · IVA salud {activeCompany.ivaPorDefecto}%</span>
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3.5">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             {/* Quick Stats Toolbar (hidden on mobile/tablet) */}
-            <div className="hidden md:flex items-center gap-4 text-xs font-semibold text-white/90 bg-black/10 px-3.5 py-1.5 rounded-xl border border-white/10">
+            <div className="hidden xl:flex items-center gap-4 text-xs font-semibold text-white/95 bg-black/10 px-3.5 py-2 rounded-xl border border-white/10">
               <div className="flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5 text-teal-300" />
-                <span>{filteredPatientsByCompany.length} Expedientes</span>
+                <Users className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>{filteredPatientsByCompany.length} expedientes</span>
               </div>
-              <div className="w-px h-3.5 bg-white/20"></div>
+              <div className="w-px h-3.5 bg-white/25" aria-hidden="true"></div>
               <div className="flex items-center gap-1.5">
-                <Activity className="w-3.5 h-3.5 text-orange-300" />
-                <span>{filteredConsultationsByCompany.length} Consultas</span>
+                <Activity className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>{filteredConsultationsByCompany.length} consultas</span>
               </div>
             </div>
 
             {/* Database connection status badge */}
             {dbStatus && (
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-white/90 bg-black/10 px-3 py-1.5 rounded-xl border border-white/10" title={dbStatus.connected ? `Conectado a MySQL en ${dbStatus.server}:${dbStatus.port}` : `Error: ${dbStatus.error || 'No se pudo establecer conexión con MySQL'}`}>
-                <span className={`w-2 h-2 rounded-full ${dbStatus.connected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-pulse'}`} />
-                <span className="text-[10px] uppercase font-bold tracking-wider">
-                  {dbStatus.connected ? 'MySQL' : 'Local Fallback'}
+              <div
+                className="flex items-center gap-1.5 text-xs font-semibold text-white/95 bg-black/10 px-2.5 sm:px-3 py-2 rounded-xl border border-white/10"
+                title={dbStatus.connected ? `Conectado a la base de datos (${dbStatus.server}:${dbStatus.port})` : `Sin conexión a la base de datos: ${dbStatus.error || 'no se pudo establecer la conexión'}. Los cambios se guardan solo en este equipo.`}
+              >
+                <span className={`w-2 h-2 rounded-full ${dbStatus.connected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} aria-hidden="true" />
+                <span className="sr-only sm:not-sr-only">
+                  {dbStatus.connected ? 'En línea' : 'Modo local'}
                 </span>
               </div>
             )}
 
             {/* User Badge & Logout */}
-            <div className="flex items-center gap-3 border-l border-white/15 pl-3.5">
-              <div className="text-right hidden sm:block">
-                <span className="text-[11px] font-extrabold text-white block">{currentUser.nombre}</span>
-                <span className="text-[9px] text-white/70 block uppercase tracking-wider font-semibold">{currentUser.rol}</span>
+            <div className="flex items-center gap-2 sm:gap-3 sm:border-l sm:border-white/15 sm:pl-3">
+              <div className="text-right hidden sm:block max-w-40">
+                <span className="text-xs font-bold text-white block truncate">{currentUser.nombre}</span>
+                <span className="text-[11px] text-white/80 block font-medium">{currentUser.rol}</span>
               </div>
               <button
+                type="button"
                 onClick={handleLogout}
-                className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-xl border border-white/10 transition-all cursor-pointer flex items-center gap-1 text-[11px] font-bold"
-                title="Cerrar Sesión"
+                className="bg-white/10 hover:bg-white/20 text-white h-11 min-w-11 px-3 rounded-xl border border-white/15 transition-colors flex items-center justify-center gap-1.5 text-xs font-bold"
+                aria-label="Cerrar sesión"
+                title="Cerrar sesión"
               >
-                <LogOut className="w-3.5 h-3.5 text-rose-300" />
+                <LogOut className="w-4 h-4" aria-hidden="true" />
                 <span className="hidden md:inline">Salir</span>
               </button>
             </div>
           </div>
         </div>
+
+        {/* Mobile Navigation Menu Drawer */}
+        {isMobileMenuOpen && (
+          <div
+            id="menu-movil"
+            className="surface-light lg:hidden absolute inset-x-0 top-full bg-white text-slate-800 border-b border-slate-200 shadow-lg p-4 max-h-[calc(100dvh-5rem)] overflow-y-auto animate-slide-down"
+          >
+            {renderNav()}
+          </div>
+        )}
       </header>
 
-      {/* Mobile Navigation Menu Drawer */}
-      {isMobileMenuOpen && (
-        <div className="lg:hidden bg-white border-b border-slate-200 p-4 shadow-md space-y-3 transition-all animate-in slide-in-from-top duration-200">
-          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest px-2 block">Panel de Control</span>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <button
-              onClick={() => { setActiveTab('dashboard'); setIsMobileMenuOpen(false); }}
-              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all ${
-                activeTab === 'dashboard'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Activity className="w-4 h-4" />
-                <span>Resumen Clínico</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('patients'); setIsMobileMenuOpen(false); }}
-              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all ${
-                activeTab === 'patients'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4" />
-                <span>Pacientes / Expedientes</span>
-              </div>
-              <span className="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                {filteredPatientsByCompany.length}
-              </span>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('agenda'); setIsMobileMenuOpen(false); }}
-              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all ${
-                activeTab === 'agenda'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-emerald-500" />
-                <span>Agenda y Calendario</span>
-              </div>
-              <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                {citas.filter(c => c.idCompania === selectedCompanyId && c.estadoCita === 'PROGRAMADA').length} act
-              </span>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('consultations'); setIsMobileMenuOpen(false); }}
-              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all ${
-                activeTab === 'consultations'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <ClipboardList className="w-4 h-4" />
-                <span>Historial de Citas</span>
-              </div>
-              <span className="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                {filteredConsultationsByCompany.length}
-              </span>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('facturacion'); setIsMobileMenuOpen(false); }}
-              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
-                activeTab === 'facturacion'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Receipt className="w-4 h-4" />
-                <span>Facturación</span>
-              </div>
-              <span className="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                {facturas.filter(f => f.idCompania === selectedCompanyId).length}
-              </span>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('cxp'); setIsMobileMenuOpen(false); }}
-              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
-                activeTab === 'cxp'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Landmark className="w-4 h-4" />
-                <span>Cuentas por Pagar</span>
-              </div>
-              <span className="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                {cxp.filter(c => c.idCompania === selectedCompanyId && c.estado === 'PENDIENTE').length}
-              </span>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('reportes-fiscales'); setIsMobileMenuOpen(false); }}
-              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
-                activeTab === 'reportes-fiscales'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>Reportes Fiscales</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('reporteria'); setIsMobileMenuOpen(false); }}
-              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
-                activeTab === 'reporteria'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <BarChart3 className="w-4 h-4" />
-                <span>Reportería</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('branding'); setIsMobileMenuOpen(false); }}
-              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
-                activeTab === 'branding'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Building2 className="w-4 h-4" />
-                <span>Personalizar Clínica</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('mi-perfil'); setIsMobileMenuOpen(false); }}
-              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
-                activeTab === 'mi-perfil'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <MapPin className="w-4 h-4" />
-                <span>Mi Perfil</span>
-              </div>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('reservas-online'); setIsMobileMenuOpen(false); }}
-              className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
-                activeTab === 'reservas-online'
-                  ? 'bg-slate-900 text-white shadow-xs'
-                  : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Share2 className="w-4 h-4" />
-                <span>Reservas en Línea</span>
-              </div>
-            </button>
-
-            {currentUser?.idCompania === 7 && currentUser?.rol === 'Administrador' && (
-              <button
-                onClick={() => { setActiveTab('saas-admin'); setIsMobileMenuOpen(false); }}
-                className={`flex items-center justify-between py-2.5 px-3.5 rounded-xl text-xs font-semibold transition-all sm:col-span-2 ${
-                  activeTab === 'saas-admin'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 bg-slate-50 hover:bg-slate-100'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Lock className="w-4 h-4 text-amber-500" />
-                  <span>Administración SaaS</span>
-                </div>
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Primary Layout Frame */}
+      <div id="contenido" tabIndex={-1} className="flex-1 flex flex-col focus:outline-hidden">
       {selectedReportConsultation ? (
         // Open printable Clinical Report view
         <ReportView
@@ -1385,306 +1441,126 @@ export default function App() {
       ) : (
         // Main Workspace Dashboard & Tab Controls
         <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-6 print:hidden">
-          
+
           {/* Navigation Controls Sidebar (Left Column) - Hidden on Mobile/Tablet */}
-          <aside className="hidden lg:block lg:col-span-3 space-y-4">
-            
-            {/* Nav Menu */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3.5 space-y-1">
-              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest px-2 block mb-2">Panel de Control</span>
-              
-              <button
-                onClick={() => setActiveTab('dashboard')}
-                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'dashboard'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Activity className="w-4 h-4" />
-                  <span>Resumen Clínico</span>
-                </div>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('patients')}
-                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'patients'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4" />
-                  <span>Pacientes / Expedientes</span>
-                </div>
-                <span className="bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                  {filteredPatientsByCompany.length}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('agenda')}
-                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'agenda'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-emerald-500" />
-                  <span>Agenda y Calendario</span>
-                </div>
-                <span className="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                  {citas.filter(c => c.idCompania === selectedCompanyId && c.estadoCita === 'PROGRAMADA').length} act
-                </span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('consultations')}
-                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'consultations'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <ClipboardList className="w-4 h-4" />
-                  <span>Historial de Citas</span>
-                </div>
-                <span className="bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                  {filteredConsultationsByCompany.length}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('facturacion')}
-                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'facturacion'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Receipt className="w-4 h-4" />
-                  <span>Facturación</span>
-                </div>
-                <span className="bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                  {facturas.filter(f => f.idCompania === selectedCompanyId).length}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('cxp')}
-                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'cxp'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Landmark className="w-4 h-4" />
-                  <span>Cuentas por Pagar</span>
-                </div>
-                <span className="bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                  {cxp.filter(c => c.idCompania === selectedCompanyId && c.estado === 'PENDIENTE').length}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('reportes-fiscales')}
-                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'reportes-fiscales'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <FileSpreadsheet className="w-4 h-4" />
-                  <span>Reportes Fiscales</span>
-                </div>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('reporteria')}
-                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'reporteria'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <BarChart3 className="w-4 h-4" />
-                  <span>Reportería</span>
-                </div>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('branding')}
-                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'branding'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Building2 className="w-4 h-4" />
-                  <span>Personalizar Clínica</span>
-                </div>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('mi-perfil')}
-                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'mi-perfil'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <MapPin className="w-4 h-4" />
-                  <span>Mi Perfil</span>
-                </div>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('reservas-online')}
-                className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
-                  activeTab === 'reservas-online'
-                    ? 'bg-slate-900 text-white shadow-xs'
-                    : 'text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Share2 className="w-4 h-4" />
-                  <span>Reservas en Línea</span>
-                </div>
-              </button>
-
-              {currentUser?.idCompania === 7 && currentUser?.rol === 'Administrador' && (
-                <button
-                  onClick={() => setActiveTab('saas-admin')}
-                  className={`w-full flex items-center justify-between py-2 px-3 rounded-xl text-xs font-semibold transition-all ${
-                    activeTab === 'saas-admin'
-                      ? 'bg-slate-900 text-white shadow-xs'
-                      : 'text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Lock className="w-4 h-4 text-amber-500" />
-                    <span>Administración SaaS</span>
-                  </div>
-                </button>
-              )}
+          <aside className="hidden lg:block lg:col-span-3">
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3 sticky top-24">
+              {renderNav()}
             </div>
           </aside>
 
           {/* Core Content Region */}
-          <main className="col-span-12 lg:col-span-9 space-y-6">
+          <main className="col-span-12 lg:col-span-9 space-y-6 min-w-0">
 
             {/* ================= 1. CLINICAL DASHBOARD ================= */}
             {activeTab === 'dashboard' && (
               <div className="space-y-6">
-                
+
                 {/* Banner */}
                 <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div>
-                    <h2 className="text-lg font-bold text-slate-900">Resumen y Desempeño Clínico</h2>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Control unificado para el profesional en nutrición humana y fisioterapeuta kinesiología
+                    <h2 className="text-lg font-bold text-slate-900">{saludo}, {nombreSaludo}</h2>
+                    <p className="text-sm text-slate-600 mt-0.5">
+                      {citasHoy === 0
+                        ? 'No tiene citas programadas para hoy.'
+                        : `Hoy tiene ${citasHoy} cita${citasHoy === 1 ? '' : 's'} en agenda.`}
                     </p>
                   </div>
-                  <button
-                    onClick={() => setIsAddingPatient(true)}
-                    className="text-white text-xs font-semibold py-2 px-4 rounded-xl shadow-md transition-all flex items-center gap-1.5"
-                    style={{ backgroundColor: activeCompany.colorPrimario }}
-                  >
-                    <Plus className="w-4 h-4" />
-                    Nuevo Expediente
-                  </button>
+                  <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={() => navigateTo('agenda')}
+                      className="flex-1 sm:flex-none min-h-11 whitespace-nowrap bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-sm font-semibold px-3 sm:px-4 rounded-xl transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Calendar className="w-4 h-4" aria-hidden="true" />
+                      Ver agenda
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsAddingPatient(true)}
+                      className="flex-1 sm:flex-none min-h-11 whitespace-nowrap text-white text-sm font-semibold px-3 sm:px-4 rounded-xl shadow-sm hover:brightness-110 transition-[filter] flex items-center justify-center gap-2"
+                      style={{ backgroundColor: activeCompany.colorPrimario }}
+                    >
+                      <Plus className="w-4 h-4" aria-hidden="true" />
+                      Nuevo expediente
+                    </button>
+                  </div>
                 </div>
 
                 {/* Dashboard Widgets */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs text-center">
-                    <span className="text-[10px] text-slate-500 font-extrabold uppercase">Expedientes Totales</span>
-                    <span className="text-2xl font-black text-slate-800 block mt-1">{filteredPatientsByCompany.length}</span>
-                  </div>
-                  {(activeCompany.perfilCompania === 'Nutrición' || activeCompany.perfilCompania === 'Ambas') && (
-                    <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs text-center">
-                      <span className="text-[10px] text-slate-500 font-extrabold uppercase">Citas Nutrición</span>
-                      <span className="text-2xl font-black text-rose-600 block mt-1">
-                        {filteredConsultationsByCompany.filter(c => c.tipo === 'Nutrición').length}
-                      </span>
-                    </div>
-                  )}
-                  {(activeCompany.perfilCompania === 'Fisioterapia' || activeCompany.perfilCompania === 'Ambas') && (
-                    <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs text-center">
-                      <span className="text-[10px] text-slate-500 font-extrabold uppercase">Citas Fisioterapia</span>
-                      <span className="text-2xl font-black text-emerald-600 block mt-1">
-                        {filteredConsultationsByCompany.filter(c => c.tipo === 'Fisioterapia').length}
-                      </span>
-                    </div>
-                  )}
-                  <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs text-center">
-                    <span className="text-[10px] text-slate-500 font-extrabold uppercase">Tasa Promedio IVA</span>
-                    <span className="text-2xl font-black text-slate-800 block mt-1">{activeCompany.ivaPorDefecto}%</span>
-                  </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                  {[
+                    { label: 'Citas de hoy', value: citasHoy, color: 'text-slate-900', tab: 'agenda' as TabId, show: true },
+                    { label: 'Expedientes', value: filteredPatientsByCompany.length, color: 'text-slate-900', tab: 'patients' as TabId, show: true },
+                    { label: 'Consultas de nutrición', value: filteredConsultationsByCompany.filter(c => c.tipo === 'Nutrición').length, color: 'text-rose-700', tab: 'consultations' as TabId, show: muestraNutricion },
+                    { label: 'Consultas de fisioterapia', value: filteredConsultationsByCompany.filter(c => c.tipo === 'Fisioterapia').length, color: 'text-emerald-700', tab: 'consultations' as TabId, show: muestraFisioterapia }
+                  ].filter(k => k.show).map(k => (
+                    <button
+                      key={k.label}
+                      type="button"
+                      onClick={() => navigateTo(k.tab)}
+                      className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs text-left flex flex-col justify-between hover:border-slate-300 hover:shadow-sm transition-[border-color,box-shadow] duration-150"
+                    >
+                      <span className="text-xs text-slate-600 font-semibold block">{k.label}</span>
+                      <span className={`text-2xl sm:text-3xl font-extrabold block mt-1 tabular-nums ${k.color}`}>{k.value}</span>
+                    </button>
+                  ))}
                 </div>
 
                 {/* Health trends - weight tracking and pain distribution */}
                 <div className={`grid grid-cols-1 ${activeCompany.perfilCompania === 'Ambas' ? 'md:grid-cols-2' : 'md:grid-cols-1'} gap-6`}>
-                  
+
                   {/* Weight history tracking chart */}
-                  {(activeCompany.perfilCompania === 'Nutrición' || activeCompany.perfilCompania === 'Ambas') && (
-                    <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col justify-between">
+                  {muestraNutricion && (
+                    <section className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs flex flex-col justify-between" aria-labelledby="grafico-peso">
                       <div>
-                        <h3 className="text-xs font-bold uppercase text-slate-400 tracking-wider">Evolución de Peso (kg) - Nutrición</h3>
-                        <p className="text-[11px] text-slate-500 mb-4">Pacientes bajo plan nutricional activo</p>
+                        <h3 id="grafico-peso" className="text-sm font-bold text-slate-900">Evolución de peso (kg)</h3>
+                        <p className="text-xs text-slate-600 mb-4">Pacientes con plan nutricional activo</p>
                       </div>
-                      <div className="h-48 w-full">
-                        {getWeightHistoryData().length === 0 ? (
-                          <div className="h-full flex items-center justify-center text-xs text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                            No hay consultas de Nutrición aún para graficar
+                      <div className="h-52 w-full">
+                        {weightHistoryData.length === 0 ? (
+                          <div className="h-full flex flex-col items-center justify-center gap-1 text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200 px-4 text-center">
+                            <Apple className="w-5 h-5 text-slate-400" aria-hidden="true" />
+                            Aún no hay consultas de nutrición para graficar.
                           </div>
                         ) : (
                           <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={getWeightHistoryData()}>
-                              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                              <XAxis dataKey="fecha" tick={{ fontSize: 10 }} />
-                              <YAxis tick={{ fontSize: 10 }} domain={['auto', 'auto']} />
-                              <Tooltip />
-                              <Line type="monotone" dataKey="peso" stroke={activeCompany.colorPrimario} strokeWidth={2} activeDot={{ r: 8 }} />
+                            <LineChart data={weightHistoryData}>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                              <XAxis dataKey="fecha" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={{ stroke: '#cbd5e1' }} />
+                              <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} domain={['auto', 'auto']} width={36} />
+                              <Tooltip {...chartTooltipStyle} formatter={(v) => [`${v} kg`, 'Peso']} />
+                              <Line type="monotone" dataKey="peso" stroke={activeCompany.colorPrimario} strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 6 }} />
                             </LineChart>
                           </ResponsiveContainer>
                         )}
                       </div>
-                    </div>
+                    </section>
                   )}
 
                   {/* Pain score distribution */}
-                  {(activeCompany.perfilCompania === 'Fisioterapia' || activeCompany.perfilCompania === 'Ambas') && (
-                    <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col justify-between">
+                  {muestraFisioterapia && (
+                    <section className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs flex flex-col justify-between" aria-labelledby="grafico-eva">
                       <div>
-                        <h3 className="text-xs font-bold uppercase text-slate-400 tracking-wider">Distribución Escala Dolor (EVA) - Fisioterapia</h3>
-                        <p className="text-[11px] text-slate-500 mb-4">Niveles registrados en terapia física</p>
+                        <h3 id="grafico-eva" className="text-sm font-bold text-slate-900">Distribución del dolor (escala EVA)</h3>
+                        <p className="text-xs text-slate-600 mb-3">Niveles registrados en terapia física</p>
                       </div>
-                      <div className="h-48 w-full">
-                        {filteredConsultationsByCompany.filter(c => c.tipo === 'Fisioterapia').length === 0 ? (
-                          <div className="h-full flex items-center justify-center text-xs text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                            No hay registros de dolor EVA aún para graficar
+                      <div className="h-52 w-full">
+                        {!hayConsultasFisio ? (
+                          <div className="h-full flex flex-col items-center justify-center gap-1 text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200 px-4 text-center">
+                            <Dumbbell className="w-5 h-5 text-slate-400" aria-hidden="true" />
+                            Aún no hay registros de dolor EVA para graficar.
                           </div>
                         ) : (
                           <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={getEvaDistribution()}>
-                              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                              <XAxis dataKey="escala" tick={{ fontSize: 9 }} />
-                              <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-                              <Tooltip />
-                              <Bar dataKey="cantidad" fill="#0f766e">
-                                {getEvaDistribution().map((entry, index) => {
-                                  const color = entry.score >= 8 ? '#f43f5e' : entry.score >= 5 ? '#f59e0b' : '#10b981';
+                            <BarChart data={evaDistribution}>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                              <XAxis dataKey="score" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={{ stroke: '#cbd5e1' }} />
+                              <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} allowDecimals={false} width={28} />
+                              <Tooltip {...chartTooltipStyle} cursor={{ fill: '#f1f5f9' }} labelFormatter={(l) => `EVA ${l}`} formatter={(v) => [v, 'Consultas']} />
+                              <Bar dataKey="cantidad" radius={[6, 6, 0, 0]}>
+                                {evaDistribution.map((entry, index) => {
+                                  const color = entry.score >= 8 ? '#e11d48' : entry.score >= 5 ? '#d97706' : '#059669';
                                   return <Cell key={`cell-${index}`} fill={color} />;
                                 })}
                               </Bar>
@@ -1692,58 +1568,78 @@ export default function App() {
                           </ResponsiveContainer>
                         )}
                       </div>
-                    </div>
+                      {hayConsultasFisio && (
+                        <ul className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-slate-600" aria-label="Leyenda">
+                          <li className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-600" aria-hidden="true" />Leve (1–4)</li>
+                          <li className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-amber-600" aria-hidden="true" />Moderado (5–7)</li>
+                          <li className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-rose-600" aria-hidden="true" />Severo (8–10)</li>
+                        </ul>
+                      )}
+                    </section>
                   )}
 
                 </div>
 
                 {/* Patient Overview Summary list */}
-                <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-                  <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                    <span className="text-xs font-bold uppercase text-slate-500">Últimos Pacientes Atendidos</span>
+                <section className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden" aria-labelledby="ultimos-pacientes">
+                  <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/60">
+                    <h3 id="ultimos-pacientes" className="text-sm font-bold text-slate-900">Últimos pacientes atendidos</h3>
                     <button
-                      onClick={() => setActiveTab('patients')}
-                      className="text-xs font-bold hover:underline"
+                      type="button"
+                      onClick={() => navigateTo('patients')}
+                      className="text-sm font-semibold hover:underline underline-offset-2 px-2 py-1 -mr-2 rounded-lg"
                       style={{ color: activeCompany.colorPrimario }}
                     >
                       Ver todos
                     </button>
                   </div>
-                  <div className="divide-y divide-slate-100">
-                    {filteredPatientsByCompany.slice(0, 3).map((p) => {
-                      const latestConsult = filteredConsultationsByCompany.find(c => c.idPaciente === p.id);
-                      return (
-                        <div key={p.id} className="p-4 flex items-center justify-between hover:bg-slate-50/30 transition-all text-xs">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-700 uppercase">
-                              {p.nombreCompleto.charAt(0)}
+                  {pacientesRecientes.length === 0 ? (
+                    <div className="p-8 text-center">
+                      <p className="text-sm text-slate-600">Aún no hay expedientes registrados.</p>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingPatient(true)}
+                        className="mt-3 min-h-11 text-white text-sm font-semibold px-4 rounded-xl inline-flex items-center gap-2 hover:brightness-110 transition-[filter]"
+                        style={{ backgroundColor: activeCompany.colorPrimario }}
+                      >
+                        <Plus className="w-4 h-4" aria-hidden="true" />
+                        Crear el primer expediente
+                      </button>
+                    </div>
+                  ) : (
+                    <ul className="divide-y divide-slate-100">
+                      {pacientesRecientes.map((p) => {
+                        const latestConsult = ultimaConsultaPorPaciente.get(p.id);
+                        return (
+                          <li key={p.id} className="px-4 sm:px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/60 transition-colors">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-9 h-9 shrink-0 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-700 uppercase text-sm" aria-hidden="true">
+                                {p.nombreCompleto.charAt(0)}
+                              </div>
+                              <div className="min-w-0">
+                                <span className="font-semibold text-slate-900 block text-sm truncate">{p.nombreCompleto}</span>
+                                <span className="text-xs text-slate-600 block">
+                                  {latestConsult ? `Última cita: ${latestConsult.fecha} · ${latestConsult.tipo}` : 'Sin consultas registradas'}
+                                </span>
+                              </div>
                             </div>
-                            <div>
-                              <span className="font-bold text-slate-800 block text-xs">{p.nombreCompleto}</span>
-                              <span className="text-[10px] text-slate-500 block font-mono">ID: {p.identificacion}</span>
-                            </div>
-                          </div>
-                          
-                          <div className="flex items-center gap-4">
-                            <span className="text-slate-500 font-medium">
-                              {latestConsult ? `Última cita: ${latestConsult.fecha} (${latestConsult.tipo})` : 'Sin consultas registradas'}
-                            </span>
+
                             <button
+                              type="button"
                               onClick={() => {
-                                const matched = filteredConsultationsByCompany.find(c => c.idPaciente === p.id);
-                                if (matched) setSelectedReportConsultation(matched);
+                                if (latestConsult) setSelectedReportConsultation(latestConsult);
                                 else setActiveConsultationPatient(p);
                               }}
-                              className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1 rounded-md text-[10px] font-semibold"
+                              className="self-start sm:self-auto shrink-0 min-h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 px-3.5 rounded-lg text-xs font-semibold transition-colors"
                             >
-                              {latestConsult ? 'Ver Ficha' : 'Nueva Consulta'}
+                              {latestConsult ? 'Ver ficha' : 'Nueva consulta'}
                             </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </section>
 
               </div>
             )}
@@ -1751,63 +1647,106 @@ export default function App() {
             {/* ================= 2. PATIENTS DIRECTORY ================= */}
             {activeTab === 'patients' && (
               <div className="space-y-6">
-                
+
                 {/* Search & Actions toolbar */}
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row justify-between items-center gap-3">
+                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
                   <div className="relative w-full sm:max-w-md">
+                    <label htmlFor="buscar-pacientes" className="sr-only">Buscar pacientes</label>
+                    <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
                     <input
-                      type="text"
-                      placeholder="Buscar por nombre o número de cédula..."
+                      id="buscar-pacientes"
+                      type="search"
+                      placeholder="Buscar por nombre o cédula…"
                       value={patientSearch}
                       onChange={(e) => setPatientSearch(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-1.5 pl-9 pr-4 text-xs sm:text-sm text-slate-800 focus:outline-hidden"
+                      autoComplete="off"
+                      className="w-full min-h-11 bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-10 text-sm text-slate-800 placeholder:text-slate-500 focus:bg-white transition-colors [&::-webkit-search-cancel-button]:hidden"
                     />
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                    {patientSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setPatientSearch('')}
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100"
+                        aria-label="Limpiar búsqueda"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
 
                   <button
+                    type="button"
                     onClick={() => setIsAddingPatient(true)}
-                    className="w-full sm:w-auto text-white text-xs font-semibold py-2 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5"
+                    className="w-full sm:w-auto min-h-11 text-white text-sm font-semibold px-4 rounded-xl shadow-sm hover:brightness-110 transition-[filter] flex items-center justify-center gap-2"
                     style={{ backgroundColor: activeCompany.colorPrimario }}
                   >
-                    <Plus className="w-4 h-4" />
-                    Registrar Expediente
+                    <Plus className="w-4 h-4" aria-hidden="true" />
+                    Registrar expediente
                   </button>
                 </div>
 
+                {patientSearch && searchedPatients.length > 0 && (
+                  <p className="text-xs text-slate-600 -mt-3" role="status">
+                    {searchedPatients.length} resultado{searchedPatients.length === 1 ? '' : 's'} para “{patientSearch}”
+                  </p>
+                )}
+
                 {/* Catalog list */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {searchedPatients.length === 0 ? (
-                    <div className="col-span-2 text-center py-12 text-slate-400 bg-white rounded-2xl border border-dashed border-slate-200">
-                      No se encontraron expedientes para "{patientSearch}"
-                    </div>
-                  ) : (
-                    searchedPatients.map((p) => {
+                {searchedPatients.length === 0 ? (
+                  <div className="text-center py-12 px-4 bg-white rounded-2xl border border-dashed border-slate-300">
+                    <Users className="w-8 h-8 text-slate-400 mx-auto mb-2" aria-hidden="true" />
+                    {patientSearch ? (
+                      <>
+                        <p className="text-sm font-semibold text-slate-800">Ningún expediente coincide con “{patientSearch}”</p>
+                        <p className="text-sm text-slate-600 mt-1">Revise la ortografía o busque por número de cédula.</p>
+                        <button
+                          type="button"
+                          onClick={() => setPatientSearch('')}
+                          className="mt-4 min-h-10 px-4 rounded-xl text-sm font-semibold bg-slate-100 hover:bg-slate-200 text-slate-800 transition-colors"
+                        >
+                          Limpiar búsqueda
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-semibold text-slate-800">Aún no hay expedientes</p>
+                        <p className="text-sm text-slate-600 mt-1">Registre al primer paciente para empezar a llevar su historial.</p>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {searchedPatients.map((p) => {
+                      const ultimaConsulta = ultimaConsultaPorPaciente.get(p.id);
                       return (
-                        <div key={p.id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between gap-4">
-                          <div className="flex justify-between items-start">
-                            <div className="flex gap-3">
-                              <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center font-black text-slate-600 uppercase text-sm">
+                        <article key={p.id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between gap-4" aria-labelledby={`paciente-${p.id}`}>
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="flex gap-3 min-w-0">
+                              <div className="w-10 h-10 shrink-0 rounded-full bg-slate-100 flex items-center justify-center font-extrabold text-slate-700 uppercase text-sm" aria-hidden="true">
                                 {p.nombreCompleto.charAt(0)}
                               </div>
-                              <div>
-                                <h3 className="font-bold text-slate-800 text-sm">{p.nombreCompleto}</h3>
-                                <p className="text-[10px] text-slate-400 font-mono">ID: {p.identificacion} ({p.tipoIdentificacion})</p>
-                                <p className="text-[10px] text-slate-500 mt-1">Ocupación: {p.ocupacion || 'Ninguna registrada'}</p>
+                              <div className="min-w-0">
+                                <h3 id={`paciente-${p.id}`} className="font-bold text-slate-900 text-sm truncate">{p.nombreCompleto}</h3>
+                                <p className="text-xs text-slate-600 font-mono">{p.identificacion} ({p.tipoIdentificacion})</p>
+                                <p className="text-xs text-slate-600 mt-0.5 truncate">Ocupación: {p.ocupacion || 'No registrada'}</p>
                               </div>
                             </div>
 
-                            <div className="flex gap-1">
+                            <div className="flex -mr-1.5 -mt-1.5 shrink-0">
                               <button
+                                type="button"
                                 onClick={() => setEditingPatient(p)}
-                                className="p-1 text-slate-500 hover:text-teal-600 hover:bg-slate-50 rounded-lg"
+                                className="p-2.5 text-slate-500 hover:text-teal-700 hover:bg-slate-100 rounded-xl transition-colors"
+                                aria-label={`Editar datos de ${p.nombreCompleto}`}
                                 title="Editar datos personales"
                               >
                                 <Edit className="w-4 h-4" />
                               </button>
                               <button
+                                type="button"
                                 onClick={() => handleDeletePatient(p.id)}
-                                className="p-1 text-slate-500 hover:text-rose-600 hover:bg-slate-50 rounded-lg"
+                                className="p-2.5 text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors"
+                                aria-label={`Eliminar expediente de ${p.nombreCompleto}`}
                                 title="Eliminar paciente"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -1816,53 +1755,55 @@ export default function App() {
                           </div>
 
                           {/* Quick details & Clinical summary highlights */}
-                          <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-150 text-[11px] grid grid-cols-2 gap-2 text-slate-600">
+                          <dl className="bg-slate-50 rounded-xl p-3 border border-slate-100 text-xs grid grid-cols-2 gap-2 text-slate-700">
                             <div>
-                              <span className="font-semibold block text-slate-400 uppercase text-[9px]">Gastrointestinal</span>
-                              <p className="font-semibold text-slate-700">
-                                {p.gastritis ? 'Gastritis/Reflujo (+)' : 'Estómago Normal'}
-                              </p>
+                              <dt className="font-semibold text-slate-500 uppercase text-[11px] tracking-wide">Gastrointestinal</dt>
+                              <dd className="font-semibold text-slate-800">
+                                {p.gastritis ? 'Gastritis/Reflujo (+)' : 'Estómago normal'}
+                              </dd>
                             </div>
                             <div>
-                              <span className="font-semibold block text-slate-400 uppercase text-[9px]">Cardio / Diabetes</span>
-                              <p className="font-semibold text-slate-700">
+                              <dt className="font-semibold text-slate-500 uppercase text-[11px] tracking-wide">Cardio / Diabetes</dt>
+                              <dd className="font-semibold text-slate-800">
                                 {p.diabetes ? 'Diabetes (+)' : p.hipertension ? 'Hipertensión (+)' : 'Normal'}
-                              </p>
+                              </dd>
                             </div>
-                            <div className="col-span-2 border-t pt-1 border-slate-200">
-                              <span className="font-semibold block text-slate-400 uppercase text-[9px]">Lesiones Previas</span>
-                              <p className="text-slate-700 truncate" title={p.fracturas || p.esguinces}>
+                            <div className="col-span-2 border-t pt-2 border-slate-200">
+                              <dt className="font-semibold text-slate-500 uppercase text-[11px] tracking-wide">Lesiones previas</dt>
+                              <dd className="text-slate-800 truncate" title={p.fracturas || p.esguinces}>
                                 {p.fracturas || p.esguinces || 'Ninguna reportada'}
-                              </p>
+                              </dd>
                             </div>
-                          </div>
+                          </dl>
 
-                          <div className="flex gap-2 text-xs">
+                          <div className="flex gap-2 text-sm">
                             <button
+                              type="button"
+                              disabled={!ultimaConsulta}
                               onClick={() => {
-                                const matched = filteredConsultationsByCompany.find(c => c.idPaciente === p.id);
-                                if (matched) { setEditingConsultation(matched); setActiveConsultationPatient(p); }
-                                else alert("Este paciente aún no registra citas. Cree una primero.");
+                                if (ultimaConsulta) { setEditingConsultation(ultimaConsulta); setActiveConsultationPatient(p); }
                               }}
-                              className="flex-1 py-2 rounded-xl font-bold transition-all border flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200"
+                              title={ultimaConsulta ? `Editar la consulta del ${ultimaConsulta.fecha}` : 'Este paciente aún no tiene consultas registradas'}
+                              className="flex-1 min-h-10 rounded-xl font-semibold transition-colors border flex items-center justify-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 border-slate-200 disabled:opacity-50 disabled:hover:bg-white"
                             >
-                              <Edit className="w-3.5 h-3.5" />
-                              Editar Cita
+                              <Edit className="w-4 h-4" aria-hidden="true" />
+                              Editar última
                             </button>
                             <button
+                              type="button"
                               onClick={() => { setEditingConsultation(null); setActiveConsultationPatient(p); }}
-                              className="flex-1 text-white py-2 rounded-xl font-bold transition-all shadow-xs flex items-center justify-center gap-1.5"
+                              className="flex-1 min-h-10 text-white rounded-xl font-semibold shadow-xs hover:brightness-110 transition-[filter] flex items-center justify-center gap-1.5"
                               style={{ backgroundColor: activeCompany.colorPrimario }}
                             >
-                              <Plus className="w-3.5 h-3.5" />
-                              Registrar Cita
+                              <Plus className="w-4 h-4" aria-hidden="true" />
+                              Nueva consulta
                             </button>
                           </div>
-                        </div>
+                        </article>
                       );
-                    })
-                  )}
-                </div>
+                    })}
+                  </div>
+                )}
 
               </div>
             )}
@@ -1870,62 +1811,100 @@ export default function App() {
             {/* ================= 3. CONSULTATIONS TIMELINE ================= */}
             {activeTab === 'consultations' && (
               <div className="space-y-6">
-                
+
                 {/* Search */}
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row justify-between items-center gap-3">
+                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
                   <div className="relative w-full sm:max-w-md">
+                    <label htmlFor="buscar-consultas" className="sr-only">Buscar consultas</label>
+                    <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
                     <input
-                      type="text"
-                      placeholder="Filtrar citas por motivo o diagnóstico..."
+                      id="buscar-consultas"
+                      type="search"
+                      placeholder="Buscar por paciente o motivo…"
                       value={consultationSearch}
                       onChange={(e) => setConsultationSearch(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-1.5 pl-9 pr-4 text-xs sm:text-sm text-slate-800 focus:outline-hidden"
+                      autoComplete="off"
+                      className="w-full min-h-11 bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-10 text-sm text-slate-800 placeholder:text-slate-500 focus:bg-white transition-colors [&::-webkit-search-cancel-button]:hidden"
                     />
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                    {consultationSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setConsultationSearch('')}
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100"
+                        aria-label="Limpiar búsqueda"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
+                  <span className="text-xs text-slate-600 font-medium" role="status">
+                    {consultasOrdenadas.length} consulta{consultasOrdenadas.length === 1 ? '' : 's'}
+                  </span>
                 </div>
 
                 {/* Timeline */}
                 <div className="space-y-4">
-                  {searchedConsultations.length === 0 ? (
-                    <div className="text-center py-12 text-slate-400 bg-white rounded-2xl border border-dashed border-slate-200">
-                      No se encontraron registros de citas para "{consultationSearch}"
+                  {consultasOrdenadas.length === 0 ? (
+                    <div className="text-center py-12 px-4 bg-white rounded-2xl border border-dashed border-slate-300">
+                      <ClipboardList className="w-8 h-8 text-slate-400 mx-auto mb-2" aria-hidden="true" />
+                      {consultationSearch ? (
+                        <>
+                          <p className="text-sm font-semibold text-slate-800">Ninguna consulta coincide con “{consultationSearch}”</p>
+                          <button
+                            type="button"
+                            onClick={() => setConsultationSearch('')}
+                            className="mt-4 min-h-10 px-4 rounded-xl text-sm font-semibold bg-slate-100 hover:bg-slate-200 text-slate-800 transition-colors"
+                          >
+                            Limpiar búsqueda
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-sm font-semibold text-slate-800">Aún no hay consultas registradas</p>
+                          <p className="text-sm text-slate-600 mt-1">Inicie una desde la agenda o desde el expediente del paciente.</p>
+                        </>
+                      )}
                     </div>
                   ) : (
-                    searchedConsultations.map((c) => {
+                    consultasOrdenadas.map((c) => {
                       const matchedPatient = patients.find(p => p.id === c.idPaciente);
                       const isNut = c.tipo === 'Nutrición';
+                      const TipoIcon = isNut ? Apple : Dumbbell;
                       return (
-                        <div key={c.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs hover:border-slate-300 transition-all">
-                          <div className="flex flex-wrap justify-between items-start gap-4">
-                            <div className="flex gap-4 min-w-0">
-                              <span className={`px-2.5 py-1.5 rounded-xl font-bold text-xs uppercase tracking-wider shrink-0 text-center flex flex-col justify-center ${
+                        <article key={c.id} className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs hover:border-slate-300 transition-colors">
+                          <div className="flex flex-wrap justify-between items-start gap-3">
+                            <div className="flex gap-3 sm:gap-4 min-w-0">
+                              <span className={`w-14 shrink-0 px-1 py-2 rounded-xl font-bold text-center flex flex-col items-center justify-center gap-1 ${
                                 isNut ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
                               }`}>
-                                <span>{isNut ? '🍎' : '💪'}</span>
-                                <span className="text-[9px] font-extrabold mt-0.5">{c.tipo}</span>
+                                <TipoIcon className="w-4 h-4" aria-hidden="true" />
+                                <span className="text-[11px] leading-none">{isNut ? 'Nutrición' : 'Fisio'}</span>
                               </span>
 
-                              <div>
-                                <span className="text-[10px] text-slate-400 font-mono block mb-1">Folio: #{c.id.toString().slice(-6)} | Cita: {c.fecha}</span>
-                                <h4 className="font-bold text-slate-800 text-sm">
-                                  {matchedPatient ? matchedPatient.nombreCompleto : 'Paciente Desconocido'}
-                                </h4>
-                                <p className="text-xs text-slate-600 mt-1 font-semibold">Motivo: {c.motivo}</p>
+                              <div className="min-w-0">
+                                <span className="text-xs text-slate-600 font-mono block mb-0.5">Folio #{c.id.toString().slice(-6)} · {c.fecha}</span>
+                                <h3 className="font-bold text-slate-900 text-sm">
+                                  {matchedPatient ? matchedPatient.nombreCompleto : 'Paciente desconocido'}
+                                </h3>
+                                <p className="text-sm text-slate-700 mt-0.5">Motivo: {c.motivo}</p>
                               </div>
                             </div>
 
-                            <div className="flex gap-1.5">
+                            <div className="flex gap-1.5 w-full sm:w-auto">
                               <button
+                                type="button"
                                 onClick={() => setSelectedReportConsultation(c)}
-                                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs py-1.5 px-3.5 rounded-lg flex items-center gap-1.5 border border-slate-200"
+                                className="flex-1 sm:flex-none min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-sm px-3.5 rounded-xl flex items-center justify-center gap-1.5 border border-slate-200 transition-colors"
                               >
-                                <Printer className="w-3.5 h-3.5" />
-                                Reporte de Cita
+                                <Printer className="w-4 h-4" aria-hidden="true" />
+                                Ver reporte
                               </button>
                               <button
+                                type="button"
                                 onClick={() => handleDeleteConsultation(c.id)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-50 rounded-lg"
+                                className="min-h-10 min-w-10 flex items-center justify-center text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors"
+                                aria-label={`Eliminar consulta de ${matchedPatient?.nombreCompleto ?? 'paciente'} del ${c.fecha}`}
+                                title="Eliminar consulta"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
@@ -1934,47 +1913,47 @@ export default function App() {
 
                           {/* Quick parameters readout */}
                           {isNut && c.antropometria && (
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-150">
+                            <dl className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 text-xs bg-slate-50 p-3 rounded-xl border border-slate-100">
                               <div>
-                                <span className="text-slate-400 block font-bold">Peso:</span>
-                                <span className="font-bold text-slate-700">{c.antropometria.peso} kg</span>
+                                <dt className="text-slate-600 font-semibold">Peso</dt>
+                                <dd className="font-bold text-slate-900 tabular-nums">{c.antropometria.peso} kg</dd>
                               </div>
                               <div>
-                                <span className="text-slate-400 block font-bold">IMC:</span>
-                                <span className="font-bold text-slate-700">{c.antropometria.imc}</span>
+                                <dt className="text-slate-600 font-semibold">IMC</dt>
+                                <dd className="font-bold text-slate-900 tabular-nums">{c.antropometria.imc}</dd>
                               </div>
                               <div>
-                                <span className="text-slate-400 block font-bold">Grasa:</span>
-                                <span className="font-bold text-slate-700">{c.antropometria.grasaCorporal}%</span>
+                                <dt className="text-slate-600 font-semibold">Grasa</dt>
+                                <dd className="font-bold text-slate-900 tabular-nums">{c.antropometria.grasaCorporal}%</dd>
                               </div>
                               <div>
-                                <span className="text-slate-400 block font-bold">Masa Musc:</span>
-                                <span className="font-bold text-slate-700">{c.antropometria.masaMuscular} kg</span>
+                                <dt className="text-slate-600 font-semibold">Masa muscular</dt>
+                                <dd className="font-bold text-slate-900 tabular-nums">{c.antropometria.masaMuscular} kg</dd>
                               </div>
-                            </div>
+                            </dl>
                           )}
 
                           {!isNut && c.fisioterapia && (
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 text-[11px] bg-slate-50 p-2.5 rounded-xl border border-slate-150">
+                            <dl className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 text-xs bg-slate-50 p-3 rounded-xl border border-slate-100">
                               <div>
-                                <span className="text-slate-400 block font-bold">Zona Dolor:</span>
-                                <span className="font-bold text-slate-700 uppercase">{c.fisioterapia.zonaDolor}</span>
+                                <dt className="text-slate-600 font-semibold">Zona de dolor</dt>
+                                <dd className="font-bold text-slate-900 uppercase">{c.fisioterapia.zonaDolor}</dd>
                               </div>
                               <div>
-                                <span className="text-slate-400 block font-bold">Intensidad EVA:</span>
-                                <span className="font-extrabold text-rose-600">{c.fisioterapia.evaDolor}/10</span>
+                                <dt className="text-slate-600 font-semibold">Intensidad EVA</dt>
+                                <dd className="font-extrabold text-rose-700 tabular-nums">{c.fisioterapia.evaDolor}/10</dd>
                               </div>
                               <div>
-                                <span className="text-slate-400 block font-bold">ROM:</span>
-                                <span className="font-bold text-slate-700 truncate">{c.fisioterapia.romMedido || 'S/D'}</span>
+                                <dt className="text-slate-600 font-semibold">ROM</dt>
+                                <dd className="font-bold text-slate-900 truncate">{c.fisioterapia.romMedido || 'S/D'}</dd>
                               </div>
                               <div>
-                                <span className="text-slate-400 block font-bold">Daniels:</span>
-                                <span className="font-bold text-slate-700">{c.fisioterapia.fuerzaDaniels || 'S/D'}</span>
+                                <dt className="text-slate-600 font-semibold">Daniels</dt>
+                                <dd className="font-bold text-slate-900">{c.fisioterapia.fuerzaDaniels || 'S/D'}</dd>
                               </div>
-                            </div>
+                            </dl>
                           )}
-                        </div>
+                        </article>
                       );
                     })
                   )}
@@ -2044,7 +2023,7 @@ export default function App() {
                 smtpConfigs={smtpConfigs}
                 onUpdateSmtpConfig={handleUpdateSmtpConfig}
                 users={users}
-                currentUser={currentUser!}
+                currentUser={currentUser}
                 onSaveUser={handleSaveUser}
                 servicios={servicios}
                 onSaveServicio={handleSaveServicio}
@@ -2059,7 +2038,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'saas-admin' && currentUser?.idCompania === 7 && currentUser?.rol === 'Administrador' && (
+            {activeTab === 'saas-admin' && esSaasAdmin && (
               <SaasAdminPanel
                 companies={companies.filter(c => c.id !== 7)}
                 users={users}
@@ -2071,7 +2050,7 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'mi-perfil' && currentUser && (
+            {activeTab === 'mi-perfil' && (
               <MyProfile currentUser={currentUser} onSaveUser={handleSaveUser} />
             )}
 
@@ -2084,11 +2063,11 @@ export default function App() {
               <AgendaCalendar
                 patients={filteredPatientsByCompany}
                 users={users.filter(u => u.idCompania === selectedCompanyId)}
-                citas={citas.filter(c => c.idCompania === selectedCompanyId)}
+                citas={citasDeLaCompania}
                 smtpConfigs={smtpConfigs}
                 logs={logs}
                 activeCompanyId={selectedCompanyId}
-                currentUser={currentUser || users.filter(u => u.idCompania === selectedCompanyId)[0]}
+                currentUser={currentUser}
                 onSaveCita={handleSaveCita}
                 onTriggerNotification={handleAddNotificationLog}
                 onStartConsultation={(patient) => handleStartSoapFromCalendar(patient.id)}
@@ -2107,11 +2086,12 @@ export default function App() {
           </main>
         </div>
       )}
+      </div>
 
       {/* Persistent Page Footer */}
-      <footer className="mt-auto py-5 bg-slate-900 text-slate-400 text-xs text-center border-t border-slate-950 shrink-0 print:hidden">
-        <p className="font-semibold text-slate-300">TuanisBooking © {new Date().getFullYear()}</p>
-        <p className="text-[10px] text-slate-500 mt-1">Plataforma clínica para el control integral de pacientes con facturación digital autorizada</p>
+      <footer className="mt-auto py-5 px-4 bg-slate-900 text-slate-400 text-xs text-center border-t border-slate-950 shrink-0 print:hidden">
+        <p className="font-semibold text-slate-200">TuanisBooking © {new Date().getFullYear()}</p>
+        <p className="text-xs text-slate-400 mt-1">Plataforma clínica para el control integral de pacientes con facturación digital autorizada</p>
       </footer>
 
     </div>

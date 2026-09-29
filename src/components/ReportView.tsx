@@ -1,7 +1,8 @@
 import { Patient, Consultation, Company, NotificationLog, Servicio, Factura } from '../data/mockData';
-import { Printer, Download, Share2, Mail, CheckCircle2, Sliders, Calendar, User, Info, Heart, Dumbbell, RefreshCw, Receipt } from 'lucide-react';
+import { Printer, Download, Share2, Mail, CheckCircle2, Sliders, Calendar, User, Info, Heart, Dumbbell, RefreshCw, Receipt, MapPin, ArrowLeft } from 'lucide-react';
 import { useState } from 'react';
 import FacturarModal from './FacturarModal';
+import { notify } from './ui/Feedback';
 
 interface ReportViewProps {
   consultation: Consultation;
@@ -76,7 +77,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
       setEstadoActual(nuevoEstado);
       onConsultationUpdated(data);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'No se pudo actualizar el estado de la consulta.');
+      notify.error(err instanceof Error ? err.message : 'No se pudo actualizar el estado de la consulta.');
     } finally {
       setCambiandoEstado(false);
     }
@@ -105,7 +106,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
       setEmailSent(true);
       setTimeout(() => setEmailSent(false), 3000);
     } catch (err: any) {
-      alert(`No se pudo enviar el reporte por correo: ${err.message}`);
+      notify.error(`No se pudo enviar el reporte por correo: ${err.message}`);
     } finally {
       setIsSending(false);
     }
@@ -122,9 +123,20 @@ export default function ReportView({ consultation, patient, company, servicios, 
       
       {/* Top action toolbar - hidden in Print */}
       <div className="max-w-4xl mx-auto mb-6 bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
-        <div>
-          <h3 className="text-sm font-bold text-slate-800">Visualizador de Reportes Clínicos</h3>
-          <p className="text-[11px] text-slate-500">Imprime, descarga o envía la ficha del paciente</p>
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-h-10 min-w-10 shrink-0 flex items-center justify-center gap-1.5 px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold border border-slate-200 transition-colors"
+            aria-label="Volver a la lista"
+          >
+            <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Volver</span>
+          </button>
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold text-slate-900">Reporte de la consulta</h2>
+            <p className="text-xs text-slate-600">Imprima, envíe por correo o facture esta consulta</p>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2 text-xs items-center w-full sm:w-auto">
           <span className={`font-bold px-2.5 py-1.5 rounded-xl border ${
@@ -135,43 +147,41 @@ export default function ReportView({ consultation, patient, company, servicios, 
             {estadoActual}
           </span>
           <button
+            type="button"
             onClick={handleToggleEstado}
             disabled={cambiandoEstado}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 px-3 rounded-xl border border-slate-200 transition-all flex items-center gap-1.5 disabled:opacity-60"
+            className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3 rounded-xl border border-slate-200 transition-colors flex items-center gap-1.5 disabled:opacity-60"
           >
-            <CheckCircle2 className="w-4 h-4" />
-            {cambiandoEstado ? 'Guardando...' : estadoActual === 'CERRADA' ? 'Reabrir Consulta' : 'Cerrar Consulta'}
+            <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+            {cambiandoEstado ? 'Guardando…' : estadoActual === 'CERRADA' ? 'Reabrir consulta' : 'Marcar como cerrada'}
           </button>
           <button
+            type="button"
             onClick={sendClientEmail}
             disabled={isSending}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 px-3 rounded-xl border border-slate-200 transition-all flex items-center gap-1.5 disabled:opacity-60"
+            className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3 rounded-xl border border-slate-200 transition-colors flex items-center gap-1.5 disabled:opacity-60"
           >
-            {isSending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-            {isSending ? 'Enviando...' : emailSent ? '¡Correo Enviado!' : 'Enviar a Correo'}
+            {isSending ? <RefreshCw className="w-4 h-4 animate-spin" aria-hidden="true" /> : emailSent ? <CheckCircle2 className="w-4 h-4 text-emerald-600" aria-hidden="true" /> : <Mail className="w-4 h-4" aria-hidden="true" />}
+            <span aria-live="polite">{isSending ? 'Enviando…' : emailSent ? 'Correo enviado' : 'Enviar por correo'}</span>
           </button>
           <button
+            type="button"
             onClick={() => setFacturando(true)}
             disabled={!!facturaExistente}
             title={facturaExistente ? `Ya facturada (${facturaExistente.consecutivo})` : undefined}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 px-3 rounded-xl border border-slate-200 transition-all flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3 rounded-xl border border-slate-200 transition-colors flex items-center gap-1.5 disabled:opacity-60"
           >
-            <Receipt className="w-4 h-4" />
+            <Receipt className="w-4 h-4" aria-hidden="true" />
             {facturaExistente ? `Facturada (${facturaExistente.consecutivo})` : 'Facturar'}
           </button>
           <button
+            type="button"
             onClick={triggerPrint}
-            className="text-white font-semibold py-2 px-4 rounded-xl shadow-md transition-all flex items-center gap-1.5"
+            className="min-h-10 text-white font-semibold px-4 rounded-xl shadow-md flex items-center gap-1.5 hover:brightness-110 transition-[filter]"
             style={{ backgroundColor: company.colorPrimario }}
           >
-            <Printer className="w-4 h-4" />
-            Imprimir Reporte (PDF)
-          </button>
-          <button
-            onClick={onClose}
-            className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-2 px-4 rounded-xl"
-          >
-            Cerrar
+            <Printer className="w-4 h-4" aria-hidden="true" />
+            Imprimir / PDF
           </button>
         </div>
       </div>
@@ -191,7 +201,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
             <div>
               <h2 className="text-2xl font-bold tracking-tight text-slate-900">{company.nombreComercial}</h2>
               <p className="text-xs text-slate-500 font-mono mt-0.5">{company.razonSocial}</p>
-              <p className="text-[10px] text-slate-400 font-mono">ID Hacienda: {company.identificacion} | Cédula Jurídica</p>
+              <p className="text-[11px] text-slate-500 font-mono">ID Hacienda: {company.identificacion} | Cédula Jurídica</p>
             </div>
           </div>
 
@@ -199,7 +209,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
             <span className="block font-bold" style={{ color: company.colorPrimario }}>REPORTE CLÍNICO INTEGRADO</span>
             <span className="block mt-1">Fecha: {consultation.fecha}</span>
             <span className="block">Folio Consulta: #{consultation.id.toString().slice(-6)}</span>
-            <span className="block text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md mt-1 inline-block">
+            <span className="block text-[11px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md mt-1 inline-block">
               {consultation.tipo === 'Nutrición' ? 'Especialidad: Nutrición Humana' : 'Especialidad: Fisioterapia y Kinesiología'}
             </span>
           </div>
@@ -207,7 +217,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
 
         {/* Patient credentials info card */}
         <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/60 text-xs sm:text-sm">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Datos del Paciente</span>
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Datos del Paciente</span>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
               <span className="text-slate-500 block text-[11px]">Paciente:</span>
@@ -232,8 +242,8 @@ export default function ReportView({ consultation, patient, company, servicios, 
         <div className="space-y-6">
           
           {/* Motivo */}
-          <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-150">
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Motivo Principal del Encuentro</h4>
+          <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-200">
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Motivo Principal del Encuentro</h4>
             <p className="text-sm font-semibold text-slate-800">{consultation.motivo}</p>
           </div>
 
@@ -249,38 +259,38 @@ export default function ReportView({ consultation, patient, company, servicios, 
                 </h4>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                    <span className="text-[10px] text-slate-500 block">Peso Corporal</span>
+                    <span className="text-[11px] text-slate-500 block">Peso Corporal</span>
                     <span className="text-lg font-bold text-slate-900 block">{consultation.antropometria.peso} kg</span>
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                    <span className="text-[10px] text-slate-500 block">IMC</span>
+                    <span className="text-[11px] text-slate-500 block">IMC</span>
                     <span className="text-lg font-bold text-slate-900 block">{consultation.antropometria.imc}</span>
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                    <span className="text-[10px] text-slate-500 block">Grasa Corporal</span>
+                    <span className="text-[11px] text-slate-500 block">Grasa Corporal</span>
                     <span className="text-lg font-bold text-rose-600 block">{consultation.antropometria.grasaCorporal}%</span>
                   </div>
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                    <span className="text-[10px] text-slate-500 block">Masa Muscular</span>
+                    <span className="text-[11px] text-slate-500 block">Masa Muscular</span>
                     <span className="text-lg font-bold text-emerald-600 block">{consultation.antropometria.masaMuscular} kg</span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
-                    <span className="text-[9.5px] text-slate-500 block">Grasa Visceral</span>
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
+                    <span className="text-[11px] text-slate-500 block">Grasa Visceral</span>
                     <span className="text-sm font-semibold text-slate-800 block">Nivel {consultation.antropometria.grasaVisceral}</span>
                   </div>
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
-                    <span className="text-[9.5px] text-slate-500 block">Masa Ósea</span>
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
+                    <span className="text-[11px] text-slate-500 block">Masa Ósea</span>
                     <span className="text-sm font-semibold text-slate-800 block">{consultation.antropometria.masaOsea} kg</span>
                   </div>
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
-                    <span className="text-[9.5px] text-slate-500 block">Circunferencia Cintura</span>
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
+                    <span className="text-[11px] text-slate-500 block">Circunferencia Cintura</span>
                     <span className="text-sm font-semibold text-slate-800 block">{consultation.antropometria.cintura} cm</span>
                   </div>
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
-                    <span className="text-[9.5px] text-slate-500 block">Perímetro Abdominal</span>
+                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
+                    <span className="text-[11px] text-slate-500 block">Perímetro Abdominal</span>
                     <span className="text-sm font-semibold text-slate-800 block">{consultation.antropometria.abdominal} cm</span>
                   </div>
                 </div>
@@ -288,47 +298,47 @@ export default function ReportView({ consultation, patient, company, servicios, 
 
               {/* Prescripción Calórica */}
               {consultation.dieta?.prescripcionCalorica && (
-                <div className="border-t border-slate-150 pt-5">
+                <div className="border-t border-slate-200 pt-5">
                   <h4 className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-1.5" style={{ color: company.colorPrimario }}>
                     <Sliders className="w-4 h-4" />
                     Prescripción Calórica
                   </h4>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                      <span className="text-[10px] text-slate-500 block">Fórmula</span>
+                      <span className="text-[11px] text-slate-500 block">Fórmula</span>
                       <span className="text-sm font-bold text-slate-900 block">{FORMULA_LABEL[consultation.dieta.prescripcionCalorica.formula] || consultation.dieta.prescripcionCalorica.formula}</span>
                     </div>
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                      <span className="text-[10px] text-slate-500 block">TMB</span>
+                      <span className="text-[11px] text-slate-500 block">TMB</span>
                       <span className="text-lg font-bold text-slate-900 block">{consultation.dieta.prescripcionCalorica.tmb} kcal</span>
                     </div>
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                      <span className="text-[10px] text-slate-500 block">Objetivo</span>
+                      <span className="text-[11px] text-slate-500 block">Objetivo</span>
                       <span className="text-sm font-bold text-slate-900 block">{DIRECCION_LABEL[consultation.dieta.prescripcionCalorica.direccion] || consultation.dieta.prescripcionCalorica.direccion} {consultation.dieta.prescripcionCalorica.porcentaje}%</span>
                     </div>
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                      <span className="text-[10px] text-slate-500 block">Presupuesto Calórico</span>
+                      <span className="text-[11px] text-slate-500 block">Presupuesto Calórico</span>
                       <span className="text-lg font-bold text-teal-600 block">{consultation.dieta.totalCalorias} kcal</span>
                     </div>
                   </div>
                   {consultation.dieta.macros && (
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
-                        <span className="text-[9.5px] text-slate-500 block">Carbohidratos</span>
+                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
+                        <span className="text-[11px] text-slate-500 block">Carbohidratos</span>
                         <span className="text-sm font-semibold text-slate-800 block">
                           {consultation.dieta.macros.carbohidratosPct != null ? `${consultation.dieta.macros.carbohidratosPct}%` : '—'}
                           {consultation.dieta.macros.carbohidratosPct != null && ` (${gramosDesdeMacroPct(consultation.dieta.macros.carbohidratosPct, consultation.dieta.totalCalorias, 4)} g)`}
                         </span>
                       </div>
-                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
-                        <span className="text-[9.5px] text-slate-500 block">Proteínas</span>
+                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
+                        <span className="text-[11px] text-slate-500 block">Proteínas</span>
                         <span className="text-sm font-semibold text-slate-800 block">
                           {consultation.dieta.macros.proteinasPct != null ? `${consultation.dieta.macros.proteinasPct}%` : '—'}
                           {consultation.dieta.macros.proteinasPct != null && ` (${gramosDesdeMacroPct(consultation.dieta.macros.proteinasPct, consultation.dieta.totalCalorias, 4)} g)`}
                         </span>
                       </div>
-                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-150 text-center">
-                        <span className="text-[9.5px] text-slate-500 block">Grasas</span>
+                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
+                        <span className="text-[11px] text-slate-500 block">Grasas</span>
                         <span className="text-sm font-semibold text-slate-800 block">
                           {consultation.dieta.macros.grasasPct != null ? `${consultation.dieta.macros.grasasPct}%` : '—'}
                           {consultation.dieta.macros.grasasPct != null && ` (${gramosDesdeMacroPct(consultation.dieta.macros.grasasPct, consultation.dieta.totalCalorias, 9)} g)`}
@@ -341,7 +351,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
 
               {/* Diet Plan Schedule */}
               {consultation.dieta && (
-                <div className="border-t border-slate-150 pt-5">
+                <div className="border-t border-slate-200 pt-5">
                   <h4 className="text-xs font-bold uppercase tracking-wider mb-4 flex items-center gap-1.5" style={{ color: company.colorPrimario }}>
                     <Calendar className="w-4 h-4" />
                     Plan Alimentario Recomendado ({consultation.dieta.totalCalorias} kcal)
@@ -392,28 +402,28 @@ export default function ReportView({ consultation, patient, company, servicios, 
             <div className="space-y-6">
               
               {/* Pain Map & EVA report details */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-slate-150 pt-5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-slate-200 pt-5 text-xs">
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                  <span className="text-[10px] text-slate-500 block uppercase font-bold mb-1">Foco de Dolor</span>
-                  <span className="text-sm font-extrabold text-slate-800 uppercase block">📍 {consultation.fisioterapia.zonaDolor}</span>
+                  <span className="text-[11px] text-slate-500 block uppercase font-bold mb-1">Foco de Dolor</span>
+                  <span className="text-sm font-extrabold text-slate-800 uppercase flex items-center justify-center gap-1"><MapPin className="w-4 h-4 text-rose-600" aria-hidden="true" />{consultation.fisioterapia.zonaDolor}</span>
                 </div>
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                  <span className="text-[10px] text-slate-500 block uppercase font-bold mb-1">Escala de Dolor EVA</span>
+                  <span className="text-[11px] text-slate-500 block uppercase font-bold mb-1">Escala de Dolor EVA</span>
                   <span className="text-lg font-extrabold text-rose-600 block">{consultation.fisioterapia.evaDolor} de 10</span>
-                  <span className="text-[9px] font-bold text-slate-400 uppercase">{getEvaLabel(consultation.fisioterapia.evaDolor)}</span>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase">{getEvaLabel(consultation.fisioterapia.evaDolor)}</span>
                 </div>
                 <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                  <span className="text-[10px] text-slate-500 block uppercase font-bold mb-1">Tipo de Dolor</span>
+                  <span className="text-[11px] text-slate-500 block uppercase font-bold mb-1">Tipo de Dolor</span>
                   <span className="text-sm font-semibold text-slate-800 block">{consultation.fisioterapia.tipoDolor}</span>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-150">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
                   <span className="font-bold text-slate-500 block mb-1">Factores que empeoran (Agravantes):</span>
                   <p className="text-slate-800">{consultation.fisioterapia.factoresAgravantes}</p>
                 </div>
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-150">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
                   <span className="font-bold text-slate-500 block mb-1">Factores que alivian (Atenuantes):</span>
                   <p className="text-slate-800">{consultation.fisioterapia.factoresAtenuantes}</p>
                 </div>
@@ -426,26 +436,26 @@ export default function ReportView({ consultation, patient, company, servicios, 
                   Valoración de Examen Físico Funcional
                 </h4>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-150">
+                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                     <span className="font-bold text-slate-600 block mb-1">Inspección de Postura</span>
                     <p className="text-slate-800 leading-relaxed">{consultation.fisioterapia.posturaObservaciones}</p>
                   </div>
-                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-150">
+                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                     <span className="font-bold text-slate-600 block mb-1">Hallazgos a la Palpación</span>
                     <p className="text-slate-800 leading-relaxed">{consultation.fisioterapia.palpacionHallazgos}</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 text-xs">
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-150">
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
                     <span className="font-bold text-slate-500 block mb-0.5">Rangos Movilidad (ROM)</span>
                     <p className="text-slate-800 font-medium">{consultation.fisioterapia.romMedido}</p>
                   </div>
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-150">
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
                     <span className="font-bold text-slate-500 block mb-0.5">Fuerza Daniels</span>
                     <p className="text-slate-800 font-medium">{consultation.fisioterapia.fuerzaDaniels}</p>
                   </div>
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-150">
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
                     <span className="font-bold text-slate-500 block mb-0.5">Pruebas Especiales</span>
                     <p className="text-slate-800 font-medium">{consultation.fisioterapia.pruebasEspeciales}</p>
                   </div>
@@ -453,7 +463,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
               </div>
 
               {/* Prescription */}
-              <div className="border-t border-slate-150 pt-5">
+              <div className="border-t border-slate-200 pt-5">
                 <h4 className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-1.5" style={{ color: company.colorPrimario }}>
                   <Calendar className="w-4 h-4" />
                   Prescripción Terapéutica e Intervenciones
@@ -477,8 +487,8 @@ export default function ReportView({ consultation, patient, company, servicios, 
               {/* SOAP Evolution */}
               <div className="bg-slate-900 text-white p-5 rounded-2xl space-y-4">
                 <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                  <span className="text-[10px] font-bold text-teal-400 uppercase tracking-wider">Nota SOAP Oficial de Terapia Física</span>
-                  <span className="text-[9px] text-slate-500 font-mono">Ciclo Sugerido: {consultation.fisioterapia.sesionesSugeridas} Sesiones</span>
+                  <span className="text-[11px] font-bold text-teal-400 uppercase tracking-wider">Nota SOAP Oficial de Terapia Física</span>
+                  <span className="text-[11px] text-slate-500 font-mono">Ciclo Sugerido: {consultation.fisioterapia.sesionesSugeridas} Sesiones</span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
                   <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/60">
@@ -504,9 +514,9 @@ export default function ReportView({ consultation, patient, company, servicios, 
 
           {/* Clinician's recommendations */}
           {consultation.anotacionesGenerales && (
-            <div className="border-t border-slate-150 pt-5 text-xs">
+            <div className="border-t border-slate-200 pt-5 text-xs">
               <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Recomendaciones y Observaciones del Profesional</h4>
-              <p className="bg-slate-50 p-4 rounded-xl border border-slate-150 leading-relaxed text-slate-800 font-medium">
+              <p className="bg-slate-50 p-4 rounded-xl border border-slate-200 leading-relaxed text-slate-800 font-medium">
                 {consultation.anotacionesGenerales}
               </p>
             </div>
@@ -514,7 +524,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
         </div>
 
         {/* Footer info containing CR electronic receipt signature indicator */}
-        <div className="border-t pt-6 flex flex-col sm:flex-row justify-between items-center text-[10px] text-slate-400 font-mono gap-3">
+        <div className="border-t pt-6 flex flex-col sm:flex-row justify-between items-center text-[11px] text-slate-500 font-mono gap-3">
           <div className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
             <span>Firmado Digitalmente conforme a Resolución Hacienda Costa Rica GT-R-48</span>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Proveedor } from '../data/mockData';
 import { Truck, Plus, Edit, Power } from 'lucide-react';
+import { notify } from './ui/Feedback';
 
 interface ProveedorManagerProps {
   proveedores: Proveedor[];
@@ -72,7 +73,9 @@ export default function ProveedorManager({ proveedores, onSaveProveedor }: Prove
   };
 
   const handleToggleActivo = (p: Proveedor) => {
-    onSaveProveedor({ ...p, activo: !p.activo }).catch((err: any) => alert(err.message || 'No se pudo actualizar el proveedor.'));
+    onSaveProveedor({ ...p, activo: !p.activo })
+      .then(() => notify.success(p.activo ? `${p.nombre} quedó inactivo.` : `${p.nombre} quedó activo.`))
+      .catch((err: any) => notify.error(err.message || 'No se pudo actualizar el proveedor.'));
   };
 
   const visibles = proveedores.filter(p => mostrarInactivos || p.activo);
@@ -103,8 +106,8 @@ export default function ProveedorManager({ proveedores, onSaveProveedor }: Prove
           {error && <p className="text-[11px] text-rose-600">{error}</p>}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div>
-              <label className="block text-slate-600 text-xs font-medium mb-1">Tipo Identificación</label>
-              <select
+              <label htmlFor="proveedorm-tipo-identificacion" className="block text-slate-600 text-xs font-medium mb-1">Tipo Identificación</label>
+              <select id="proveedorm-tipo-identificacion"
                 value={tipoIdentificacion}
                 onChange={(e) => setTipoIdentificacion(e.target.value as '01' | '02' | '03' | '04')}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
@@ -116,24 +119,24 @@ export default function ProveedorManager({ proveedores, onSaveProveedor }: Prove
               </select>
             </div>
             <div>
-              <label className="block text-slate-600 text-xs font-medium mb-1">Identificación *</label>
-              <input type="text" value={identificacion} onChange={(e) => setIdentificacion(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
+              <label htmlFor="proveedorm-identificacion" className="block text-slate-600 text-xs font-medium mb-1">Identificación *</label>
+              <input id="proveedorm-identificacion" type="text" value={identificacion} onChange={(e) => setIdentificacion(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
             </div>
             <div className="sm:col-span-2">
-              <label className="block text-slate-600 text-xs font-medium mb-1">Nombre *</label>
-              <input type="text" value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
+              <label htmlFor="proveedorm-nombre" className="block text-slate-600 text-xs font-medium mb-1">Nombre *</label>
+              <input id="proveedorm-nombre" type="text" value={nombre} onChange={(e) => setNombre(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
             </div>
             <div>
-              <label className="block text-slate-600 text-xs font-medium mb-1">Correo</label>
-              <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
+              <label htmlFor="proveedorm-correo" className="block text-slate-600 text-xs font-medium mb-1">Correo</label>
+              <input id="proveedorm-correo" type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
             </div>
             <div>
-              <label className="block text-slate-600 text-xs font-medium mb-1">Teléfono</label>
-              <input type="text" value={telefono} onChange={(e) => setTelefono(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
+              <label htmlFor="proveedorm-telefono" className="block text-slate-600 text-xs font-medium mb-1">Teléfono</label>
+              <input id="proveedorm-telefono" type="text" value={telefono} onChange={(e) => setTelefono(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
             </div>
             <div className="sm:col-span-2">
-              <label className="block text-slate-600 text-xs font-medium mb-1">Dirección</label>
-              <input type="text" value={direccion} onChange={(e) => setDireccion(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
+              <label htmlFor="proveedorm-direccion" className="block text-slate-600 text-xs font-medium mb-1">Dirección</label>
+              <input id="proveedorm-direccion" type="text" value={direccion} onChange={(e) => setDireccion(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
             </div>
           </div>
           <div className="flex gap-2 justify-end">
@@ -145,29 +148,29 @@ export default function ProveedorManager({ proveedores, onSaveProveedor }: Prove
         </form>
       )}
 
-      <label className="flex items-center gap-1.5 text-[10px] text-slate-500 mb-2">
+      <label className="flex items-center gap-1.5 text-[11px] text-slate-500 mb-2">
         <input type="checkbox" checked={mostrarInactivos} onChange={(e) => setMostrarInactivos(e.target.checked)} />
         Mostrar inactivos
       </label>
 
       <div className="space-y-1.5">
         {visibles.length === 0 && !formAbierto && (
-          <p className="text-slate-400 text-xs text-center py-4">Todavía no has registrado ningún proveedor.</p>
+          <p className="text-slate-500 text-xs text-center py-4">Todavía no has registrado ningún proveedor.</p>
         )}
         {visibles.map(p => (
           <div key={p.id} className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg">
             <div>
               <span className="font-semibold text-slate-800 text-xs block">{p.nombre}</span>
-              <span className="text-[10px] text-slate-500">{p.identificacion}{p.telefono ? ` · ${p.telefono}` : ''}{p.correo ? ` · ${p.correo}` : ''}</span>
+              <span className="text-[11px] text-slate-500">{p.identificacion}{p.telefono ? ` · ${p.telefono}` : ''}{p.correo ? ` · ${p.correo}` : ''}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${p.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
+              <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${p.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
                 {p.activo ? 'Activo' : 'Inactivo'}
               </span>
-              <button onClick={() => abrirEditar(p)} title="Editar" className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100">
+              <button onClick={() => abrirEditar(p)} title="Editar" className="p-2.5 rounded-lg text-slate-500 hover:bg-slate-100" aria-label="Editar">
                 <Edit className="w-3.5 h-3.5" />
               </button>
-              <button onClick={() => handleToggleActivo(p)} title={p.activo ? 'Desactivar' : 'Activar'} className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100">
+              <button onClick={() => handleToggleActivo(p)} title={p.activo ? 'Desactivar' : 'Activar'} className="p-2.5 rounded-lg text-slate-500 hover:bg-slate-100" aria-label={p.activo ? 'Desactivar' : 'Activar'}>
                 <Power className="w-3.5 h-3.5" />
               </button>
             </div>

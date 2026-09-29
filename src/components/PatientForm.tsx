@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Patient } from '../data/mockData';
 import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 import { PlusCircle, Heart, Dumbbell, MapPin, User, Save, X } from 'lucide-react';
+import { notify } from './ui/Feedback';
 
 interface PatientFormProps {
   companyId: number;
@@ -96,7 +97,7 @@ export default function PatientForm({
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (!nombre.trim() || !identificacion.trim()) {
-      alert('Por favor complete el nombre y la identificación del paciente.');
+      notify.warning('Complete el nombre y la identificación del paciente.');
       return;
     }
 
@@ -164,29 +165,30 @@ export default function PatientForm({
   };
 
   return (
-    <form onSubmit={handleSave} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden text-xs sm:text-sm">
+    <form onSubmit={handleSave} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-clip text-xs sm:text-sm">
       {/* Header */}
       <div className="p-4 text-white font-bold flex justify-between items-center" style={{ backgroundColor: themeColor }}>
         <div className="flex items-center gap-2">
-          <User className="w-5 h-5" />
-          <span>{editingPatient ? 'Modificar Expediente del Paciente' : 'Crear Nuevo Expediente de Paciente'}</span>
+          <User className="w-5 h-5" aria-hidden="true" />
+          <h2>{editingPatient ? 'Modificar expediente del paciente' : 'Nuevo expediente de paciente'}</h2>
         </div>
-        <button type="button" onClick={onCancel} className="hover:bg-black/10 p-1.5 rounded-full">
-          <X className="w-4 h-4" />
+        <button type="button" onClick={onCancel} className="hover:bg-black/15 w-9 h-9 -m-1.5 flex items-center justify-center rounded-full transition-colors" aria-label="Cerrar sin guardar">
+          <X className="w-5 h-5" />
         </button>
       </div>
 
-      <div className="p-5 space-y-6 max-h-[75vh] overflow-y-auto">
+      <div className="p-5 space-y-6">
+        <p className="text-xs text-slate-600">Los campos marcados con * son obligatorios.</p>
         {/* Section 1: Personal info */}
         <div>
-          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
             <User className="w-4 h-4 text-slate-500" />
             1. Datos Personales y Demográficos
           </h4>
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Nombre Completo *</label>
-              <input
+              <label htmlFor="patientfor-nombre-completo" className="block text-slate-600 font-medium mb-1">Nombre Completo *</label>
+              <input id="patientfor-nombre-completo"
                 type="text"
                 value={nombre}
                 onChange={(e) => setNombre(e.target.value)}
@@ -196,8 +198,8 @@ export default function PatientForm({
               />
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Fecha de Nacimiento</label>
-              <input
+              <label htmlFor="patientfor-fecha-de-nacimiento" className="block text-slate-600 font-medium mb-1">Fecha de Nacimiento</label>
+              <input id="patientfor-fecha-de-nacimiento"
                 type="date"
                 value={fechaNac}
                 onChange={(e) => handleBirthdateChange(e.target.value)}
@@ -205,8 +207,8 @@ export default function PatientForm({
               />
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Edad calculada</label>
-              <input
+              <label htmlFor="patientfor-edad-calculada" className="block text-slate-600 font-medium mb-1">Edad calculada</label>
+              <input id="patientfor-edad-calculada"
                 type="number"
                 value={edad}
                 disabled
@@ -214,8 +216,8 @@ export default function PatientForm({
               />
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Sexo</label>
-              <select
+              <label htmlFor="patientfor-sexo" className="block text-slate-600 font-medium mb-1">Sexo</label>
+              <select id="patientfor-sexo"
                 value={sexo}
                 onChange={(e) => setSexo(e.target.value as 'M' | 'F' | '')}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
@@ -229,8 +231,8 @@ export default function PatientForm({
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-3">
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Tipo de Cédula (Hacienda)</label>
-              <select
+              <label htmlFor="patientfor-tipo-de-cedula-hacienda" className="block text-slate-600 font-medium mb-1">Tipo de Cédula (Hacienda)</label>
+              <select id="patientfor-tipo-de-cedula-hacienda"
                 value={tipoId}
                 onChange={(e) => setTipoId(e.target.value as any)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
@@ -243,8 +245,8 @@ export default function PatientForm({
               </select>
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Número de Identificación *</label>
-              <input
+              <label htmlFor="patientfor-numero-de-identificacion" className="block text-slate-600 font-medium mb-1">Número de Identificación *</label>
+              <input id="patientfor-numero-de-identificacion"
                 type="text"
                 value={identificacion}
                 onChange={(e) => setIdentificacion(e.target.value)}
@@ -254,8 +256,8 @@ export default function PatientForm({
               />
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Teléfono Móvil (Costa Rica)</label>
-              <input
+              <label htmlFor="patientfor-telefono-movil-costa-rica" className="block text-slate-600 font-medium mb-1">Teléfono Móvil (Costa Rica)</label>
+              <input id="patientfor-telefono-movil-costa-rica"
                 type="text"
                 value={telefono}
                 onChange={(e) => setTelefono(e.target.value)}
@@ -267,8 +269,8 @@ export default function PatientForm({
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-3">
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Ocupación / Profesión</label>
-              <input
+              <label htmlFor="patientfor-ocupacion-profesion" className="block text-slate-600 font-medium mb-1">Ocupación / Profesión</label>
+              <input id="patientfor-ocupacion-profesion"
                 type="text"
                 value={ocupacion}
                 onChange={(e) => setOcupacion(e.target.value)}
@@ -277,8 +279,8 @@ export default function PatientForm({
               />
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Correo Electrónico</label>
-              <input
+              <label htmlFor="patientfor-correo-electronico" className="block text-slate-600 font-medium mb-1">Correo Electrónico</label>
+              <input id="patientfor-correo-electronico"
                 type="email"
                 value={correo}
                 onChange={(e) => setCorreo(e.target.value)}
@@ -287,8 +289,8 @@ export default function PatientForm({
               />
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Núcleo Familiar</label>
-              <select
+              <label htmlFor="patientfor-nucleo-familiar" className="block text-slate-600 font-medium mb-1">Núcleo Familiar</label>
+              <select id="patientfor-nucleo-familiar"
                 value={situacion}
                 onChange={(e) => setSituacion(e.target.value as any)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
@@ -303,14 +305,14 @@ export default function PatientForm({
 
         {/* Section 2: Address */}
         <div>
-          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5 border-t border-slate-100 pt-4">
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5 border-t border-slate-100 pt-4">
             <MapPin className="w-4 h-4 text-slate-500" />
             2. Dirección de Residencia (Costa Rica)
           </h4>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Provincia</label>
-              <select
+              <label htmlFor="patientfor-provincia" className="block text-slate-600 font-medium mb-1">Provincia</label>
+              <select id="patientfor-provincia"
                 value={provinciaId}
                 onChange={(e) => handleProvinciaChange(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
@@ -321,8 +323,8 @@ export default function PatientForm({
               </select>
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Cantón</label>
-              <select
+              <label htmlFor="patientfor-canton" className="block text-slate-600 font-medium mb-1">Cantón</label>
+              <select id="patientfor-canton"
                 value={cantonId}
                 onChange={(e) => handleCantonChange(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
@@ -333,8 +335,8 @@ export default function PatientForm({
               </select>
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Distrito</label>
-              <select
+              <label htmlFor="patientfor-distrito" className="block text-slate-600 font-medium mb-1">Distrito</label>
+              <select id="patientfor-distrito"
                 value={distritoId}
                 onChange={(e) => handleDistritoChange(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
@@ -346,8 +348,8 @@ export default function PatientForm({
             </div>
           </div>
           <div className="mt-3">
-            <label className="block text-slate-600 font-medium mb-1">Otras Señas / Dirección Exacta</label>
-            <input
+            <label htmlFor="patientfor-otras-senas-direccion-exacta" className="block text-slate-600 font-medium mb-1">Otras Señas / Dirección Exacta</label>
+            <input id="patientfor-otras-senas-direccion-exacta"
               type="text"
               value={otrasSenas}
               onChange={(e) => setOtrasSenas(e.target.value)}
@@ -359,7 +361,7 @@ export default function PatientForm({
 
         {/* Section 3: Clinical Background (Nutrition) */}
         <div>
-          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5 border-t border-slate-100 pt-4">
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5 border-t border-slate-100 pt-4">
             <Heart className="w-4 h-4 text-rose-500" />
             3. Historial de Nutrición y Patologías
           </h4>
@@ -415,14 +417,14 @@ export default function PatientForm({
 
         {/* Section 4: Clinical Background (Physiotherapy) */}
         <div>
-          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5 border-t border-slate-100 pt-4">
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5 border-t border-slate-100 pt-4">
             <Dumbbell className="w-4 h-4 text-emerald-600" />
             4. Antecedentes Físicos y Lesionales (Kinesiología)
           </h4>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Historial de Fracturas</label>
-              <input
+              <label htmlFor="patientfor-historial-de-fracturas" className="block text-slate-600 font-medium mb-1">Historial de Fracturas</label>
+              <input id="patientfor-historial-de-fracturas"
                 type="text"
                 value={fracturas}
                 onChange={(e) => setFracturas(e.target.value)}
@@ -431,8 +433,8 @@ export default function PatientForm({
               />
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Historial de Esguinces / Luxaciones</label>
-              <input
+              <label htmlFor="patientfor-historial-de-esguinces-luxaciones" className="block text-slate-600 font-medium mb-1">Historial de Esguinces / Luxaciones</label>
+              <input id="patientfor-historial-de-esguinces-luxaciones"
                 type="text"
                 value={esguinces}
                 onChange={(e) => setEsguinces(e.target.value)}
@@ -441,8 +443,8 @@ export default function PatientForm({
               />
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Cirugías Ortopédicas previas</label>
-              <input
+              <label htmlFor="patientfor-cirugias-ortopedicas-previas" className="block text-slate-600 font-medium mb-1">Cirugías Ortopédicas previas</label>
+              <input id="patientfor-cirugias-ortopedicas-previas"
                 type="text"
                 value={cirugias}
                 onChange={(e) => setCirugias(e.target.value)}
@@ -451,8 +453,8 @@ export default function PatientForm({
               />
             </div>
             <div>
-              <label className="block text-slate-600 font-medium mb-1">Deportes o Actividad Física actual</label>
-              <input
+              <label htmlFor="patientfor-deportes-o-actividad-fisica" className="block text-slate-600 font-medium mb-1">Deportes o Actividad Física actual</label>
+              <input id="patientfor-deportes-o-actividad-fisica"
                 type="text"
                 value={actividad}
                 onChange={(e) => setActividad(e.target.value)}
@@ -465,21 +467,21 @@ export default function PatientForm({
       </div>
 
       {/* Actions Footer */}
-      <div className="p-4 bg-slate-50 border-t border-slate-200 flex justify-end gap-2.5">
+      <div className="sticky bottom-0 z-10 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-white/95 backdrop-blur-sm border-t border-slate-200 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] flex flex-wrap justify-end gap-2.5">
         <button
           type="button"
           onClick={onCancel}
-          className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold px-4 py-2 rounded-xl transition-all"
+          className="min-h-11 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-4 rounded-xl transition-colors"
         >
           Cancelar
         </button>
         <button
           type="submit"
-          className="text-white font-semibold px-5 py-2 rounded-xl transition-all shadow-md flex items-center gap-1.5"
+          className="min-h-11 text-white font-semibold px-5 rounded-xl shadow-md flex items-center gap-1.5 hover:brightness-110 transition-[filter]"
           style={{ backgroundColor: themeColor }}
         >
-          <Save className="w-4 h-4" />
-          Guardar Expediente
+          <Save className="w-4 h-4" aria-hidden="true" />
+          Guardar expediente
         </button>
       </div>
     </form>

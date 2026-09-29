@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Company, ReporteD104, ReporteD101, GastosManualesAnuales, CierreFiscal } from '../data/mockData';
 import { FileSpreadsheet, AlertTriangle, Lock, CheckCircle, Archive } from 'lucide-react';
+import { notify, confirmar } from './ui/Feedback';
 
 interface ReportesFiscalesProps {
   company: Company;
@@ -50,7 +51,13 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
   useEffect(() => { cargarD104(periodo); }, [periodo]);
 
   const handleCerrarD104 = async () => {
-    if (!confirm(`¿Cerrar el período ${periodo}? Un cierre declarado es un registro permanente y no se puede deshacer ni recalcular después.`)) return;
+    const ok = await confirmar({
+      title: `¿Cerrar el período ${periodo}?`,
+      message: 'Un cierre declarado es un registro permanente: no se puede deshacer ni recalcular después.',
+      confirmText: 'Cerrar período',
+      tone: 'warning'
+    });
+    if (!ok) return;
     setCerrandoD104(true);
     setErrorD104('');
     try {
@@ -114,7 +121,13 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
   };
 
   const handleCerrarD101 = async () => {
-    if (!confirm(`¿Presentar la liquidación de Renta del año ${anio}? Un cierre declarado es un registro permanente y no se puede deshacer ni recalcular después.`)) return;
+    const ok = await confirmar({
+      title: `¿Presentar la liquidación de Renta ${anio}?`,
+      message: 'Un cierre declarado es un registro permanente: no se puede deshacer ni recalcular después.',
+      confirmText: 'Presentar liquidación',
+      tone: 'warning'
+    });
+    if (!ok) return;
     setCerrandoD101(true);
     setErrorD101('');
     try {
@@ -173,8 +186,8 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
       {subTab === 'd104' && (
         <div className="space-y-4">
           <div className="flex items-center gap-3">
-            <label className="text-xs font-medium text-slate-600">Período</label>
-            <select value={periodo} onChange={(e) => setPeriodo(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800">
+            <label htmlFor="reportesfi-periodo" className="text-xs font-medium text-slate-600">Período</label>
+            <select id="reportesfi-periodo" value={periodo} onChange={(e) => setPeriodo(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800">
               {periodOptions().map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
@@ -186,7 +199,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
             </div>
           )}
 
-          {cargandoD104 && <p className="text-xs text-slate-400 text-center py-6">Calculando...</p>}
+          {cargandoD104 && <p className="text-xs text-slate-500 text-center py-6">Calculando...</p>}
 
           {!cargandoD104 && d104 && (
             <>
@@ -209,7 +222,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
               <div className="overflow-x-auto">
                 <table className="w-full text-xs border-collapse">
                   <thead>
-                    <tr className="bg-slate-50 text-slate-500 text-[10px] uppercase">
+                    <tr className="bg-slate-50 text-slate-500 text-[11px] uppercase">
                       <th className="text-left py-2 px-3">Tarifa</th>
                       <th className="text-right py-2 px-3">Base Gravable</th>
                       <th className="text-right py-2 px-3">IVA</th>
@@ -220,27 +233,27 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
                     <tr><td className="py-2 px-3">4% (Reducida)</td><td className="py-2 px-3 text-right font-mono">{colones(d104.tarifas.t4.base)}</td><td className="py-2 px-3 text-right font-mono font-bold text-indigo-600">{colones(d104.tarifas.t4.iva)}</td></tr>
                     <tr><td className="py-2 px-3">2% (Reducida)</td><td className="py-2 px-3 text-right font-mono">{colones(d104.tarifas.t2.base)}</td><td className="py-2 px-3 text-right font-mono font-bold text-indigo-600">{colones(d104.tarifas.t2.iva)}</td></tr>
                     <tr><td className="py-2 px-3">1% (Reducida)</td><td className="py-2 px-3 text-right font-mono">{colones(d104.tarifas.t1.base)}</td><td className="py-2 px-3 text-right font-mono font-bold text-indigo-600">{colones(d104.tarifas.t1.iva)}</td></tr>
-                    <tr><td className="py-2 px-3">Exento</td><td className="py-2 px-3 text-right font-mono">{colones(d104.tarifas.exento.base)}</td><td className="py-2 px-3 text-right font-mono text-slate-400">—</td></tr>
+                    <tr><td className="py-2 px-3">Exento</td><td className="py-2 px-3 text-right font-mono">{colones(d104.tarifas.exento.base)}</td><td className="py-2 px-3 text-right font-mono text-slate-500">—</td></tr>
                   </tbody>
                 </table>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block">Débito Fiscal</span>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Débito Fiscal</span>
                   <span className="text-sm font-bold text-slate-800">{colones(d104.debitoFiscal)}</span>
                 </div>
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block">Crédito Fiscal (compras)</span>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Crédito Fiscal (compras)</span>
                   <span className="text-sm font-bold text-slate-800">{colones(d104.creditoFiscal)}</span>
                 </div>
                 <div className={`p-3 rounded-xl border ${d104.saldoAPagar >= 0 ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200'}`}>
-                  <span className={`text-[10px] font-bold uppercase block ${d104.saldoAPagar >= 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{d104.saldoAPagar >= 0 ? 'Saldo a Pagar' : 'Saldo a Favor'}</span>
+                  <span className={`text-[11px] font-bold uppercase block ${d104.saldoAPagar >= 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{d104.saldoAPagar >= 0 ? 'Saldo a Pagar' : 'Saldo a Favor'}</span>
                   <span className={`text-sm font-bold ${d104.saldoAPagar >= 0 ? 'text-rose-900' : 'text-emerald-900'}`}>{colones(Math.abs(d104.saldoAPagar))}</span>
                 </div>
               </div>
 
-              <p className="text-[10px] text-slate-400">{d104.cantidadFacturas} factura(s) · {d104.cantidadNotasCredito} nota(s) de crédito · {d104.cantidadNotasDebito} nota(s) de débito en este período.</p>
+              <p className="text-[11px] text-slate-500">{d104.cantidadFacturas} factura(s) · {d104.cantidadNotasCredito} nota(s) de crédito · {d104.cantidadNotasDebito} nota(s) de débito en este período.</p>
 
               {!d104.yaCerrado && (
                 <button
@@ -260,8 +273,8 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
       {subTab === 'd101' && (
         <div className="space-y-4">
           <div className="flex items-center gap-3">
-            <label className="text-xs font-medium text-slate-600">Año Fiscal</label>
-            <select value={anio} onChange={(e) => setAnio(parseInt(e.target.value))} className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800">
+            <label htmlFor="reportesfi-ano-fiscal" className="text-xs font-medium text-slate-600">Año Fiscal</label>
+            <select id="reportesfi-ano-fiscal" value={anio} onChange={(e) => setAnio(parseInt(e.target.value))} className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800">
               {yearOptions().map(y => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
@@ -273,7 +286,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
             </div>
           )}
 
-          {cargandoD101 && <p className="text-xs text-slate-400 text-center py-6">Calculando...</p>}
+          {cargandoD101 && <p className="text-xs text-slate-500 text-center py-6">Calculando...</p>}
 
           {!cargandoD101 && d101 && (
             <>
@@ -297,19 +310,19 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block">Ventas Netas</span>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Ventas Netas</span>
                   <span className="text-sm font-bold text-slate-800">{colones(d101.ventasNetas)}</span>
                 </div>
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block">Compras (CxP)</span>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Compras (CxP)</span>
                   <span className="text-sm font-bold text-slate-800">{colones(d101.comprasCxP)}</span>
                 </div>
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase block">Gastos Deducibles</span>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Gastos Deducibles</span>
                   <span className="text-sm font-bold text-slate-800">{colones(d101.totalGastosDeducibles)}</span>
                 </div>
                 <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
-                  <span className="text-[10px] font-bold text-indigo-700 uppercase block">Utilidad Neta</span>
+                  <span className="text-[11px] font-bold text-indigo-700 uppercase block">Utilidad Neta</span>
                   <span className="text-sm font-bold text-indigo-900">{colones(d101.utilidadNeta)}</span>
                 </div>
               </div>
@@ -319,7 +332,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {(Object.keys(gastosForm) as Array<keyof GastosManualesAnuales>).map(campo => (
                     <div key={campo}>
-                      <label className="block text-slate-600 text-[10px] font-medium mb-1 capitalize">{campo}</label>
+                      <label className="block text-slate-600 text-[11px] font-medium mb-1 capitalize">{campo}</label>
                       <input
                         type="number"
                         min="0"
@@ -344,18 +357,18 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
               </div>
 
               <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl">
-                <span className="text-[10px] font-bold text-rose-700 uppercase block">Impuesto de Renta Estimado</span>
+                <span className="text-[11px] font-bold text-rose-700 uppercase block">Impuesto de Renta Estimado</span>
                 <span className="text-lg font-bold text-rose-900">{colones(d101.impuestoRenta)}</span>
               </div>
 
-              <details className="text-[10px] text-slate-500">
+              <details className="text-[11px] text-slate-500">
                 <summary className="cursor-pointer font-semibold text-slate-600">Ver desglose por tramos</summary>
                 <ul className="mt-2 space-y-1 list-disc list-inside">
                   {d101.tramos.map((t, i) => <li key={i}>{t}</li>)}
                 </ul>
               </details>
 
-              <p className="text-[10px] text-slate-400">{d101.cantidadFacturas} factura(s) · {d101.cantidadNotasDebito} nota(s) de débito emitidas en {d101.anio}.</p>
+              <p className="text-[11px] text-slate-500">{d101.cantidadFacturas} factura(s) · {d101.cantidadNotasDebito} nota(s) de débito emitidas en {d101.anio}.</p>
 
               {!d101.yaCerrado && (
                 <button
@@ -376,12 +389,12 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
         <div className="space-y-3">
           <div className="flex gap-1.5">
             {(['D104', 'D101'] as const).map(t => (
-              <button key={t} onClick={() => setHistorialTipo(t)} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${historialTipo === t ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{t}</button>
+              <button key={t} onClick={() => setHistorialTipo(t)} className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${historialTipo === t ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{t}</button>
             ))}
           </div>
-          {cargandoHistorial && <p className="text-xs text-slate-400 text-center py-6">Cargando...</p>}
+          {cargandoHistorial && <p className="text-xs text-slate-500 text-center py-6">Cargando...</p>}
           {!cargandoHistorial && cierres.length === 0 && (
-            <p className="text-slate-400 text-xs text-center py-6 flex flex-col items-center gap-1.5">
+            <p className="text-slate-500 text-xs text-center py-6 flex flex-col items-center gap-1.5">
               <Archive className="w-5 h-5 text-slate-300" />
               Sin cierres {historialTipo} declarados todavía.
             </p>
@@ -391,7 +404,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
               <div key={c.id} className="p-2.5 bg-white border border-slate-200 rounded-lg flex items-center justify-between">
                 <div>
                   <span className="font-semibold text-slate-800 text-xs block">Período {c.periodo}</span>
-                  <span className="text-[10px] text-slate-500">Cerrado el {new Date(c.creadoEn).toLocaleString('es-CR')}</span>
+                  <span className="text-[11px] text-slate-500">Cerrado el {new Date(c.creadoEn).toLocaleString('es-CR')}</span>
                 </div>
                 <span className="text-xs font-bold text-slate-700">
                   {c.tipo === 'D104' ? colones((c.datos as ReporteD104).saldoAPagar) : colones((c.datos as ReporteD101).impuestoRenta)}

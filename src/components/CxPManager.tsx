@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CuentaPagar, Proveedor, Servicio } from '../data/mockData';
 import { Landmark, Plus, AlertCircle, DollarSign, Trash2, Upload, X, CheckCircle } from 'lucide-react';
+import { notify, confirmar } from './ui/Feedback';
 
 interface ImportarXmlResultado {
   cxp: CuentaPagar;
@@ -124,7 +125,13 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
 
   const handleConfirmarImportacionXml = async () => {
     if (!xmlPendiente) return;
-    if (!confirm(`¿Importar "${xmlPendiente.nombreArchivo}" como compra de proveedor${xmlAlimentaInventario ? ' e incrementar inventario' : ''}? Esta acción registrará la cuenta por pagar y no se puede deshacer.`)) return;
+    const ok = await confirmar({
+      title: '¿Importar esta factura de proveedor?',
+      message: `Se registrará "${xmlPendiente.nombreArchivo}" como cuenta por pagar${xmlAlimentaInventario ? ' y se incrementará el inventario' : ''}. Esta acción no se puede deshacer.`,
+      confirmText: 'Importar',
+      tone: 'warning'
+    });
+    if (!ok) return;
     setXmlImportando(true);
     setXmlError('');
     try {
@@ -284,7 +291,7 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
             <p className="font-bold">Factura importada correctamente.</p>
             <p>Proveedor: {xmlResultado.proveedor.nombre} &middot; Total ₡{xmlResultado.cxp.montoTotal.toLocaleString('es-CR')} &middot; {xmlResultado.articulosAfectados} artículo(s) afectado(s) en inventario.</p>
           </div>
-          <button onClick={() => setXmlResultado(null)} className="ml-auto text-emerald-600 hover:text-emerald-800"><X className="w-3.5 h-3.5" /></button>
+          <button type="button" onClick={() => setXmlResultado(null)} className="ml-auto shrink-0 p-2.5 -m-1 rounded-lg text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100 transition-colors" aria-label="Cerrar aviso"><X className="w-4 h-4" /></button>
         </div>
       )}
 
@@ -295,9 +302,9 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
               <Upload className="w-3.5 h-3.5" />
               Archivo: {xmlPendiente.nombreArchivo}
             </span>
-            <button onClick={() => setXmlPendiente(null)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
+            <button type="button" onClick={() => setXmlPendiente(null)} className="p-2.5 -m-1 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors" aria-label="Descartar archivo"><X className="w-4 h-4" /></button>
           </div>
-          <label className="flex items-start gap-2 p-2.5 bg-slate-50 rounded-lg border border-slate-150 cursor-pointer">
+          <label className="flex items-start gap-2 p-2.5 bg-slate-50 rounded-lg border border-slate-200 cursor-pointer">
             <input
               type="checkbox"
               checked={xmlAlimentaInventario}
@@ -306,7 +313,7 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
             />
             <span>
               <span className="block text-[11px] font-bold text-slate-700">Esta compra alimenta el inventario</span>
-              <span className="block text-[10px] text-slate-450 mt-0.5">
+              <span className="block text-[11px] text-slate-500 mt-0.5">
                 Desactive si es una factura de <b>servicios</b> (alquiler, honorarios, servicios públicos, etc.) — se registrará la cuenta por pagar sin crear ni actualizar artículos.
               </span>
             </span>
@@ -324,15 +331,15 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
-          <span className="text-[10px] font-bold text-amber-700 uppercase block">Pendiente</span>
+          <span className="text-[11px] font-bold text-amber-700 uppercase block">Pendiente</span>
           <span className="text-sm font-bold text-amber-900">₡{totalPendiente.toLocaleString('es-CR', { maximumFractionDigits: 0 })}</span>
         </div>
         <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl">
-          <span className="text-[10px] font-bold text-rose-700 uppercase block">Vencido</span>
+          <span className="text-[11px] font-bold text-rose-700 uppercase block">Vencido</span>
           <span className="text-sm font-bold text-rose-900">₡{totalVencido.toLocaleString('es-CR', { maximumFractionDigits: 0 })}</span>
         </div>
         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
-          <span className="text-[10px] font-bold text-emerald-700 uppercase block">Pagado</span>
+          <span className="text-[11px] font-bold text-emerald-700 uppercase block">Pagado</span>
           <span className="text-sm font-bold text-emerald-900">₡{totalPagado.toLocaleString('es-CR', { maximumFractionDigits: 0 })}</span>
         </div>
       </div>
@@ -340,7 +347,7 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
       {formAbierto && (
         <form onSubmit={handleGuardar} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-3 mb-4">
           {error && (
-            <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[10px] flex items-center gap-1.5">
+            <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] flex items-center gap-1.5">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" />
               <span>{error}</span>
             </div>
@@ -354,12 +361,12 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
               </select>
             </div>
             <div>
-              <label className="block text-slate-600 text-xs font-medium mb-1"># Factura del Proveedor</label>
-              <input type="text" value={numeroFactura} onChange={(e) => setNumeroFactura(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
+              <label htmlFor="cxpmanager-factura-del-proveedor" className="block text-slate-600 text-xs font-medium mb-1"># Factura del Proveedor</label>
+              <input id="cxpmanager-factura-del-proveedor" type="text" value={numeroFactura} onChange={(e) => setNumeroFactura(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
             </div>
             <div>
-              <label className="block text-slate-600 text-xs font-medium mb-1">Plazo de Crédito (días)</label>
-              <input type="number" min="0" value={plazoDias} onChange={(e) => setPlazoDias(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
+              <label htmlFor="cxpmanager-plazo-de-credito-dias" className="block text-slate-600 text-xs font-medium mb-1">Plazo de Crédito (días)</label>
+              <input id="cxpmanager-plazo-de-credito-dias" type="number" min="0" value={plazoDias} onChange={(e) => setPlazoDias(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
             </div>
           </div>
 
@@ -374,54 +381,54 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
 
           {modo === 'GASTO' ? (
             <div>
-              <label className="block text-slate-600 text-xs font-medium mb-1">Monto Total (₡) *</label>
-              <input type="number" min="0" step="0.01" value={montoTotal} onChange={(e) => setMontoTotal(e.target.value)} placeholder="ej: alquiler, servicios, honorarios" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
+              <label htmlFor="cxpmanager-monto-total" className="block text-slate-600 text-xs font-medium mb-1">Monto Total (₡) *</label>
+              <input id="cxpmanager-monto-total" type="number" min="0" step="0.01" value={montoTotal} onChange={(e) => setMontoTotal(e.target.value)} placeholder="ej: alquiler, servicios, honorarios" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
             </div>
           ) : (
             <div className="space-y-2">
               {lineas.map((l, idx) => (
                 <div key={idx} className="grid grid-cols-12 gap-2 items-end">
                   <div className="col-span-6">
-                    <label className="block text-slate-600 text-[10px] font-medium mb-1">Artículo</label>
+                    <label className="block text-slate-600 text-[11px] font-medium mb-1">Artículo</label>
                     <select value={l.idServicio} onChange={(e) => actualizarLinea(idx, 'idServicio', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800">
                       <option value="">Seleccione...</option>
                       {articulos.map(a => <option key={a.id} value={a.id}>{a.nombre} (stock: {a.stock ?? 0})</option>)}
                     </select>
                   </div>
                   <div className="col-span-2">
-                    <label className="block text-slate-600 text-[10px] font-medium mb-1">Cantidad</label>
+                    <label className="block text-slate-600 text-[11px] font-medium mb-1">Cantidad</label>
                     <input type="number" min="0" step="1" value={l.cantidad} onChange={(e) => actualizarLinea(idx, 'cantidad', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
                   </div>
                   <div className="col-span-3">
-                    <label className="block text-slate-600 text-[10px] font-medium mb-1">Costo Unitario (₡)</label>
+                    <label className="block text-slate-600 text-[11px] font-medium mb-1">Costo Unitario (₡)</label>
                     <input type="number" min="0" step="0.01" value={l.costoUnitario} onChange={(e) => actualizarLinea(idx, 'costoUnitario', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
                   </div>
                   <div className="col-span-1">
                     {lineas.length > 1 && (
-                      <button type="button" onClick={() => setLineas(prev => prev.filter((_, i) => i !== idx))} className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50">
-                        <Trash2 className="w-3.5 h-3.5" />
+                      <button type="button" onClick={() => setLineas(prev => prev.filter((_, i) => i !== idx))} className="p-2 rounded-lg text-rose-600 hover:bg-rose-50 transition-colors" aria-label={`Quitar línea ${idx + 1}`} title="Quitar línea">
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     )}
                   </div>
                 </div>
               ))}
-              <button type="button" onClick={() => setLineas(prev => [...prev, { idServicio: '', cantidad: '1', costoUnitario: '' }])} className="text-[10px] font-semibold text-teal-700 hover:underline">
+              <button type="button" onClick={() => setLineas(prev => [...prev, { idServicio: '', cantidad: '1', costoUnitario: '' }])} className="text-[11px] font-semibold text-teal-700 hover:underline">
                 + Agregar artículo
               </button>
               <p className="text-[11px] font-bold text-slate-700">Total: ₡{totalLineas.toLocaleString('es-CR', { maximumFractionDigits: 2 })}</p>
-              <p className="text-[10px] text-slate-500">Esto incrementa las existencias del artículo y actualiza su costo unitario al costo de esta compra.</p>
+              <p className="text-[11px] text-slate-500">Esto incrementa las existencias del artículo y actualiza su costo unitario al costo de esta compra.</p>
             </div>
           )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-slate-600 text-xs font-medium mb-1">Notas</label>
-              <input type="text" value={notas} onChange={(e) => setNotas(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
+              <label htmlFor="cxpmanager-notas" className="block text-slate-600 text-xs font-medium mb-1">Notas</label>
+              <input id="cxpmanager-notas" type="text" value={notas} onChange={(e) => setNotas(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
             </div>
             <div>
-              <label className="block text-slate-600 text-xs font-medium mb-1">IVA Acreditable (₡)</label>
-              <input type="number" min="0" step="0.01" value={ivaAcreditable} onChange={(e) => setIvaAcreditable(e.target.value)} placeholder="Según la factura de compra recibida" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
-              <p className="text-[9px] text-slate-400 mt-0.5">Crédito fiscal para el D-104. Tómelo del desglose de IVA de la factura del proveedor.</p>
+              <label htmlFor="cxpmanager-iva-acreditable" className="block text-slate-600 text-xs font-medium mb-1">IVA Acreditable (₡)</label>
+              <input id="cxpmanager-iva-acreditable" type="number" min="0" step="0.01" value={ivaAcreditable} onChange={(e) => setIvaAcreditable(e.target.value)} placeholder="Según la factura de compra recibida" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
+              <p className="text-[11px] text-slate-500 mt-0.5">Crédito fiscal para el D-104. Tómelo del desglose de IVA de la factura del proveedor.</p>
             </div>
           </div>
 
@@ -436,14 +443,14 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
 
       <div className="flex flex-wrap gap-1.5 mb-3">
         {(['TODAS', 'PENDIENTE', 'VENCIDA', 'PAGADA'] as const).map(f => (
-          <button key={f} onClick={() => setFiltro(f)} className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${filtro === f ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+          <button key={f} onClick={() => setFiltro(f)} className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${filtro === f ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
             {f === 'TODAS' ? 'Todas' : f.charAt(0) + f.slice(1).toLowerCase()}
           </button>
         ))}
       </div>
 
       {visibles.length === 0 && (
-        <p className="text-slate-400 text-xs text-center py-6">No hay cuentas por pagar en este filtro.</p>
+        <p className="text-slate-500 text-xs text-center py-6">No hay cuentas por pagar en este filtro.</p>
       )}
 
       <div className="space-y-1.5">
@@ -456,18 +463,18 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
                   <span className="font-semibold text-slate-800 text-xs block">
                     {nombreProveedor(c.idProveedor)}{c.numeroFacturaProveedor ? ` · ${c.numeroFacturaProveedor}` : ''}
                   </span>
-                  <span className="text-[10px] text-slate-500 block">
+                  <span className="text-[11px] text-slate-500 block">
                     {c.esServicio ? 'Gasto' : `${c.lineas.length} artículo(s)`} &middot; Registrada {c.fechaRegistro} &middot; Vence {c.fechaVencimiento}
                   </span>
-                  <span className="text-[10px] text-slate-600 block">
+                  <span className="text-[11px] text-slate-600 block">
                     Total ₡{c.montoTotal.toLocaleString('es-CR')} &middot; Saldo ₡{c.saldoPendiente.toLocaleString('es-CR')}
                     {c.ivaAcreditable > 0 ? ` · IVA acreditable ₡${c.ivaAcreditable.toLocaleString('es-CR')}` : ''}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ESTADO_ESTILO[estado]}`}>{estado}</span>
+                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${ESTADO_ESTILO[estado]}`}>{estado}</span>
                   {c.estado === 'PENDIENTE' && (
-                    <button onClick={() => abrirAbono(c)} title="Registrar Abono" className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50">
+                    <button onClick={() => abrirAbono(c)} title="Registrar Abono" className="p-2.5 rounded-lg text-emerald-600 hover:bg-emerald-50" aria-label="Registrar Abono">
                       <DollarSign className="w-3.5 h-3.5" />
                     </button>
                   )}
@@ -477,7 +484,7 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
               {c.pagos.length > 0 && (
                 <div className="mt-1.5 pl-2 border-l-2 border-slate-100 space-y-0.5">
                   {c.pagos.map(p => (
-                    <p key={p.id} className="text-[9px] text-slate-400">
+                    <p key={p.id} className="text-[11px] text-slate-500">
                       {p.fecha} &middot; ₡{p.monto.toLocaleString('es-CR')} &middot; {MEDIOS_PAGO[p.medioPago] || p.medioPago}{p.referencia ? ` (${p.referencia})` : ''}
                     </p>
                   ))}
@@ -487,24 +494,24 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
               {abonandoId === c.id && (
                 <div className="mt-2.5 pt-2.5 border-t border-slate-100 space-y-2">
                   {abonoError && (
-                    <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[10px] flex items-center gap-1.5">
+                    <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] flex items-center gap-1.5">
                       <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                       <span>{abonoError}</span>
                     </div>
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <div>
-                      <label className="block text-slate-600 font-medium mb-1 text-[10px]">Monto (₡)</label>
+                      <label className="block text-slate-600 font-medium mb-1 text-[11px]">Monto (₡)</label>
                       <input type="number" min="0" step="0.01" value={montoAbono} onChange={(e) => setMontoAbono(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
                     </div>
                     <div>
-                      <label className="block text-slate-600 font-medium mb-1 text-[10px]">Medio de Pago</label>
+                      <label className="block text-slate-600 font-medium mb-1 text-[11px]">Medio de Pago</label>
                       <select value={medioPagoAbono} onChange={(e) => setMedioPagoAbono(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800">
                         {Object.entries(MEDIOS_PAGO).map(([codigo, nombre]) => <option key={codigo} value={codigo}>{nombre}</option>)}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-slate-600 font-medium mb-1 text-[10px]">Referencia</label>
+                      <label className="block text-slate-600 font-medium mb-1 text-[11px]">Referencia</label>
                       <input type="text" value={referenciaAbono} onChange={(e) => setReferenciaAbono(e.target.value)} placeholder="ej: # comprobante" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
                     </div>
                   </div>

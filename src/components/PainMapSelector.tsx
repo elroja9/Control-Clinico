@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { MapPin } from 'lucide-react';
 
 interface PainMapProps {
   selectedZone: string;
@@ -30,9 +31,9 @@ export default function PainMapSelector({ selectedZone, onSelectZone, painScore 
       <div className="w-full flex items-center justify-between mb-4 pb-2 border-b border-slate-800">
         <div>
           <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">Mapa Anatómico Digital</h4>
-          <p className="text-[10px] text-slate-400">Selecciona el foco del dolor muscular o articular</p>
+          <p className="text-[11px] text-slate-500">Selecciona el foco del dolor muscular o articular</p>
         </div>
-        <span className="text-[10px] font-mono font-semibold bg-teal-950 text-teal-300 border border-teal-800 px-2 py-0.5 rounded-md">
+        <span className="text-[11px] font-mono font-semibold bg-teal-950 text-teal-300 border border-teal-800 px-2 py-0.5 rounded-md">
           EVA: {painScore}/10
         </span>
       </div>
@@ -62,25 +63,27 @@ export default function PainMapSelector({ selectedZone, onSelectZone, painScore 
             <button
               key={zone.id}
               onClick={() => onSelectZone(zone.id)}
-              className={`absolute transition-all duration-300 cursor-pointer rounded-full border-2 w-7 h-7 flex items-center justify-center text-[10px] font-bold shadow-md focus:outline-hidden ring-4 ring-transparent ${getPainColor(painScore, isActive)}`}
+              className={`absolute transition-all duration-300 cursor-pointer rounded-full border-2 w-7 h-7 flex items-center justify-center text-[11px] font-bold shadow-md focus:outline-hidden ring-4 ring-transparent ${getPainColor(painScore, isActive)}`}
               style={{ left: zone.x, top: zone.y, transform: 'translate(-50%, -50%)' }}
               title={zone.label}
+              aria-label={`Zona de dolor: ${zone.label}`}
+              aria-pressed={isActive}
             >
-              📍
+              <MapPin className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           );
         })}
       </div>
 
       {/* Interactive Legend */}
-      <div className="w-full mt-4 bg-slate-950 p-2.5 rounded-xl border border-slate-850/50">
-        <span className="text-[9.5px] font-semibold text-slate-400 block mb-1.5 uppercase">Zonas de Interés</span>
+      <div className="w-full mt-4 bg-slate-950 p-2.5 rounded-xl border border-slate-700/50">
+        <span className="text-[11px] font-semibold text-slate-500 block mb-1.5 uppercase">Zonas de Interés</span>
         <div className="flex flex-wrap gap-1.5">
           {zones.map((z) => (
             <button
               key={z.id}
               onClick={() => onSelectZone(z.id)}
-              className={`text-[9.5px] font-medium px-2 py-1 rounded-md transition-all ${
+              className={`text-[11px] font-medium px-2 py-1 rounded-md transition-all ${
                 selectedZone === z.id
                   ? 'bg-teal-600 text-white'
                   : 'bg-slate-800 text-slate-300 hover:bg-slate-700'

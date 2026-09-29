@@ -118,7 +118,7 @@ export default function FacturaDetailView({ factura, patient, company, onClose, 
             <div>
               <h2 className="text-2xl font-bold tracking-tight text-slate-900">{company.nombreComercial}</h2>
               <p className="text-xs text-slate-500 font-mono mt-0.5">{company.razonSocial}</p>
-              <p className="text-[10px] text-slate-400 font-mono">ID Hacienda: {company.identificacion} | Cédula Jurídica</p>
+              <p className="text-[11px] text-slate-500 font-mono">ID Hacienda: {company.identificacion} | Cédula Jurídica</p>
             </div>
           </div>
           <div className="text-right font-mono text-xs text-slate-500">
@@ -129,14 +129,14 @@ export default function FacturaDetailView({ factura, patient, company, onClose, 
             <span className="block mt-1">Consecutivo: {factura.consecutivo}</span>
             <span className="block break-all">Clave: {factura.clave}</span>
             <span className="block">Fecha: {new Date(factura.fechaEmision).toLocaleString('es-CR')}</span>
-            <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full mt-1 ${ESTADO_ESTILO[factura.estado] || 'bg-slate-100 text-slate-600'}`}>
+            <span className={`inline-block text-[11px] font-bold px-2 py-0.5 rounded-full mt-1 ${ESTADO_ESTILO[factura.estado] || 'bg-slate-100 text-slate-600'}`}>
               {factura.estado}
             </span>
           </div>
         </div>
 
         <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/60 text-xs sm:text-sm">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Receptor</span>
+          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Receptor</span>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
               <span className="text-slate-500 block text-[11px]">Nombre:</span>
@@ -167,7 +167,7 @@ export default function FacturaDetailView({ factura, patient, company, onClose, 
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-left text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-200">
+              <tr className="text-left text-slate-500 uppercase text-[11px] tracking-wider border-b border-slate-200">
                 <th className="py-2 pr-3">Detalle</th>
                 <th className="py-2 pr-3 text-center">Cant.</th>
                 <th className="py-2 pr-3 text-right">Precio Unit.</th>

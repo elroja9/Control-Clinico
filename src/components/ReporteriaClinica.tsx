@@ -112,7 +112,7 @@ export default function ReporteriaClinica({ company }: ReporteriaClinicaProps) {
         ) : (
           <div className="flex flex-wrap items-center gap-2">
             <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs" />
-            <span className="text-xs text-slate-400">a</span>
+            <span className="text-xs text-slate-500">a</span>
             <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs" />
           </div>
         )}
@@ -123,30 +123,30 @@ export default function ReporteriaClinica({ company }: ReporteriaClinicaProps) {
       )}
 
       {cargando ? (
-        <div className="text-center text-xs text-slate-400 py-10">Cargando reporte...</div>
+        <div className="text-center text-xs text-slate-500 py-10">Cargando reporte...</div>
       ) : reporte && (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-              <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-1">
+              <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-bold uppercase tracking-wider mb-1">
                 <UserPlus className="w-3.5 h-3.5" /> Pacientes Nuevos
               </div>
               <span className="text-2xl font-bold text-slate-900">{reporte.resumen.pacientesNuevos}</span>
             </div>
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-              <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-1">
+              <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-bold uppercase tracking-wider mb-1">
                 <Users className="w-3.5 h-3.5" /> Pacientes Atendidos
               </div>
               <span className="text-2xl font-bold text-slate-900">{reporte.resumen.pacientesAtendidos}</span>
             </div>
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-              <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-1">
+              <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-bold uppercase tracking-wider mb-1">
                 <CheckCircle2 className="w-3.5 h-3.5" /> Sesiones Completadas
               </div>
               <span className="text-2xl font-bold text-slate-900">{reporte.resumen.sesionesCompletadas}</span>
             </div>
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-              <div className="flex items-center gap-1.5 text-slate-400 text-[10px] font-bold uppercase tracking-wider mb-1">
+              <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-bold uppercase tracking-wider mb-1">
                 <TrendingUp className="w-3.5 h-3.5" /> Tasa de Asistencia
               </div>
               <span className="text-2xl font-bold text-slate-900">{reporte.resumen.tasaAsistencia}%</span>
@@ -182,12 +182,12 @@ export default function ReporteriaClinica({ company }: ReporteriaClinicaProps) {
               </button>
             </div>
             {reporte.pacientes.length === 0 ? (
-              <p className="text-xs text-slate-400 text-center py-6">No hay datos para el período seleccionado.</p>
+              <p className="text-xs text-slate-500 text-center py-6">No hay datos para el período seleccionado.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className="text-left text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-100">
+                    <tr className="text-left text-slate-500 uppercase text-[11px] tracking-wider border-b border-slate-100">
                       <th className="py-2 pr-3">Paciente</th>
                       <th className="py-2 pr-3">Sesiones Completadas</th>
                       <th className="py-2 pr-3">Nuevo</th>
@@ -199,7 +199,7 @@ export default function ReporteriaClinica({ company }: ReporteriaClinicaProps) {
                         <td className="py-2 pr-3 font-semibold text-slate-800">{p.nombreCompleto}</td>
                         <td className="py-2 pr-3 text-slate-600">{p.sesionesCompletadas}</td>
                         <td className="py-2 pr-3">
-                          {p.esNuevo && <span className="bg-sky-50 text-sky-700 border border-sky-200 px-2 py-0.5 rounded-full text-[10px] font-bold">Nuevo</span>}
+                          {p.esNuevo && <span className="bg-sky-50 text-sky-700 border border-sky-200 px-2 py-0.5 rounded-full text-[11px] font-bold">Nuevo</span>}
                         </td>
                       </tr>
                     ))}

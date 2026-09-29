@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Servicio, Factura, FacturaLinea } from '../data/mockData';
 import { FileMinus, FilePlus, X, AlertCircle, Check, Loader2 } from 'lucide-react';
+import { useDialog } from '../hooks/useDialog';
 
 interface AjusteFacturaModalProps {
   tipo: 'CREDITO' | 'DEBITO';
@@ -30,6 +31,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState('');
   const [resultado, setResultado] = useState<Factura | null>(null);
+  const dialogRef = useDialog<HTMLDivElement>(true, () => { if (!enviando) onClose(); });
 
   // Para Nota de Crédito, las opciones son las propias líneas de la factura original (se acredita
   // al precio/IVA con que se facturó, no al precio vigente hoy). Para Nota de Débito, son el
@@ -84,21 +86,21 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
   const Icono = esCredito ? FileMinus : FilePlus;
 
   return (
-    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in font-sans">
-      <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[85vh] overflow-y-auto">
-        <div className="p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
-          <div className="flex items-center gap-2">
-            <Icono className="w-5 h-5 text-teal-400" />
-            <h3 className="text-sm font-bold">Nota de {esCredito ? 'Crédito' : 'Débito'} — Factura {factura.consecutivo}</h3>
+    <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="titulo-ajuste-factura" tabIndex={-1} className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden">
+        <div className="surface-dark sticky top-0 z-10 p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <Icono className="w-5 h-5 text-white/80 shrink-0" aria-hidden="true" />
+            <h3 id="titulo-ajuste-factura" className="text-sm font-bold">Nota de {esCredito ? 'crédito' : 'débito'} · Factura {factura.consecutivo}</h3>
           </div>
-          <button onClick={onClose} className="text-white hover:text-slate-200 p-1">
+          <button type="button" onClick={onClose} disabled={enviando} className="text-white hover:bg-white/15 w-9 h-9 -m-1.5 flex items-center justify-center rounded-lg transition-colors disabled:opacity-50" aria-label="Cerrar">
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <div className="p-5 space-y-4">
           {error && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-100 text-rose-600 text-xs flex items-center gap-2">
+            <div role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
             </div>
@@ -145,7 +147,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                     <div key={o.key} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-lg">
                       <div className="min-w-0">
                         <span className="text-xs font-semibold text-slate-800 block truncate">{o.nombre}</span>
-                        <span className="text-[10px] text-slate-500">
+                        <span className="text-[11px] text-slate-500">
                           ₡{o.precio.toLocaleString('es-CR')}
                           {esCredito && ` · facturado: ${o.cantidadMaxima}`}
                           {o.sinCabys && <span className="text-amber-600 font-bold"> (sin CABYS)</span>}
@@ -168,8 +170,8 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
 
               {!esCredito && (
                 <div>
-                  <label className="block text-slate-600 text-xs font-bold mb-1.5">Medio de Pago</label>
-                  <select
+                  <label htmlFor="ajustefact-medio-de-pago" className="block text-slate-600 text-xs font-bold mb-1.5">Medio de Pago</label>
+                  <select id="ajustefact-medio-de-pago"
                     value={medioPago}
                     onChange={(e) => setMedioPago(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
@@ -182,8 +184,8 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
               )}
 
               <div>
-                <label className="block text-slate-600 text-xs font-bold mb-1.5">Motivo *</label>
-                <input
+                <label htmlFor="ajustefact-motivo" className="block text-slate-600 text-xs font-bold mb-1.5">Motivo *</label>
+                <input id="ajustefact-motivo"
                   type="text"
                   value={motivo}
                   onChange={(e) => setMotivo(e.target.value)}
@@ -214,7 +216,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                   onChange={(e) => setModoPrueba(e.target.checked)}
                   className="mt-0.5"
                 />
-                <span className="text-[10px] text-sky-800">
+                <span className="text-[11px] text-sky-800">
                   <span className="font-bold block">Modo prueba (no enviar a Hacienda)</span>
                   Se numera y guarda igual que siempre, pero no se envía a Hacienda — queda marcada como SIMULADA.
                 </span>

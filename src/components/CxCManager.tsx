@@ -91,15 +91,15 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
-          <span className="text-[10px] font-bold text-amber-700 uppercase block">Pendiente</span>
+          <span className="text-[11px] font-bold text-amber-700 uppercase block">Pendiente</span>
           <span className="text-sm font-bold text-amber-900">₡{totalPendiente.toLocaleString('es-CR', { maximumFractionDigits: 0 })}</span>
         </div>
         <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl">
-          <span className="text-[10px] font-bold text-rose-700 uppercase block">Vencido</span>
+          <span className="text-[11px] font-bold text-rose-700 uppercase block">Vencido</span>
           <span className="text-sm font-bold text-rose-900">₡{totalVencido.toLocaleString('es-CR', { maximumFractionDigits: 0 })}</span>
         </div>
         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
-          <span className="text-[10px] font-bold text-emerald-700 uppercase block">Cobrado</span>
+          <span className="text-[11px] font-bold text-emerald-700 uppercase block">Cobrado</span>
           <span className="text-sm font-bold text-emerald-900">₡{totalCobrado.toLocaleString('es-CR', { maximumFractionDigits: 0 })}</span>
         </div>
       </div>
@@ -109,7 +109,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
           <button
             key={f}
             onClick={() => setFiltro(f)}
-            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${filtro === f ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${filtro === f ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
           >
             {f === 'TODAS' ? 'Todas' : f.charAt(0) + f.slice(1).toLowerCase()}
           </button>
@@ -117,7 +117,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
       </div>
 
       {visibles.length === 0 && (
-        <p className="text-slate-400 text-xs text-center py-6">No hay cuentas por cobrar en este filtro.</p>
+        <p className="text-slate-500 text-xs text-center py-6">No hay cuentas por cobrar en este filtro.</p>
       )}
 
       <div className="space-y-1.5">
@@ -128,20 +128,21 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <span className="font-semibold text-slate-800 text-xs block">{nombrePaciente(c.idPaciente)}</span>
-                  <span className="text-[10px] text-slate-500 block">
+                  <span className="text-[11px] text-slate-500 block">
                     Factura {c.facturaConsecutivo} &middot; Emitida {c.fechaEmision} &middot; Vence {c.fechaVencimiento}
                   </span>
-                  <span className="text-[10px] text-slate-600 block">
+                  <span className="text-[11px] text-slate-600 block">
                     Total ₡{c.montoTotal.toLocaleString('es-CR')} &middot; Saldo ₡{c.saldoPendiente.toLocaleString('es-CR')}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ESTADO_ESTILO[estado]}`}>{estado}</span>
+                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${ESTADO_ESTILO[estado]}`}>{estado}</span>
                   {c.estado === 'PENDIENTE' && (
                     <button
                       onClick={() => abrirAbono(c)}
                       title="Registrar Abono"
-                      className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50"
+                      className="p-2.5 rounded-lg text-emerald-600 hover:bg-emerald-50"
+                      aria-label="Registrar Abono"
                     >
                       <DollarSign className="w-3.5 h-3.5" />
                     </button>
@@ -152,7 +153,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
               {c.pagos.length > 0 && (
                 <div className="mt-1.5 pl-2 border-l-2 border-slate-100 space-y-0.5">
                   {c.pagos.map(p => (
-                    <p key={p.id} className="text-[9px] text-slate-400">
+                    <p key={p.id} className="text-[11px] text-slate-500">
                       {p.fecha} &middot; ₡{p.monto.toLocaleString('es-CR')} &middot; {MEDIOS_PAGO[p.medioPago] || p.medioPago}{p.referencia ? ` (${p.referencia})` : ''}
                     </p>
                   ))}
@@ -162,14 +163,14 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
               {abonandoId === c.id && (
                 <div className="mt-2.5 pt-2.5 border-t border-slate-100 space-y-2">
                   {error && (
-                    <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[10px] flex items-center gap-1.5">
+                    <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] flex items-center gap-1.5">
                       <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                       <span>{error}</span>
                     </div>
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <div>
-                      <label className="block text-slate-600 font-medium mb-1 text-[10px]">Monto (₡)</label>
+                      <label className="block text-slate-600 font-medium mb-1 text-[11px]">Monto (₡)</label>
                       <input
                         type="number" min="0" step="0.01"
                         value={montoAbono}
@@ -178,7 +179,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
                       />
                     </div>
                     <div>
-                      <label className="block text-slate-600 font-medium mb-1 text-[10px]">Medio de Pago</label>
+                      <label className="block text-slate-600 font-medium mb-1 text-[11px]">Medio de Pago</label>
                       <select
                         value={medioPagoAbono}
                         onChange={(e) => setMedioPagoAbono(e.target.value)}
@@ -190,7 +191,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
                       </select>
                     </div>
                     <div>
-                      <label className="block text-slate-600 font-medium mb-1 text-[10px]">Referencia</label>
+                      <label className="block text-slate-600 font-medium mb-1 text-[11px]">Referencia</label>
                       <input
                         type="text"
                         value={referenciaAbono}

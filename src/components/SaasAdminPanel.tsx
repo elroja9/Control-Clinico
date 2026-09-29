@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Company, User, CompanyPayment } from '../data/mockData';
 import { ShieldCheck, ShieldAlert, ShieldOff, Users, DollarSign, X, Plus } from 'lucide-react';
+import { notify } from './ui/Feedback';
+import { useDialog } from '../hooks/useDialog';
 
 interface SaasAdminPanelProps {
   companies: Company[];
@@ -36,6 +38,7 @@ export default function SaasAdminPanel({
   const [editingLimitId, setEditingLimitId] = useState<number | null>(null);
   const [limitDraft, setLimitDraft] = useState(5);
   const [paymentsCompanyId, setPaymentsCompanyId] = useState<number | null>(null);
+  const pagosDialogRef = useDialog<HTMLDivElement>(paymentsCompanyId != null, () => setPaymentsCompanyId(null));
   const [newPaymentFecha, setNewPaymentFecha] = useState(new Date().toISOString().slice(0, 10));
   const [newPaymentMonto, setNewPaymentMonto] = useState(0);
   const [newPaymentNotas, setNewPaymentNotas] = useState('');
@@ -65,7 +68,7 @@ export default function SaasAdminPanel({
   const handleAddPaymentSubmit = (e: React.FormEvent, company: Company) => {
     e.preventDefault();
     if (newPaymentMonto <= 0) {
-      alert('Ingrese un monto válido.');
+      notify.warning('Ingrese un monto válido.');
       return;
     }
     onAddPayment({
@@ -105,9 +108,9 @@ export default function SaasAdminPanel({
               <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                 <div>
                   <span className="font-bold text-slate-800 block">{company.nombreComercial}</span>
-                  <span className="text-[10px] text-slate-500">{company.identificacion}</span>
+                  <span className="text-[11px] text-slate-500">{company.identificacion}</span>
                 </div>
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ESTADO_BADGE[company.estadoSaas]}`}>
+                <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${ESTADO_BADGE[company.estadoSaas]}`}>
                   {ESTADO_LABEL[company.estadoSaas]}
                 </span>
               </div>
@@ -196,12 +199,12 @@ export default function SaasAdminPanel({
       </div>
 
       {paymentsCompany && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-lg w-full p-5 max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2.5">
-              <h4 className="font-bold text-slate-800">Historial de Pagos — {paymentsCompany.nombreComercial}</h4>
-              <button onClick={() => setPaymentsCompanyId(null)} className="p-1.5 rounded-full hover:bg-slate-100">
-                <X className="w-4 h-4 text-slate-500" />
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in">
+          <div ref={pagosDialogRef} role="dialog" aria-modal="true" aria-labelledby="titulo-pagos-saas" tabIndex={-1} className="bg-white rounded-t-3xl sm:rounded-2xl border border-slate-200 shadow-xl max-w-lg w-full p-5 max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden">
+            <div className="flex items-center justify-between gap-2 mb-3 border-b border-slate-100 pb-2.5">
+              <h4 id="titulo-pagos-saas" className="font-bold text-slate-900">Historial de pagos · {paymentsCompany.nombreComercial}</h4>
+              <button type="button" onClick={() => setPaymentsCompanyId(null)} className="w-9 h-9 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors" aria-label="Cerrar">
+                <X className="w-4 h-4 text-slate-600" />
               </button>
             </div>
 
@@ -235,8 +238,8 @@ export default function SaasAdminPanel({
               />
               <div className="sm:col-span-3 grid grid-cols-2 gap-2 pt-1 border-t border-slate-100">
                 <div>
-                  <label className="block text-slate-500 text-[10px] font-semibold mb-1">Monto Mensual (opcional)</label>
-                  <input
+                  <label htmlFor="saasadminp-monto-mensual-opcional" className="block text-slate-500 text-[11px] font-semibold mb-1">Monto Mensual (opcional)</label>
+                  <input id="saasadminp-monto-mensual-opcional"
                     type="number"
                     value={newPaymentMontoMensual}
                     onChange={(e) => setNewPaymentMontoMensual(e.target.value)}
@@ -244,8 +247,8 @@ export default function SaasAdminPanel({
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-500 text-[10px] font-semibold mb-1">Próximo Vencimiento (opcional)</label>
-                  <input
+                  <label htmlFor="saasadminp-proximo-vencimiento-opcional" className="block text-slate-500 text-[11px] font-semibold mb-1">Próximo Vencimiento (opcional)</label>
+                  <input id="saasadminp-proximo-vencimiento-opcional"
                     type="date"
                     value={newPaymentVencimiento}
                     onChange={(e) => setNewPaymentVencimiento(e.target.value)}
@@ -263,7 +266,7 @@ export default function SaasAdminPanel({
                 <div key={p.id} className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
                   <div>
                     <span className="font-semibold text-slate-800 block">₡{p.monto}</span>
-                    <span className="text-[10px] text-slate-500">{p.fecha}{p.notas ? ` · ${p.notas}` : ''}</span>
+                    <span className="text-[11px] text-slate-500">{p.fecha}{p.notas ? ` · ${p.notas}` : ''}</span>
                   </div>
                 </div>
               ))}

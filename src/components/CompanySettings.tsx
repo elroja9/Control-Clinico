@@ -3,6 +3,7 @@ import PlantillaDietaManager from './PlantillaDietaManager';
 import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION, Servicio, PorcentajeDieta, PlantillaDieta } from '../data/mockData';
 import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X } from 'lucide-react';
+import { notify } from './ui/Feedback';
 
 interface CompanySettingsProps {
   companies: Company[];
@@ -73,11 +74,11 @@ export default function CompanySettings({
   const handleAgregarPorcentaje = () => {
     const valor = parseFloat(nuevoPorcentaje);
     if (isNaN(valor) || valor < 0 || valor > 100) {
-      alert('Ingrese un porcentaje entre 0 y 100.');
+      notify.warning('Ingrese un porcentaje entre 0 y 100.');
       return;
     }
     if (porcentajesDeEstaEmpresa.some(p => Number(p.porcentaje) === valor)) {
-      alert('Ese porcentaje ya está en la lista.');
+      notify.warning('Ese porcentaje ya está en la lista.');
       return;
     }
     onSavePorcentajeDieta({ id: 0, idCompania: currentCompany.id, porcentaje: valor });
@@ -253,7 +254,7 @@ export default function CompanySettings({
       activo: smtpActivo
     };
     onUpdateSmtpConfig(updatedSmtp);
-    alert('¡Configuración SMTP y notificaciones guardadas con éxito!');
+    notify.success('Configuración de correo y notificaciones guardada.');
   };
 
   const handleCertificadoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -472,11 +473,11 @@ export default function CompanySettings({
   const handleCreateUser = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUserNombre.trim() || !newUserUsuario.trim() || !newUserCorreo.trim() || !newUserContrasena.trim()) {
-      alert('Por favor complete todos los campos del nuevo colaborador.');
+      notify.warning('Complete todos los campos del nuevo colaborador.');
       return;
     }
     if (userLimitReached) {
-      alert(`Alcanzaste el límite de ${currentCompany.maxUsuarios} usuarios de tu plan. Contacta al administrador de la plataforma para ampliarlo.`);
+      notify.warning(`Alcanzaste el límite de ${currentCompany.maxUsuarios} usuarios de tu plan. Contacta al administrador de la plataforma para ampliarlo.`);
       return;
     }
     const newUser: User = {
@@ -565,7 +566,7 @@ export default function CompanySettings({
     e.preventDefault();
     const esArticulo = servicioTipo === 'ARTICULO';
     if (!servicioNombre.trim() || !servicioPrecio.trim() || (!esArticulo && !servicioDuracion.trim())) {
-      alert(`Por favor complete el nombre, el precio${esArticulo ? '' : ' y la duración'} del ${esArticulo ? 'artículo' : 'servicio'}.`);
+      notify.warning(`Complete el nombre, el precio${esArticulo ? '' : ' y la duración'} del ${esArticulo ? 'artículo' : 'servicio'}.`);
       return;
     }
     const precioParsed = parseFloat(servicioPrecio);
@@ -580,7 +581,7 @@ export default function CompanySettings({
       (stockMinimoParsed != null && !Number.isFinite(stockMinimoParsed)) ||
       (costoParsed != null && !Number.isFinite(costoParsed))
     ) {
-      alert('El precio, el IVA, la duración y los campos de inventario deben ser valores numéricos válidos.');
+      notify.warning('El precio, el IVA, la duración y los campos de inventario deben ser valores numéricos válidos.');
       return;
     }
     const servicioExistente = servicioEditId != null ? servicios.find(s => s.id === servicioEditId) : undefined;
@@ -622,7 +623,7 @@ export default function CompanySettings({
     if (ajustandoStockId == null) return;
     const nuevoStock = parseInt(ajusteStockValor);
     if (!Number.isFinite(nuevoStock) || nuevoStock < 0) {
-      alert('La nueva existencia debe ser un número entero mayor o igual a cero.');
+      notify.warning('La nueva existencia debe ser un número entero mayor o igual a cero.');
       return;
     }
     setAjusteStockGuardando(true);
@@ -630,7 +631,7 @@ export default function CompanySettings({
       await onAjustarStock(ajustandoStockId, nuevoStock, ajusteStockNotas.trim());
       setAjustandoStockId(null);
     } catch (err: any) {
-      alert(err.message || 'No se pudo ajustar la existencia.');
+      notify.error(err.message || 'No se pudo ajustar la existencia.');
     } finally {
       setAjusteStockGuardando(false);
     }
@@ -717,11 +718,11 @@ export default function CompanySettings({
                   />
                   <div>
                     <span className="font-bold text-xs text-slate-800 block">{c.nombreComercial}</span>
-                    <span className="text-[10px] text-slate-500 block truncate max-w-[120px]">{c.identificacion}</span>
+                    <span className="text-[11px] text-slate-500 block truncate max-w-[120px]">{c.identificacion}</span>
                   </div>
                 </div>
                 {isSelected && (
-                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px]" style={{ backgroundColor: c.colorPrimario }}>
+                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[11px]" style={{ backgroundColor: c.colorPrimario }}>
                     <Check className="w-3 h-3" />
                   </div>
                 )}
@@ -735,7 +736,7 @@ export default function CompanySettings({
       {!isEditing && !isAdding && (
         <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
           <div className="flex justify-between items-start mb-2">
-            <span className="text-[11px] font-bold text-slate-400 uppercase">Identidad de Marca</span>
+            <span className="text-[11px] font-bold text-slate-500 uppercase">Identidad de Marca</span>
             <button
               onClick={() => setIsEditing(true)}
               className="text-[11px] font-bold text-teal-700 hover:underline flex items-center gap-1"
@@ -768,7 +769,7 @@ export default function CompanySettings({
             </div>
             <div>
               <span className="text-slate-500 block">Perfil de Clínica:</span>
-              <span className="font-extrabold text-slate-800 bg-slate-100 border border-slate-200 rounded-md px-1.5 py-0.5 inline-block mt-0.5 text-[10px]">
+              <span className="font-extrabold text-slate-800 bg-slate-100 border border-slate-200 rounded-md px-1.5 py-0.5 inline-block mt-0.5 text-[11px]">
                 {currentCompany.perfilCompania || 'Ambas'}
               </span>
             </div>
@@ -796,7 +797,7 @@ export default function CompanySettings({
             <Mail className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
             <div>
               <h4 className="font-bold text-slate-800">Parámetros SMTP y Alertas por Correo</h4>
-              <p className="text-[10px] text-slate-500">Configura las credenciales de correo de la clínica para enviar recordatorios y confirmaciones automáticas de citas</p>
+              <p className="text-[11px] text-slate-500">Configura las credenciales de correo de la clínica para enviar recordatorios y confirmaciones automáticas de citas</p>
             </div>
           </div>
 
@@ -804,7 +805,7 @@ export default function CompanySettings({
           <div className="flex items-center justify-between bg-white p-3.5 rounded-xl border border-slate-200">
             <div>
               <span className="font-bold text-slate-800 block">Notificaciones de Agenda Activas</span>
-              <span className="text-[10px] text-slate-400 block">Si se apaga, las citas no enviarán correos automáticos de confirmación, modificación o cancelación</span>
+              <span className="text-[11px] text-slate-500 block">Si se apaga, las citas no enviarán correos automáticos de confirmación, modificación o cancelación</span>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -844,8 +845,8 @@ export default function CompanySettings({
             </div>
 
             <div>
-              <label className="block text-slate-600 mb-1 font-semibold">Servidor Host SMTP</label>
-              <input
+              <label htmlFor="companyset-servidor-host-smtp" className="block text-slate-600 mb-1 font-semibold">Servidor Host SMTP</label>
+              <input id="companyset-servidor-host-smtp"
                 type="text"
                 required
                 value={smtpHost}
@@ -857,8 +858,8 @@ export default function CompanySettings({
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-slate-600 mb-1 font-semibold">Puerto</label>
-                <input
+                <label htmlFor="companyset-puerto" className="block text-slate-600 mb-1 font-semibold">Puerto</label>
+                <input id="companyset-puerto"
                   type="number"
                   required
                   value={smtpPort}
@@ -867,8 +868,8 @@ export default function CompanySettings({
                 />
               </div>
               <div>
-                <label className="block text-slate-600 mb-1 font-semibold">Seguridad</label>
-                <select
+                <label htmlFor="companyset-seguridad" className="block text-slate-600 mb-1 font-semibold">Seguridad</label>
+                <select id="companyset-seguridad"
                   value={smtpSeguridad}
                   onChange={(e) => setSmtpSeguridad(e.target.value as CompaniaSmtpConfig['smtpSeguridad'])}
                   className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
@@ -883,8 +884,8 @@ export default function CompanySettings({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-slate-600 mb-1 font-semibold">Usuario de Autenticación SMTP</label>
-              <input
+              <label htmlFor="companyset-usuario-de-autenticacion-smtp" className="block text-slate-600 mb-1 font-semibold">Usuario de Autenticación SMTP</label>
+              <input id="companyset-usuario-de-autenticacion-smtp"
                 type="text"
                 required
                 value={smtpUsuario}
@@ -894,8 +895,8 @@ export default function CompanySettings({
               />
             </div>
             <div>
-              <label className="block text-slate-600 mb-1 font-semibold">Contraseña SMTP / App Password</label>
-              <input
+              <label htmlFor="companyset-contrasena-smtp-app-password" className="block text-slate-600 mb-1 font-semibold">Contraseña SMTP / App Password</label>
+              <input id="companyset-contrasena-smtp-app-password"
                 type="password"
                 required={!smtpTieneContrasena}
                 value={smtpPassword}
@@ -908,8 +909,8 @@ export default function CompanySettings({
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 border-t border-slate-200/60">
             <div>
-              <label className="block text-slate-600 mb-1 font-semibold">Nombre de Remitente</label>
-              <input
+              <label htmlFor="companyset-nombre-de-remitente" className="block text-slate-600 mb-1 font-semibold">Nombre de Remitente</label>
+              <input id="companyset-nombre-de-remitente"
                 type="text"
                 required
                 value={smtpRemitenteNombre}
@@ -919,8 +920,8 @@ export default function CompanySettings({
               />
             </div>
             <div>
-              <label className="block text-slate-600 mb-1 font-semibold">Correo de Remitente</label>
-              <input
+              <label htmlFor="companyset-correo-de-remitente" className="block text-slate-600 mb-1 font-semibold">Correo de Remitente</label>
+              <input id="companyset-correo-de-remitente"
                 type="email"
                 required
                 value={smtpRemitenteCorreo}
@@ -930,8 +931,8 @@ export default function CompanySettings({
               />
             </div>
             <div>
-              <label className="block text-slate-600 mb-1 font-semibold">Recordatorio Automático</label>
-              <select
+              <label htmlFor="companyset-recordatorio-automatico" className="block text-slate-600 mb-1 font-semibold">Recordatorio Automático</label>
+              <select id="companyset-recordatorio-automatico"
                 value={smtpRecordatorioHoras}
                 onChange={(e) => setSmtpRecordatorioHoras(parseInt(e.target.value))}
                 className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
@@ -964,7 +965,7 @@ export default function CompanySettings({
             <ShieldCheck className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
             <div>
               <h4 className="font-bold text-slate-800">Firma Digital Hacienda (Facturación Electrónica)</h4>
-              <p className="text-[10px] text-slate-500">Certificado criptográfico (.p12) y credenciales ATV para firmar comprobantes electrónicos</p>
+              <p className="text-[11px] text-slate-500">Certificado criptográfico (.p12) y credenciales ATV para firmar comprobantes electrónicos</p>
             </div>
           </div>
 
@@ -976,7 +977,7 @@ export default function CompanySettings({
           )}
 
           {haciendaInfoCertificado && (
-            <div className="p-3 rounded-xl border border-slate-200 bg-white text-[10.5px] space-y-1">
+            <div className="p-3 rounded-xl border border-slate-200 bg-white text-[11px] space-y-1">
               <div><span className="font-bold text-slate-600">Sujeto: </span>{haciendaInfoCertificado.sujeto}</div>
               <div><span className="font-bold text-slate-600">Emisor: </span>{haciendaInfoCertificado.emisor}</div>
               <div><span className="font-bold text-slate-600">Vence: </span>{new Date(haciendaInfoCertificado.validoHasta).toLocaleDateString('es-CR')}</div>
@@ -986,8 +987,8 @@ export default function CompanySettings({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-slate-600 mb-1 font-semibold">Ambiente</label>
-              <select
+              <label htmlFor="companyset-ambiente" className="block text-slate-600 mb-1 font-semibold">Ambiente</label>
+              <select id="companyset-ambiente"
                 value={haciendaAmbiente}
                 onChange={(e) => setHaciendaAmbiente(e.target.value as 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL')}
                 className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
@@ -998,8 +999,8 @@ export default function CompanySettings({
               </select>
             </div>
             <div>
-              <label className="block text-slate-600 mb-1 font-semibold">Usuario ATV</label>
-              <input
+              <label htmlFor="companyset-usuario-atv" className="block text-slate-600 mb-1 font-semibold">Usuario ATV</label>
+              <input id="companyset-usuario-atv"
                 type="text"
                 value={haciendaUsuarioAtv}
                 onChange={(e) => setHaciendaUsuarioAtv(e.target.value)}
@@ -1010,8 +1011,8 @@ export default function CompanySettings({
           </div>
 
           <div>
-            <label className="block text-slate-600 mb-1 font-semibold">Contraseña ATV</label>
-            <input
+            <label htmlFor="companyset-contrasena-atv" className="block text-slate-600 mb-1 font-semibold">Contraseña ATV</label>
+            <input id="companyset-contrasena-atv"
               type="password"
               value={haciendaPasswordAtv}
               onChange={(e) => setHaciendaPasswordAtv(e.target.value)}
@@ -1022,16 +1023,16 @@ export default function CompanySettings({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-slate-600 mb-1 font-semibold flex items-center gap-1">
+              <label htmlFor="companyset-certificado-criptografico-p12" className="block text-slate-600 mb-1 font-semibold flex items-center gap-1">
                 <Upload className="w-3 h-3" /> Certificado Criptográfico (.p12)
               </label>
-              <input
+              <input id="companyset-certificado-criptografico-p12"
                 type="file"
                 accept=".p12,.pfx"
                 onChange={handleCertificadoFileChange}
                 className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
               />
-              <span className="text-[10px] text-slate-400 block mt-1">
+              <span className="text-[11px] text-slate-500 block mt-1">
                 {haciendaCertificadoNombreNuevo
                   ? `Nuevo archivo seleccionado: ${haciendaCertificadoNombreNuevo}`
                   : haciendaTieneCertificado
@@ -1040,8 +1041,8 @@ export default function CompanySettings({
               </span>
             </div>
             <div>
-              <label className="block text-slate-600 mb-1 font-semibold">PIN del Certificado</label>
-              <input
+              <label htmlFor="companyset-pin-del-certificado" className="block text-slate-600 mb-1 font-semibold">PIN del Certificado</label>
+              <input id="companyset-pin-del-certificado"
                 type="password"
                 value={haciendaCertificadoPin}
                 onChange={(e) => setHaciendaCertificadoPin(e.target.value)}
@@ -1082,7 +1083,7 @@ export default function CompanySettings({
               <UsersIcon className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
               <div>
                 <h4 className="font-bold text-slate-800">Usuarios y Colaboradores</h4>
-                <p className="text-[10px] text-slate-500">
+                <p className="text-[11px] text-slate-500">
                   {activeUserCount} de {currentCompany.maxUsuarios} usuarios activos permitidos por tu plan
                 </p>
               </div>
@@ -1110,8 +1111,8 @@ export default function CompanySettings({
             <form onSubmit={handleCreateUser} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">Nombre Completo *</label>
-                  <input
+                  <label htmlFor="companyset-nombre-completo" className="block text-slate-600 font-medium mb-1">Nombre Completo *</label>
+                  <input id="companyset-nombre-completo"
                     type="text"
                     value={newUserNombre}
                     onChange={(e) => setNewUserNombre(e.target.value)}
@@ -1119,8 +1120,8 @@ export default function CompanySettings({
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">Correo *</label>
-                  <input
+                  <label htmlFor="companyset-correo" className="block text-slate-600 font-medium mb-1">Correo *</label>
+                  <input id="companyset-correo"
                     type="email"
                     value={newUserCorreo}
                     onChange={(e) => setNewUserCorreo(e.target.value)}
@@ -1130,8 +1131,8 @@ export default function CompanySettings({
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">Nombre de Usuario *</label>
-                  <input
+                  <label htmlFor="companyset-nombre-de-usuario" className="block text-slate-600 font-medium mb-1">Nombre de Usuario *</label>
+                  <input id="companyset-nombre-de-usuario"
                     type="text"
                     value={newUserUsuario}
                     onChange={(e) => setNewUserUsuario(e.target.value)}
@@ -1139,8 +1140,8 @@ export default function CompanySettings({
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">Contraseña *</label>
-                  <input
+                  <label htmlFor="companyset-contrasena" className="block text-slate-600 font-medium mb-1">Contraseña *</label>
+                  <input id="companyset-contrasena"
                     type="password"
                     value={newUserContrasena}
                     onChange={(e) => setNewUserContrasena(e.target.value)}
@@ -1149,8 +1150,8 @@ export default function CompanySettings({
                 </div>
               </div>
               <div>
-                <label className="block text-slate-600 font-medium mb-1">Rol</label>
-                <select
+                <label htmlFor="companyset-rol" className="block text-slate-600 font-medium mb-1">Rol</label>
+                <select id="companyset-rol"
                   value={newUserRol}
                   onChange={(e) => setNewUserRol(e.target.value as 'Administrador' | 'Profesional')}
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
@@ -1183,16 +1184,17 @@ export default function CompanySettings({
               <div key={u.id} className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg">
                 <div>
                   <span className="font-semibold text-slate-800 block">{u.nombre}</span>
-                  <span className="text-[10px] text-slate-500">{u.usuario} &middot; {u.rol}</span>
+                  <span className="text-[11px] text-slate-500">{u.usuario} &middot; {u.rol}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${u.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
+                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${u.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
                     {u.activo ? 'Activo' : 'Inactivo'}
                   </span>
                   <button
                     onClick={() => handleToggleUserActivo(u)}
                     title={u.activo ? 'Desactivar' : 'Activar'}
-                    className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                    className="p-2.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                    aria-label={u.activo ? 'Desactivar' : 'Activar'}
                   >
                     <Power className="w-3.5 h-3.5" />
                   </button>
@@ -1210,7 +1212,7 @@ export default function CompanySettings({
               <Receipt className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
               <div>
                 <h4 className="font-bold text-slate-800">Servicios y Tarifas</h4>
-                <p className="text-[10px] text-slate-500">
+                <p className="text-[11px] text-slate-500">
                   Precio e IVA por servicio prestado. Si dejas el IVA en blanco, se usa el {currentCompany.ivaPorDefecto}% por defecto de la empresa.
                 </p>
               </div>
@@ -1238,7 +1240,7 @@ export default function CompanySettings({
           </div>
 
           {mensajeServiciosDefecto && (
-            <p className="text-[10px] text-slate-500">{mensajeServiciosDefecto}</p>
+            <p className="text-[11px] text-slate-500">{mensajeServiciosDefecto}</p>
           )}
 
           {isServicioFormOpen && (
@@ -1261,8 +1263,8 @@ export default function CompanySettings({
               </div>
               <div className={`grid grid-cols-1 sm:grid-cols-4 gap-3`}>
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">Nombre {servicioTipo === 'ARTICULO' ? 'del Artículo' : 'del Servicio'} *</label>
-                  <input
+                  <label htmlFor="companyset-nombre" className="block text-slate-600 font-medium mb-1">Nombre {servicioTipo === 'ARTICULO' ? 'del Artículo' : 'del Servicio'} *</label>
+                  <input id="companyset-nombre"
                     type="text"
                     value={servicioNombre}
                     onChange={(e) => setServicioNombre(e.target.value)}
@@ -1271,8 +1273,8 @@ export default function CompanySettings({
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">Precio (₡) *</label>
-                  <input
+                  <label htmlFor="companyset-precio" className="block text-slate-600 font-medium mb-1">Precio (₡) *</label>
+                  <input id="companyset-precio"
                     type="number"
                     min="0"
                     step="0.01"
@@ -1283,8 +1285,8 @@ export default function CompanySettings({
                 </div>
                 {servicioTipo === 'SERVICIO' && (
                   <div>
-                    <label className="block text-slate-600 font-medium mb-1">Duración (min) *</label>
-                    <input
+                    <label htmlFor="companyset-duracion-min" className="block text-slate-600 font-medium mb-1">Duración (min) *</label>
+                    <input id="companyset-duracion-min"
                       type="number"
                       min="1"
                       step="1"
@@ -1295,8 +1297,8 @@ export default function CompanySettings({
                   </div>
                 )}
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">% IVA (vacío = por defecto)</label>
-                  <input
+                  <label htmlFor="companyset-iva-vacio-por-defecto" className="block text-slate-600 font-medium mb-1">% IVA (vacío = por defecto)</label>
+                  <input id="companyset-iva-vacio-por-defecto"
                     type="number"
                     min="0"
                     max="100"
@@ -1311,8 +1313,8 @@ export default function CompanySettings({
               {servicioTipo === 'ARTICULO' && (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 border-t border-slate-100">
                   <div>
-                    <label className="block text-slate-600 font-medium mb-1">{servicioEditId != null ? 'Existencia Actual' : 'Existencia Inicial'}</label>
-                    <input
+                    <label htmlFor="companyset-campo" className="block text-slate-600 font-medium mb-1">{servicioEditId != null ? 'Existencia Actual' : 'Existencia Inicial'}</label>
+                    <input id="companyset-campo"
                       type="number"
                       min="0"
                       step="1"
@@ -1321,11 +1323,11 @@ export default function CompanySettings({
                       disabled={servicioEditId != null}
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 disabled:opacity-60"
                     />
-                    {servicioEditId != null && <p className="text-[10px] text-slate-400 mt-1">Use "Ajustar Stock" en la lista para cambiarla.</p>}
+                    {servicioEditId != null && <p className="text-[11px] text-slate-500 mt-1">Use "Ajustar Stock" en la lista para cambiarla.</p>}
                   </div>
                   <div>
-                    <label className="block text-slate-600 font-medium mb-1">Stock Mínimo</label>
-                    <input
+                    <label htmlFor="companyset-stock-minimo" className="block text-slate-600 font-medium mb-1">Stock Mínimo</label>
+                    <input id="companyset-stock-minimo"
                       type="number"
                       min="0"
                       step="1"
@@ -1336,8 +1338,8 @@ export default function CompanySettings({
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 font-medium mb-1">Costo Unitario (₡)</label>
-                    <input
+                    <label htmlFor="companyset-costo-unitario" className="block text-slate-600 font-medium mb-1">Costo Unitario (₡)</label>
+                    <input id="companyset-costo-unitario"
                       type="number"
                       min="0"
                       step="0.01"
@@ -1347,8 +1349,8 @@ export default function CompanySettings({
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 font-medium mb-1">Código de Barras</label>
-                    <input
+                    <label htmlFor="companyset-codigo-de-barras" className="block text-slate-600 font-medium mb-1">Código de Barras</label>
+                    <input id="companyset-codigo-de-barras"
                       type="text"
                       value={servicioCodigoBarras}
                       onChange={(e) => setServicioCodigoBarras(e.target.value)}
@@ -1359,8 +1361,8 @@ export default function CompanySettings({
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-slate-100">
                 <div className="relative">
-                  <label className="block text-slate-600 font-medium mb-1">Código CABYS * (obligatorio para facturar)</label>
-                  <input
+                  <label htmlFor="companyset-codigo-cabys-obligatorio-para" className="block text-slate-600 font-medium mb-1">Código CABYS * (obligatorio para facturar)</label>
+                  <input id="companyset-codigo-cabys-obligatorio-para"
                     type="text"
                     value={servicioCabys}
                     onChange={(e) => { setServicioCabys(e.target.value); buscarCabys(e.target.value); }}
@@ -1368,9 +1370,9 @@ export default function CompanySettings({
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
                   />
                   {servicioCabys && !/^\d{13}$/.test(servicioCabys.trim()) && (
-                    <p className="text-[10px] text-amber-600 mt-1">El código CABYS debe tener exactamente 13 dígitos.</p>
+                    <p className="text-[11px] text-amber-600 mt-1">El código CABYS debe tener exactamente 13 dígitos.</p>
                   )}
-                  {buscandoCabys && <p className="text-[10px] text-slate-400 mt-1">Buscando...</p>}
+                  {buscandoCabys && <p className="text-[11px] text-slate-500 mt-1">Buscando...</p>}
                   {cabysResultados.length > 0 && (
                     <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg">
                       {cabysResultados.map(r => (
@@ -1380,7 +1382,7 @@ export default function CompanySettings({
                           onClick={() => { setServicioCabys(r.codigo); setCabysResultados([]); }}
                           className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
                         >
-                          <span className="font-mono text-[10px] text-slate-500 block">{r.codigo}</span>
+                          <span className="font-mono text-[11px] text-slate-500 block">{r.codigo}</span>
                           <span className="text-slate-800">{r.descripcion}</span>
                         </button>
                       ))}
@@ -1388,8 +1390,8 @@ export default function CompanySettings({
                   )}
                 </div>
                 <div>
-                  <label className="block text-slate-600 font-medium mb-1">Unidad de Medida (Hacienda)</label>
-                  <select
+                  <label htmlFor="companyset-unidad-de-medida-hacienda" className="block text-slate-600 font-medium mb-1">Unidad de Medida (Hacienda)</label>
+                  <select id="companyset-unidad-de-medida-hacienda"
                     value={servicioUnidadMedida}
                     onChange={(e) => setServicioUnidadMedida(e.target.value as 'Sp' | 'Spe' | 'St' | 'Os' | 'h' | 'Unid')}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
@@ -1428,7 +1430,7 @@ export default function CompanySettings({
 
           <div className="space-y-1.5">
             {companyServicios.length === 0 && !isServicioFormOpen && (
-              <p className="text-slate-400 text-center py-3">Todavía no has registrado ningún servicio.</p>
+              <p className="text-slate-500 text-center py-3">Todavía no has registrado ningún servicio.</p>
             )}
             {companyServicios.map(s => {
               const esArticulo = s.tipo === 'ARTICULO';
@@ -1439,32 +1441,32 @@ export default function CompanySettings({
                     <div>
                       <span className="font-semibold text-slate-800 inline-flex items-center gap-1.5">
                         {s.nombre}
-                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${esArticulo ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-600'}`}>
+                        <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full ${esArticulo ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-600'}`}>
                           {esArticulo ? 'Artículo' : 'Servicio'}
                         </span>
                       </span>
-                      <span className="text-[10px] text-slate-500 block">
+                      <span className="text-[11px] text-slate-500 block">
                         ₡{s.precio.toLocaleString('es-CR')}
                         {esArticulo ? ` · Existencia: ${s.stock ?? 0}` : ` · ${s.duracionMinutos} min`}
                         {' · IVA '}{s.porcentajeIva != null ? `${s.porcentajeIva}%` : `${currentCompany.ivaPorDefecto}% (por defecto)`}
                       </span>
                       <div className="flex items-center gap-1.5 mt-1">
                         {!s.codigoCabys && (
-                          <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full inline-block">Sin código CABYS — no se puede facturar</span>
+                          <span className="text-[11px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full inline-block">Sin código CABYS — no se puede facturar</span>
                         )}
                         {faltante && (
-                          <span className="text-[9px] font-bold text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded-full inline-block">Faltante (mín: {s.stockMinimo})</span>
+                          <span className="text-[11px] font-bold text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded-full inline-block">Faltante (mín: {s.stockMinimo})</span>
                         )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${s.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${s.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
                         {s.activo ? 'Activo' : 'Inactivo'}
                       </span>
                       {esArticulo && (
                         <button
                           onClick={() => openAjustarStock(s)}
-                          className="text-[10px] font-semibold text-indigo-700 hover:underline"
+                          className="text-[11px] font-semibold text-indigo-700 hover:underline"
                         >
                           Ajustar Stock
                         </button>
@@ -1472,14 +1474,16 @@ export default function CompanySettings({
                       <button
                         onClick={() => openEditServicioForm(s)}
                         title="Editar"
-                        className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                        className="p-2.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                        aria-label="Editar"
                       >
                         <Edit className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => handleToggleServicioActivo(s)}
                         title={s.activo ? 'Desactivar' : 'Activar'}
-                        className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                        className="p-2.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                        aria-label={s.activo ? 'Desactivar' : 'Activar'}
                       >
                         <Power className="w-3.5 h-3.5" />
                       </button>
@@ -1539,7 +1543,7 @@ export default function CompanySettings({
             <Clock className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
             <div>
               <h4 className="font-bold text-slate-800">Horario de Atención</h4>
-              <p className="text-[10px] text-slate-500">Usado para calcular los horarios disponibles en la página pública de citas</p>
+              <p className="text-[11px] text-slate-500">Usado para calcular los horarios disponibles en la página pública de citas</p>
             </div>
           </div>
 
@@ -1561,7 +1565,7 @@ export default function CompanySettings({
                         onChange={(e) => handleCambiarDia(dia, 'abre', e.target.value)}
                         className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1"
                       />
-                      <span className="text-slate-400">a</span>
+                      <span className="text-slate-500">a</span>
                       <input
                         type="time"
                         value={horario[dia].cierra || ''}
@@ -1598,13 +1602,13 @@ export default function CompanySettings({
             <Sparkles className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
             <div>
               <h4 className="font-bold text-slate-800">Porcentajes de Déficit/Superávit para Dietas</h4>
-              <p className="text-[10px] text-slate-500">Los nutricionistas de esta empresa eligen entre estos porcentajes al calcular la prescripción calórica de una dieta. Puede incluir 0% (mantenimiento).</p>
+              <p className="text-[11px] text-slate-500">Los nutricionistas de esta empresa eligen entre estos porcentajes al calcular la prescripción calórica de una dieta. Puede incluir 0% (mantenimiento).</p>
             </div>
           </div>
 
           <div className="flex flex-wrap gap-2">
             {porcentajesDeEstaEmpresa.length === 0 && (
-              <span className="text-slate-400">Sin porcentajes configurados — se usará el respaldo 10% / 15% / 20%.</span>
+              <span className="text-slate-500">Sin porcentajes configurados — se usará el respaldo 10% / 15% / 20%.</span>
             )}
             {porcentajesDeEstaEmpresa.map(p => (
               <span key={p.id} className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-full pl-3 pr-1.5 py-1">
@@ -1612,8 +1616,9 @@ export default function CompanySettings({
                 <button
                   type="button"
                   onClick={() => onDeletePorcentajeDieta(p.id)}
-                  className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-full p-0.5"
+                  className="text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-full p-2"
                   title="Eliminar"
+                  aria-label="Eliminar"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -1671,8 +1676,8 @@ export default function CompanySettings({
               />
             </div>
             <div>
-              <label className="block text-slate-600 mb-1">Razón Social Jurídica</label>
-              <input
+              <label htmlFor="companyset-razon-social-juridica" className="block text-slate-600 mb-1">Razón Social Jurídica</label>
+              <input id="companyset-razon-social-juridica"
                 type="text"
                 value={editRazon}
                 onChange={(e) => setEditRazon(e.target.value)}
@@ -1680,8 +1685,8 @@ export default function CompanySettings({
               />
             </div>
             <div>
-              <label className="block text-slate-600 mb-1">Cédula Física / Jurídica (CR)</label>
-              <input
+              <label htmlFor="companyset-cedula-fisica-juridica-cr" className="block text-slate-600 mb-1">Cédula Física / Jurídica (CR)</label>
+              <input id="companyset-cedula-fisica-juridica-cr"
                 type="text"
                 value={editIdent}
                 onChange={(e) => setEditIdent(e.target.value)}
@@ -1690,8 +1695,8 @@ export default function CompanySettings({
               />
             </div>
             <div>
-              <label className="block text-slate-600 mb-1">Email Emisor (Hacienda)</label>
-              <input
+              <label htmlFor="companyset-email-emisor-hacienda" className="block text-slate-600 mb-1">Email Emisor (Hacienda)</label>
+              <input id="companyset-email-emisor-hacienda"
                 type="text"
                 value={editCorreo}
                 onChange={(e) => setEditCorreo(e.target.value)}
@@ -1699,8 +1704,8 @@ export default function CompanySettings({
               />
             </div>
             <div>
-              <label className="block text-slate-600 mb-1">Perfil de la Clínica / Empresa</label>
-              <select
+              <label htmlFor="companyset-perfil-de-la-clinica" className="block text-slate-600 mb-1">Perfil de la Clínica / Empresa</label>
+              <select id="companyset-perfil-de-la-clinica"
                 value={editPerfil}
                 onChange={(e) => setEditPerfil(e.target.value as 'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa')}
                 className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
@@ -1712,8 +1717,8 @@ export default function CompanySettings({
               </select>
             </div>
             <div>
-              <label className="block text-slate-600 mb-1">Código de Actividad Económica (Hacienda)</label>
-              <input
+              <label htmlFor="companyset-codigo-de-actividad-economica" className="block text-slate-600 mb-1">Código de Actividad Económica (Hacienda)</label>
+              <input id="companyset-codigo-de-actividad-economica"
                 type="text"
                 value={editActividad}
                 onChange={(e) => setEditActividad(e.target.value)}
@@ -1722,8 +1727,8 @@ export default function CompanySettings({
               />
             </div>
             <div>
-              <label className="block text-slate-600 mb-1">% IVA por Defecto</label>
-              <input
+              <label htmlFor="companyset-iva-por-defecto" className="block text-slate-600 mb-1">% IVA por Defecto</label>
+              <input id="companyset-iva-por-defecto"
                 type="number"
                 min="0"
                 max="100"
@@ -1774,8 +1779,8 @@ export default function CompanySettings({
                 </select>
               </div>
               <div>
-                <label className="block text-slate-600 mb-1">Cantón</label>
-                <select
+                <label htmlFor="companyset-canton" className="block text-slate-600 mb-1">Cantón</label>
+                <select id="companyset-canton"
                   value={editCanton}
                   onChange={(e) => handleCambiarCantonFiscal(e.target.value)}
                   disabled={!editProvincia}
@@ -1788,8 +1793,8 @@ export default function CompanySettings({
                 </select>
               </div>
               <div>
-                <label className="block text-slate-600 mb-1">Distrito</label>
-                <select
+                <label htmlFor="companyset-distrito" className="block text-slate-600 mb-1">Distrito</label>
+                <select id="companyset-distrito"
                   value={editDistrito}
                   onChange={(e) => setEditDistrito(e.target.value)}
                   disabled={!editCanton}
@@ -1802,8 +1807,8 @@ export default function CompanySettings({
                 </select>
               </div>
               <div>
-                <label className="block text-slate-600 mb-1">Otras Señas (dirección exacta)</label>
-                <input
+                <label htmlFor="companyset-otras-senas-direccion-exacta" className="block text-slate-600 mb-1">Otras Señas (dirección exacta)</label>
+                <input id="companyset-otras-senas-direccion-exacta"
                   type="text"
                   value={editOtrasSenas}
                   onChange={(e) => setEditOtrasSenas(e.target.value)}
@@ -1863,15 +1868,15 @@ export default function CompanySettings({
                 <input type="file" accept="image/*" onChange={handleLogoFileChange} className="hidden" />
               </label>
             </div>
-            {logoError && <p className="text-[10px] text-rose-600 mb-2">{logoError}</p>}
-            <span className="text-[10px] text-slate-400 block mb-1">O elija un logo predeterminado:</span>
+            {logoError && <p className="text-[11px] text-rose-600 mb-2">{logoError}</p>}
+            <span className="text-[11px] text-slate-500 block mb-1">O elija un logo predeterminado:</span>
             <div className="flex flex-wrap gap-2">
               {presetLogos.map((pl, idx) => (
                 <button
                   key={idx}
                   type="button"
                   onClick={() => setEditLogo(pl.url)}
-                  className="bg-white hover:bg-slate-100 border border-slate-200 text-[10px] text-slate-600 px-2 py-1 rounded-md"
+                  className="bg-white hover:bg-slate-100 border border-slate-200 text-[11px] text-slate-600 px-2 py-1 rounded-md"
                 >
                   {pl.name}
                 </button>

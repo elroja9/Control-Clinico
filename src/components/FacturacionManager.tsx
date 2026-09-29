@@ -91,7 +91,7 @@ export default function FacturacionManager({ facturas, patients, company, servic
       </div>
 
       {ordenadas.length === 0 && (
-        <p className="text-slate-400 text-xs text-center py-6">Todavía no se ha emitido ninguna factura.</p>
+        <p className="text-slate-500 text-xs text-center py-6">Todavía no se ha emitido ninguna factura.</p>
       )}
 
       <div className="space-y-1.5">
@@ -107,27 +107,28 @@ export default function FacturacionManager({ facturas, patients, company, servic
                     {esNotaCredito ? <FileMinus className="w-3.5 h-3.5 text-rose-500" /> : esNotaDebito ? <FilePlus className="w-3.5 h-3.5 text-amber-600" /> : <Receipt className="w-3.5 h-3.5 text-slate-500" />}
                     {esNotaCredito ? 'Nota de Crédito' : esNotaDebito ? 'Nota de Débito' : 'Factura'} {f.consecutivo}
                   </span>
-                  <span className="text-[10px] text-slate-500 block truncate">
+                  <span className="text-[11px] text-slate-500 block truncate">
                     {nombrePaciente(f.idPaciente)} &middot; {new Date(f.fechaEmision).toLocaleString('es-CR')} &middot; ₡{f.total.toLocaleString('es-CR', { maximumFractionDigits: 2 })}
                     {f.condicionVenta === '02' && ' · Crédito'}
                     {!esNotaCredito && ` · ${MEDIO_PAGO_LABEL[f.medioPago] || f.medioPago}`}
                     {!esNota && f.montoRecibido != null && ` · Vuelto ₡${(f.montoRecibido - f.total).toLocaleString('es-CR', { maximumFractionDigits: 2 })}`}
                   </span>
                   {esNota && f.idFacturaReferencia != null && (
-                    <span className="text-[10px] text-slate-400 block">{esNotaCredito ? 'Ajusta' : 'Debita'} factura {referenciaFactura(f.idFacturaReferencia)}{f.motivoAnulacion ? ` — ${f.motivoAnulacion}` : ''}</span>
+                    <span className="text-[11px] text-slate-500 block">{esNotaCredito ? 'Ajusta' : 'Debita'} factura {referenciaFactura(f.idFacturaReferencia)}{f.motivoAnulacion ? ` — ${f.motivoAnulacion}` : ''}</span>
                   )}
                   {f.mensajeError && (f.estado === 'ERROR' || f.estado === 'RECHAZADA') && (
-                    <span className="text-[10px] text-rose-600 block truncate" title={f.mensajeError}>{f.mensajeError}</span>
+                    <span className="text-[11px] text-rose-600 block truncate" title={f.mensajeError}>{f.mensajeError}</span>
                   )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ESTADO_ESTILO[f.estado] || 'bg-slate-100 text-slate-600'}`}>
+                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${ESTADO_ESTILO[f.estado] || 'bg-slate-100 text-slate-600'}`}>
                     {f.estado}
                   </span>
                   <button
                     onClick={() => setViewingFactura(f)}
                     title="Ver / Imprimir / Reenviar"
-                    className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                    className="p-2.5 rounded-lg text-slate-500 hover:bg-slate-100"
+                    aria-label="Ver / Imprimir / Reenviar"
                   >
                     <Eye className="w-3.5 h-3.5" />
                   </button>
@@ -136,7 +137,8 @@ export default function FacturacionManager({ facturas, patients, company, servic
                       onClick={() => handleVerificarEstado(f.id)}
                       disabled={verificandoId === f.id}
                       title="Verificar estado con Hacienda"
-                      className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-50 disabled:opacity-50"
+                      className="p-2.5 rounded-lg text-amber-600 hover:bg-amber-50 disabled:opacity-50"
+                      aria-label="Verificar estado con Hacienda"
                     >
                       <RefreshCw className={`w-3.5 h-3.5 ${verificandoId === f.id ? 'animate-spin' : ''}`} />
                     </button>
@@ -145,7 +147,8 @@ export default function FacturacionManager({ facturas, patients, company, servic
                     <button
                       onClick={() => setAjustando({ tipo: 'CREDITO', factura: f })}
                       title="Emitir Nota de Crédito parcial"
-                      className="p-1.5 rounded-lg text-indigo-500 hover:bg-indigo-50"
+                      className="p-2.5 rounded-lg text-indigo-500 hover:bg-indigo-50"
+                      aria-label="Emitir Nota de Crédito parcial"
                     >
                       <FileMinus className="w-3.5 h-3.5" />
                     </button>
@@ -154,7 +157,8 @@ export default function FacturacionManager({ facturas, patients, company, servic
                     <button
                       onClick={() => setAjustando({ tipo: 'DEBITO', factura: f })}
                       title="Emitir Nota de Débito"
-                      className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-50"
+                      className="p-2.5 rounded-lg text-amber-600 hover:bg-amber-50"
+                      aria-label="Emitir Nota de Débito"
                     >
                       <FilePlus className="w-3.5 h-3.5" />
                     </button>
@@ -163,7 +167,8 @@ export default function FacturacionManager({ facturas, patients, company, servic
                     <button
                       onClick={() => { setAnulandoId(f.id); setMotivoAnulacion(''); setError(''); }}
                       title="Anular Factura"
-                      className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50"
+                      className="p-2.5 rounded-lg text-rose-500 hover:bg-rose-50"
+                      aria-label="Anular Factura"
                     >
                       <XCircle className="w-3.5 h-3.5" />
                     </button>
@@ -174,19 +179,19 @@ export default function FacturacionManager({ facturas, patients, company, servic
               {anulandoId === f.id && (
                 <div className="mt-2.5 pt-2.5 border-t border-slate-100 space-y-2">
                   {error && (
-                    <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[10px] flex items-center gap-1.5">
+                    <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] flex items-center gap-1.5">
                       <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                       <span>{error}</span>
                     </div>
                   )}
-                  <p className="text-[10px] text-slate-500">
+                  <p className="text-[11px] text-slate-500">
                     Esto emite y firma una Nota de Crédito Electrónica que anula esta factura ante Hacienda
                     {f.lineas.some(l => l.tipo === 'ARTICULO') ? ' y repone las existencias de los artículos facturados' : ''}.
                     No se puede deshacer.
                   </p>
                   <div className="flex gap-2 items-end">
                     <div className="flex-1">
-                      <label className="block text-slate-600 font-medium mb-1 text-[10px]">Motivo de la anulación *</label>
+                      <label className="block text-slate-600 font-medium mb-1 text-[11px]">Motivo de la anulación *</label>
                       <input
                         type="text"
                         value={motivoAnulacion}
