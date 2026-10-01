@@ -34,7 +34,10 @@ export interface FacturaProveedorParseada {
     correo: string | null;
     direccion: string | null;
   };
-  claveHacienda: string;
+  // "01" Factura Electrónica o "04" Tiquete Electrónico. Solo una factura a nombre de la empresa
+  // (receptorIdentificacion = su cédula) da derecho a crédito fiscal; un tiquete no.
+  tipoComprobante: "01" | "04";
+  receptorIdentificacion: string | null;
   numeroFacturaProv: string;
   fechaEmision: string;
   condicionVenta: "01" | "02";
@@ -116,7 +119,9 @@ export function parsearFacturaProveedorXML(xmlTexto: string): FacturaProveedorPa
   const tipoCambio = enOtraMoneda ? tipoCambioRaw : 1;
   const aColones = (monto: number): number => enOtraMoneda ? Math.round(monto * tipoCambio * 100) / 100 : monto;
 
-  const claveHacienda = textoDe(raiz, "Clave").replace(/[^0-9]/g, "");
+  const tipoComprobante: "01" | "04" = raiz.tagName === "TiqueteElectronico" ? "04" : "01";
+  const receptorEl = doc.getElementsByTagName("Receptor")[0] || null;
+  const receptorIdentificacion = textoDe(receptorEl?.getElementsByTagName("Identificacion")[0] || null, "Numero").replace(/[^0-9]/g, "") || null;
   const numeroFacturaProv = textoDe(raiz, "NumeroConsecutivo");
   const fechaEmision = textoDe(raiz, "FechaEmision");
   const condicionVenta: "01" | "02" = textoDe(raiz, "CondicionVenta") === "02" ? "02" : "01";
@@ -186,5 +191,5 @@ export function parsearFacturaProveedorXML(xmlTexto: string): FacturaProveedorPa
   // Las líneas ya vienen convertidas, así que el respaldo por suma NO se vuelve a convertir.
   const montoTotal = montoTotalStr ? aColones(parseFloat(montoTotalStr)) : lineas.reduce((sum, l) => sum + l.total, 0);
 
-  return { proveedor, claveHacienda, numeroFacturaProv, fechaEmision, condicionVenta, plazoDias, moneda, tipoCambio, lineas, montoTotal };
+  return { proveedor, tipoComprobante, receptorIdentificacion, numeroFacturaProv, fechaEmision, condicionVenta, plazoDias, moneda, tipoCambio, lineas, montoTotal };
 }

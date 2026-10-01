@@ -31,9 +31,11 @@ import {
   construirXmlFactura,
   construirXmlNotaCredito,
   construirXmlNotaDebito,
-  PLAZO_CREDITO_DIAS_DEFECTO
+  PLAZO_CREDITO_DIAS_DEFECTO,
+  RAZON_MAX
 } from "./server/haciendaFactura";
-import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda, esperarResolucionHacienda } from "./server/haciendaApi";
+import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda, esperarResolucionHacienda, HACIENDA_FETCH_TIMEOUT_MS } from "./server/haciendaApi";
+import type { AmbienteHacienda, EstadoHaciendaResultado } from "./server/haciendaApi";
 import { fechaCR, sumarDiasCR } from "./src/utils/fechaCR";
 import { serviciosDefectoParaPerfil } from "./server/serviciosDefecto";
 import { parsearFacturaProveedorXML } from "./server/xmlProveedorParser";
@@ -109,6 +111,20 @@ interface LocalHaciendaConfig {
   ultimoConsecutivoNd: number;
 }
 let localHaciendaConfigs: LocalHaciendaConfig[] = [];
+
+type CredencialesAtv = { ambiente: AmbienteHacienda; usuarioAtv: string; passwordAtv: string };
+type CertificadoEmpresa = { p12Base64: string; pin: string };
+
+/** Montos con 5 decimales, la precisión de los comprobantes de Hacienda. */
+function redondearMonto(n: number): number {
+  return Math.round(n * 100000) / 100000;
+}
+
+// condicionVenta y medioPago llegan del navegador y terminan dentro del XML que se firma con la llave
+// de la empresa: solo se aceptan códigos de catálogo de Hacienda (dos dígitos).
+function esCodigoCatalogo(valor: unknown): valor is string {
+  return typeof valor === "string" && /^\d{2}$/.test(valor);
+}
 
 async function setupDatabase() {
   const host = process.env.DB_HOST;
@@ -2419,7 +2435,8 @@ async function startServer() {
         if (!row) {
           return res.json({
             idCompania, ambiente: 'SANDBOX', usuarioAtv: '', tienePasswordAtv: false,
-            tieneCertificado: false, certificadoNombreArchivo: null, certificadoVenceEn: null
+            tieneCertificado: false, certificadoNombreArchivo: null, certificadoVenceEn: null,
+            ultimoConsecutivo: 0, ultimoConsecutivoNc: 0, ultimoConsecutivoNd: 0
           });
         }
         res.json({
@@ -2439,7 +2456,8 @@ async function startServer() {
         if (!row) {
           return res.json({
             idCompania, ambiente: 'SANDBOX', usuarioAtv: '', tienePasswordAtv: false,
-            tieneCertificado: false, certificadoNombreArchivo: null, certificadoVenceEn: null
+            tieneCertificado: false, certificadoNombreArchivo: null, certificadoVenceEn: null,
+            ultimoConsecutivo: 0, ultimoConsecutivoNc: 0, ultimoConsecutivoNd: 0
           });
         }
         res.json({
@@ -2468,6 +2486,11 @@ async function startServer() {
       if (!canAccessCompany(session, idCompania)) {
         return res.status(403).json({ error: "No autorizado." });
       }
+      // Credenciales ATV, certificado de firma, ambiente y numeración deciden qué se le declara a
+      // Hacienda en nombre de la empresa: solo un Administrador los cambia (antes, cualquier usuario).
+      if (session.rol !== "Administrador" && !isSaasAdmin(session)) {
+        return res.status(403).json({ error: "Solo un usuario Administrador puede cambiar la configuración de Hacienda." });
+      }
 
       // Corrección manual de numeración (del POS): fijar el último consecutivo YA emitido ante
       // Hacienda cuando esta empresa facturó antes con otro sistema bajo la misma sucursal/terminal
@@ -2477,13 +2500,12 @@ async function startServer() {
       for (const [campo, columna] of [["ultimoConsecutivo", "ultimo_consecutivo"], ["ultimoConsecutivoNc", "ultimo_consecutivo_nc"], ["ultimoConsecutivoNd", "ultimo_consecutivo_nd"]] as const) {
         if (b[campo] == null || String(b[campo]).trim() === "") continue;
         const valor = Number(b[campo]);
-        if (!Number.isInteger(valor) || valor < 0 || valor > 9999999999) {
-          return res.status(400).json({ error: "El último consecutivo debe ser un número entero entre 0 y 9999999999." });
+        // Tope de las columnas INT de compania_hacienda_config (con STRICT_TRANS_TABLES, un valor
+        // mayor falla el UPDATE después de haber guardado el resto de la configuración).
+        if (!Number.isInteger(valor) || valor < 0 || valor > 2147483647) {
+          return res.status(400).json({ error: "El último consecutivo debe ser un número entero entre 0 y 2147483647." });
         }
         correccionConsecutivos.push({ columna, campo, valor });
-      }
-      if (correccionConsecutivos.length > 0 && session.rol !== "Administrador" && !isSaasAdmin(session)) {
-        return res.status(403).json({ error: "Solo un usuario Administrador puede corregir la numeración." });
       }
 
       let existing: { passwordAtvCifrado: string; certificadoP12Cifrado: string; certificadoPinCifrado: string; certificadoNombreArchivo: string | null } | undefined;
@@ -2636,11 +2658,17 @@ async function startServer() {
     }
   });
 
+  // Firma un XML arbitrario con el certificado legal de la empresa. Ninguna pantalla lo usa; queda
+  // solo para Administrador mientras se decide si se elimina.
   app.post("/api/hacienda/firmar", requireAuth, async (req, res) => {
     try {
       const idCompania = parseInt(req.body.idCompania);
-      if (!canAccessCompany(sessionOf(req), idCompania)) {
+      const session = sessionOf(req);
+      if (!canAccessCompany(session, idCompania)) {
         return res.status(403).json({ error: "No autorizado." });
+      }
+      if (session.rol !== "Administrador" && !isSaasAdmin(session)) {
+        return res.status(403).json({ error: "Solo un usuario Administrador puede firmar con el certificado de la empresa." });
       }
       const xml = req.body.xml;
       if (!xml || typeof xml !== 'string') {
@@ -2657,7 +2685,7 @@ async function startServer() {
     }
   });
 
-  async function cargarCredencialesAtv(idCompania: number): Promise<{ ambiente: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL'; usuarioAtv: string; passwordAtv: string } | null> {
+  async function cargarCredencialesAtv(idCompania: number): Promise<CredencialesAtv | null> {
     if (dbConnected && pool) {
       const [rows] = await pool.query("SELECT ambiente, usuario_atv, password_atv_enc FROM compania_hacienda_config WHERE id_compania = ?", [idCompania]);
       const row = (rows as any[])[0];
@@ -2714,6 +2742,34 @@ async function startServer() {
     return ++cfg.ultimoConsecutivoNd;
   }
 
+  // Prefijo de mensajeError de un comprobante en ERROR cuyo envío se cortó sin poder confirmar si
+  // Hacienda lo recibió. Mientras una Nota esté así, no se emiten más Notas ni se anula la factura
+  // que referencia: si Hacienda sí la tiene, emitir otra la duplicaría (ver notaEnEnvioIncierto).
+  const MARCA_ENVIO_INCIERTO = "Envío incierto:";
+
+  // Una sola operación a la vez sobre la misma factura (anular, Nota de Crédito, Nota de Débito) o
+  // la misma consulta (facturarla). Entre revisar el estado y guardar el resultado pasan varios
+  // segundos de transmisión y sondeo a Hacienda; dos solicitudes simultáneas —un doble clic, dos
+  // pestañas— pasaban las dos la revisión y transmitían dos Notas de Crédito, que ante Hacienda ya
+  // no se pueden retirar. Un candado en memoria basta: el servidor corre como un solo proceso pm2.
+  const operacionesEnCurso = new Set<string>();
+  const candadoPorFactura = (req: any) => `factura:${parseInt(req.params.id)}`;
+  const candadoPorConsulta = (req: any) => req.body?.idConsulta != null ? `consulta:${parseInt(req.body.idConsulta)}` : null;
+  function unaOperacionALaVez(clave: (req: any) => string | null, handler: (req: any, res: any) => Promise<any>) {
+    return async (req: any, res: any) => {
+      const candado = clave(req);
+      if (candado && operacionesEnCurso.has(candado)) {
+        return res.status(409).json({ error: "Ya hay otra operación en curso sobre esta factura. Espere a que termine y revise el resultado antes de reintentar." });
+      }
+      if (candado) operacionesEnCurso.add(candado);
+      try {
+        await handler(req, res);
+      } finally {
+        if (candado) operacionesEnCurso.delete(candado);
+      }
+    };
+  }
+
   interface ResultadoTransmision {
     estado: "ENVIADA" | "ACEPTADA" | "RECHAZADA" | "ERROR";
     mensajeError: string | null;
@@ -2733,8 +2789,8 @@ async function startServer() {
     xmlSinFirmar: string;
     clave: string;
     fechaEmision: string;
-    cert: { p12Base64: string; pin: string };
-    credenciales: { ambiente: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL'; usuarioAtv: string; passwordAtv: string };
+    cert: CertificadoEmpresa;
+    credenciales: CredencialesAtv;
     company: Company;
     receptor: { tipoIdentificacion: string; identificacion: string };
   }): Promise<ResultadoTransmision> {
@@ -2743,19 +2799,45 @@ async function startServer() {
     try {
       // El XML firmado se conserva siempre: es el comprobante que el paciente tiene derecho a
       // recibir y el respaldo ante Hacienda.
+      // Hasta aquí (firma, token) nada salió de este servidor: una falla es un ERROR seguro de reintentar.
       resultado.xmlFirmado = await firmarXadesEpes(xmlSinFirmar, cert.p12Base64, cert.pin);
       const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
-      const envio = await enviarFacturaHacienda({
-        ambiente: credenciales.ambiente,
-        token,
-        clave,
-        fechaEmisionIso: fechaEmision,
-        tipoIdentificacionEmisor: company.tipoIdentificacion,
-        cedulaEmisor: limpiarIdentificacion(company.identificacion),
-        tipoIdentificacionReceptor: receptor.tipoIdentificacion,
-        cedulaReceptor: limpiarIdentificacion(receptor.identificacion),
-        xmlFirmado: resultado.xmlFirmado
-      });
+      let envio;
+      try {
+        envio = await enviarFacturaHacienda({
+          ambiente: credenciales.ambiente,
+          token,
+          clave,
+          fechaEmisionIso: fechaEmision,
+          tipoIdentificacionEmisor: company.tipoIdentificacion,
+          cedulaEmisor: limpiarIdentificacion(company.identificacion),
+          tipoIdentificacionReceptor: receptor.tipoIdentificacion,
+          cedulaReceptor: limpiarIdentificacion(receptor.identificacion),
+          xmlFirmado: resultado.xmlFirmado
+        });
+      } catch (err: any) {
+        // Se cortó la comunicación DURANTE el envío (timeout, red): Hacienda pudo haberlo recibido o
+        // no. Antes se daba por no recibido, y reintentar emitía un segundo comprobante con otra
+        // clave. Se le pregunta por esta clave antes de decidir.
+        const consulta = await esperarResolucionHacienda(credenciales.ambiente, token, clave);
+        if (consulta.estado === "no_encontrado") {
+          resultado.mensajeError = `${err.message || err} — Hacienda confirmó que no lo recibió.`;
+          return resultado;
+        }
+        if (consulta.estado === "error") {
+          resultado.mensajeError = `${MARCA_ENVIO_INCIERTO} se cortó la comunicación al enviarlo (${err.message || err}) y no se pudo confirmar si Hacienda lo recibió. Use «Verificar estado» antes de volver a emitirlo.`;
+          return resultado;
+        }
+        envio = { aceptadoParaProcesar: true, location: null, mensaje: null };
+        resultado.estado = "ENVIADA";
+        resultado.respuestaHacienda = consulta.respuestaXmlBase64;
+        if (consulta.estado === "aceptado") resultado.estado = "ACEPTADA";
+        if (consulta.estado === "rechazado") {
+          resultado.estado = "RECHAZADA";
+          resultado.mensajeError = consulta.detalleMensaje || "Hacienda rechazó el comprobante.";
+        }
+        return resultado;
+      }
       if (!envio.aceptadoParaProcesar) {
         resultado.mensajeError = envio.mensaje;
         return resultado;
@@ -2785,7 +2867,7 @@ async function startServer() {
         ? `https://api.hacienda.go.cr/fe/cabys?codigo=${encodeURIComponent(q.trim())}`
         : `https://api.hacienda.go.cr/fe/cabys?q=${encodeURIComponent(q.trim())}`;
       // Con límite: sin él, una API de Hacienda que no responde dejaba colgado el buscador.
-      const resp = await fetch(url, { signal: AbortSignal.timeout(20000) });
+      const resp = await fetch(url, { signal: AbortSignal.timeout(HACIENDA_FETCH_TIMEOUT_MS) });
       if (!resp.ok) return res.json([]);
       const data = await resp.json();
       res.json(data);
@@ -2801,19 +2883,24 @@ async function startServer() {
     try {
       const idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM facturas WHERE idCompania = ?", [idCompania]);
+        // Sin xml_firmado ni respuesta_hacienda: pesan varios KB por fila, la pantalla no los usa y
+        // ahora se llenan en cada envío. Solo los lee el reenvío por correo, que carga la fila por id.
+        const [rows] = await pool.query(
+          "SELECT id_factura, id_consulta, idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido FROM facturas WHERE idCompania = ?",
+          [idCompania]
+        );
         const facturas = (rows as any[]).map(row => normalizeRow(row, 'id_factura'));
         const lineasPorFactura = await fetchLineasPorFactura(facturas.map(f => f.id_factura));
         res.json(facturas.map(r => ({ ...r, idConsulta: r.id_consulta, lineas: lineasPorFactura.get(r.id_factura) || [] })));
       } else {
-        res.json(localFacturas.filter(f => f.idCompania === idCompania));
+        res.json(localFacturas.filter(f => f.idCompania === idCompania).map(({ xmlFirmado, respuestaHacienda, ...f }: any) => f));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.post("/api/facturas", requireAuth, async (req, res) => {
+  app.post("/api/facturas", requireAuth, unaOperacionALaVez(candadoPorConsulta, async (req, res) => {
     try {
       const body = req.body;
       const idCompania = sessionOf(req).idCompania;
@@ -2828,6 +2915,9 @@ async function startServer() {
 
       if (lineasBody.length === 0) {
         return res.status(400).json({ error: "Agregue al menos un servicio a facturar." });
+      }
+      if (!esCodigoCatalogo(condicionVenta) || !esCodigoCatalogo(medioPago)) {
+        return res.status(400).json({ error: "Condición de venta o medio de pago inválido." });
       }
 
       // `facturas.id_consulta` es una columna heredada de ConsultorioDB_schema.sql con un
@@ -2892,6 +2982,7 @@ async function startServer() {
         if (!servicio) return res.status(400).json({ error: `Servicio ${l.idServicio} no encontrado.` });
         if (!servicio.codigoCabys) return res.status(400).json({ error: `El servicio "${servicio.nombre}" no tiene un código CABYS configurado — asígnelo en Configuración de Empresa antes de facturar.` });
         const cantidad = parseFloat((l.cantidad as any) || 1);
+        if (!Number.isFinite(cantidad) || cantidad <= 0) return res.status(400).json({ error: `La cantidad de "${servicio.nombre}" debe ser mayor a 0.` });
         if (servicio.tipo === 'ARTICULO' && (servicio.stock || 0) < cantidad) {
           return res.status(400).json({ error: `Existencias insuficientes de "${servicio.nombre}" (disponible: ${servicio.stock || 0}, solicitado: ${cantidad}).` });
         }
@@ -3116,7 +3207,7 @@ async function startServer() {
       console.error("[Hacienda] Error generando factura:", err);
       res.status(500).json({ error: err.message });
     }
-  });
+  }));
 
   async function cargarFacturaPorId(id: number): Promise<any | undefined> {
     if (dbConnected && pool) {
@@ -3165,9 +3256,28 @@ async function startServer() {
     return acreditado;
   }
 
+  // Notas (de Crédito o Débito) que referencian una factura.
+  async function notasDeFactura(idFactura: number): Promise<any[]> {
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT id_factura, consecutivo, tipoDocumento, estado, mensajeError FROM facturas WHERE idFacturaReferencia = ?", [idFactura]);
+      return (rows as any[]).map(row => normalizeRow(row, 'id_factura'));
+    }
+    return localFacturas.filter(f => f.idFacturaReferencia === idFactura);
+  }
+
+  function notaEnEnvioIncierto(notas: any[]): any | undefined {
+    return notas.find(n => n.estado === "ERROR" && String(n.mensajeError || "").startsWith(MARCA_ENVIO_INCIERTO));
+  }
+
+  function mensajeEnvioIncierto(nota: any): string {
+    return `La nota ${nota.consecutivo} de esta factura tiene un envío incierto: use «Verificar estado» sobre ella antes de emitir otra nota o anular. Si Hacienda sí la recibió, emitir otra la duplicaría.`;
+  }
+
   // Cert + credenciales reales para transmitir una Nota. Se valida ANTES de reservar el consecutivo
-  // para no quemar numeración por un problema de configuración.
-  async function exigirConfigHacienda(idCompania: number): Promise<{ cert: { p12Base64: string; pin: string }; credenciales: { ambiente: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL'; usuarioAtv: string; passwordAtv: string } }> {
+  // para no quemar numeración por un problema de configuración. La Nota va al mismo ambiente en que
+  // se emitió la factura: una clave de SANDBOX no existe en PRODUCCIÓN, y Hacienda rechazaría la
+  // Nota para siempre.
+  async function exigirConfigHacienda(idCompania: number, ambienteFactura: string): Promise<{ cert: CertificadoEmpresa; credenciales: CredencialesAtv }> {
     const credenciales = await cargarCredencialesAtv(idCompania);
     const cert = await cargarCertificadoEmpresa(idCompania);
     if (!cert) throw Object.assign(new Error("Configure primero la Firma Digital de Hacienda (certificado .p12) en Configuración de Empresa."), { status: 400 });
@@ -3175,43 +3285,107 @@ async function startServer() {
     if (credenciales.ambiente === "PRUEBAS_LOCAL") {
       throw Object.assign(new Error("La empresa está en ambiente de pruebas locales: no se puede transmitir una Nota sobre una factura que Hacienda aceptó."), { status: 400 });
     }
+    if (credenciales.ambiente !== ambienteFactura) {
+      throw Object.assign(new Error(`La factura se emitió en ${ambienteFactura} y la empresa está configurada en ${credenciales.ambiente}: cualquier Nota sobre ella tiene que ir al ambiente original.`), { status: 409 });
+    }
     return { cert, credenciales };
   }
 
   // Efectos locales de anular: reponer existencias, anular la CxC pendiente, marcar la factura y
   // soltar su consulta para que se pueda volver a facturar bien (id_consulta es UNIQUE: mientras la
   // factura anulada la conservara, esa consulta quedaba imposible de facturar de nuevo).
+  //
+  // El cambio a ANULADA es condicional (`estado <> 'ANULADA'`) y va primero: si otra anulación de la
+  // misma factura ya entró, esta no repone existencias por segunda vez.
   async function aplicarAnulacion(connection: any | null, factura: any, lineasARestituir: any[], motivo: string): Promise<void> {
-    const referencia = `Anulación factura ${factura.consecutivo}`;
+    const yaAnulada = () => Object.assign(new Error("Esta factura ya fue anulada."), { status: 409 });
     if (connection) {
-      for (const l of lineasARestituir) {
-        if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
-        const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE id_servicio = ? FOR UPDATE", [l.idServicio]);
-        const stockResultante = ((servicioRows as any[])[0]?.stock || 0) + Number(l.cantidad);
-        await connection.query("UPDATE servicios SET stock = ? WHERE id_servicio = ?", [stockResultante, l.idServicio]);
-        await connection.query(
-          "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'DEVOLUCION_VENTA', ?, ?, ?, ?, ?, ?)",
-          [factura.idCompania, l.idServicio, Number(l.cantidad), stockResultante, referencia, motivo, null, new Date().toISOString()]
-        );
-      }
-      await connection.query("UPDATE facturas SET estado = 'ANULADA', motivoAnulacion = ?, id_consulta = NULL WHERE id_factura = ?", [motivo, factura.id]);
+      const [resultado] = await connection.query(
+        "UPDATE facturas SET estado = 'ANULADA', motivoAnulacion = ?, id_consulta = NULL WHERE id_factura = ? AND estado <> 'ANULADA'",
+        [motivo, factura.id]
+      );
+      if ((resultado as any).affectedRows === 0) throw yaAnulada();
       // Si ya estaba PAGADA se deja intacta: el cobro ya ocurrió, es un hecho histórico.
       await connection.query("UPDATE cuentas_cobrar SET estado = 'ANULADA' WHERE idFactura = ? AND estado = 'PENDIENTE'", [factura.id]);
+    } else {
+      const original = localFacturas.find(f => f.id === factura.id);
+      if (original?.estado === "ANULADA") throw yaAnulada();
+      if (original) {
+        original.estado = "ANULADA";
+        original.motivoAnulacion = motivo;
+        original.idConsulta = null;
+      }
+      const cxc = localCuentasCobrar.find(c => c.idFactura === factura.id && c.estado === "PENDIENTE");
+      if (cxc) cxc.estado = "ANULADA";
+    }
+    await moverStockPorNota(connection, factura.idCompania, lineasARestituir, 1, `Anulación factura ${factura.consecutivo}`, motivo);
+  }
+
+  // Una pestaña abierta antes de quitar la casilla "Modo prueba" de las Notas todavía la muestra; si
+  // se ignorara en silencio, quien la marcó transmitiría una Nota real creyendo que era de prueba.
+  const MENSAJE_SIN_MODO_PRUEBA = "Las Notas de Crédito y Débito ya no tienen modo prueba: siempre se transmiten a Hacienda. Recargue la página e intente de nuevo.";
+
+  const AVISO_EFECTOS_NO_APLICADOS ="Hacienda sí recibió esta nota, pero al emitirla se dio por fallida y su efecto en inventario y cuenta por cobrar no se aplicó: ajústelo a mano.";
+
+  // Qué estado y mensaje le corresponden a un comprobante según lo que Hacienda respondió al
+  // consultarlo. Lo comparten POST /api/facturas/:id/estado y /anular (que consulta antes de anular
+  // una factura en ERROR), para que los dos lleguen siempre a la misma conclusión.
+  function estadoTrasConsulta(factura: any, consulta: EstadoHaciendaResultado): { estado: string; mensajeError: string | null } {
+    let estado: string = factura.estado;
+    let mensajeError: string | null = factura.mensajeError ?? null;
+    if (consulta.estado === "aceptado") {
+      estado = "ACEPTADA";
+      mensajeError = null;
+    } else if (consulta.estado === "rechazado") {
+      estado = "RECHAZADA";
+      mensajeError = consulta.detalleMensaje || "Hacienda rechazó el comprobante.";
+    } else if ((consulta.estado === "recibido" || consulta.estado === "procesando") && factura.estado === "ERROR") {
+      // Sí le llegó, aunque el envío se reportó como fallido.
+      estado = "ENVIADA";
+      mensajeError = null;
+    } else if (consulta.estado === "no_encontrado" && factura.estado === "ERROR") {
+      mensajeError = factura.tipoDocumento === "01"
+        ? "Hacienda no tiene registro de esta factura: nunca le llegó. Anúlela (no requiere Nota de Crédito) y vuelva a facturar."
+        : "Hacienda no tiene registro de esta nota: nunca le llegó, y por eso no se aplicó. Vuelva a emitirla.";
+    }
+    // Una Nota que se dio por fallida al emitirla nunca aplicó sus efectos (ver emitirYGuardarNota).
+    // Si Hacienda sí la tiene, se avisa — y el aviso se conserva en las consultas siguientes (antes
+    // la siguiente consulta "aceptado" lo borraba).
+    if (factura.tipoDocumento !== "01" && (estado === "ACEPTADA" || estado === "ENVIADA")
+        && (factura.estado === "ERROR" || factura.mensajeError === AVISO_EFECTOS_NO_APLICADOS)) {
+      mensajeError = AVISO_EFECTOS_NO_APLICADOS;
+    }
+    // El saldo a favor anotado al emitir una Nota de Crédito sigue siendo cierto cuando Hacienda la acepta.
+    if (estado === "ACEPTADA" && mensajeError === null && String(factura.mensajeError || "").startsWith(MARCA_SALDO_A_FAVOR)) {
+      mensajeError = factura.mensajeError;
+    }
+    // Una Nota ENVIADA ya aplicó sus efectos al emitirla (ver emitirYGuardarNota). Si Hacienda la
+    // rechaza después, esos efectos quedaron sin comprobante que los respalde: se avisa.
+    if (factura.tipoDocumento !== "01" && factura.estado === "ENVIADA" && estado === "RECHAZADA") {
+      mensajeError = `${mensajeError} — Al emitirla ya se habían aplicado sus efectos (inventario, cuenta por cobrar${factura.tipoDocumento === "03" ? " y, si era de anulación, la anulación de la factura" : ""}): reviértalos a mano.`;
+    }
+    // ANULADA se conserva: la anulación ya ocurrió y Hacienda solo informa del comprobante original.
+    if (factura.estado === "ANULADA") {
+      estado = "ANULADA";
+      mensajeError = factura.mensajeError ?? null;
+    }
+    return { estado, mensajeError };
+  }
+
+  async function guardarEstadoConsultado(id: number, estado: string, mensajeError: string | null, respuestaXmlBase64: string | null): Promise<void> {
+    if (dbConnected && pool) {
+      // respuesta_hacienda es el MensajeHacienda: el tercer documento que el paciente debe recibir.
+      await pool.query(
+        "UPDATE facturas SET estado = ?, mensajeError = ?, respuesta_hacienda = COALESCE(?, respuesta_hacienda) WHERE id_factura = ?",
+        [estado, mensajeError, respuestaXmlBase64, id]
+      );
       return;
     }
-    for (const l of lineasARestituir) {
-      if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
-      const servicio = localServicios.find(s => s.id === l.idServicio);
-      if (servicio) servicio.stock = (servicio.stock || 0) + Number(l.cantidad);
+    const local = localFacturas.find(f => f.id === id);
+    if (local) {
+      local.estado = estado as any;
+      local.mensajeError = mensajeError;
     }
-    const original = localFacturas.find(f => f.id === factura.id);
-    if (original) {
-      original.estado = "ANULADA";
-      original.motivoAnulacion = motivo;
-      original.idConsulta = null;
-    }
-    const cxc = localCuentasCobrar.find(c => c.idFactura === factura.id && c.estado === "PENDIENTE");
-    if (cxc) cxc.estado = "ANULADA";
   }
 
   // Anula una Factura Electrónica. Son tres efectos independientes (mismo criterio que el POS):
@@ -3221,7 +3395,7 @@ async function startServer() {
   // nunca aceptó (SIMULADA, RECHAZADA, ERROR) la haría rechazar también. Antes solo se podían anular
   // las ENVIADAS/ACEPTADAS, así que una factura rechazada o de prueba no tenía forma de reversarse
   // y su consulta quedaba bloqueada para siempre.
-  app.post("/api/facturas/:id/anular", requireAuth, async (req, res) => {
+  app.post("/api/facturas/:id/anular", requireAuth, unaOperacionALaVez(candadoPorFactura, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const session = sessionOf(req);
@@ -3229,7 +3403,7 @@ async function startServer() {
       if (session.rol !== "Administrador" && !isSaasAdmin(session)) {
         return res.status(403).json({ error: "Solo un usuario Administrador puede anular facturas." });
       }
-      const motivo = String(req.body.motivo || "").trim().slice(0, 255);
+      const motivo = String(req.body.motivo || "").trim().slice(0, RAZON_MAX);
       if (!motivo) {
         return res.status(400).json({ error: "Indique el motivo de la anulación." });
       }
@@ -3253,11 +3427,33 @@ async function startServer() {
 
       const idCompania = factura.idCompania;
       const credenciales = await cargarCredencialesAtv(idCompania);
+      const ambienteActual = credenciales?.ambiente ?? "PRUEBAS_LOCAL";
+
+      // Ambiente: las claves de SANDBOX y de PRODUCCIÓN viven en sistemas distintos de Hacienda.
+      // - Una factura de SANDBOX es una prueba sin efecto fiscal: si la empresa ya pasó a otro
+      //   ambiente, no hay a quién mandarle la Nota, y se anula solo en el sistema.
+      // - Una de PRODUCCIÓN que Hacienda aceptó (o pudo haber recibido) solo se anula ante
+      //   PRODUCCIÓN: hacerlo localmente dejaría viva ante Hacienda una venta real.
+      const esPruebaDeSandbox = factura.ambiente === "SANDBOX" && ambienteActual !== "SANDBOX";
+      if (factura.ambiente === "PRODUCCION" && ambienteActual !== "PRODUCCION" && (factura.estado === "ACEPTADA" || factura.estado === "ERROR")) {
+        return res.status(409).json({ error: `Esta factura se emitió en PRODUCCIÓN y la empresa está configurada en ${ambienteActual}. Vuelva a configurar el ambiente de Producción para anularla ante Hacienda.` });
+      }
+
+      const notas = await notasDeFactura(factura.id);
+      const incierta = notaEnEnvioIncierto(notas);
+      if (incierta) return res.status(409).json({ error: mensajeEnvioIncierto(incierta) });
+      // Una Nota de Débito vigente es otro comprobante ante Hacienda: anular la factura no la anula,
+      // pero sí anularía la cuenta por cobrar que incluye su monto. Hasta que el sistema emita Notas
+      // de Crédito sobre Notas de Débito, se bloquea en vez de dejar Hacienda y el sistema en desacuerdo.
+      const debitosVigentes = notas.filter(n => n.tipoDocumento === "02" && (n.estado === "ACEPTADA" || n.estado === "ENVIADA"));
+      if (debitosVigentes.length > 0 && !esPruebaDeSandbox) {
+        return res.status(409).json({ error: `Esta factura tiene Notas de Débito vigentes ante Hacienda (${debitosVigentes.map(n => n.consecutivo).join(", ")}). Anularla las dejaría válidas mientras el sistema anula la cuenta por cobrar, y el sistema todavía no emite Notas de Crédito sobre Notas de Débito. Corrija la factura con Notas de Crédito parciales.` });
+      }
 
       // ERROR puede ser "nunca le llegó a Hacienda" (falló la firma, el token o la recepción) o "sí
       // le llegó y se cortó la respuesta". Antes de anularla sin Nota de Crédito se le pregunta: la
       // misma lección del POS de distinguir "nunca se envió" de "ya se envió".
-      if (factura.estado === "ERROR" && credenciales && credenciales.ambiente !== "PRUEBAS_LOCAL") {
+      if (factura.estado === "ERROR" && credenciales && credenciales.ambiente === factura.ambiente) {
         let consulta;
         try {
           const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
@@ -3266,17 +3462,13 @@ async function startServer() {
           return res.status(503).json({ error: `No se pudo confirmar con Hacienda si recibió esta factura (${err.message}). Intente de nuevo en unos minutos.` });
         }
         if (consulta.estado === "error") {
-          return res.status(503).json({ error: "No se pudo confirmar con Hacienda si recibió esta factura. Intente de nuevo en unos minutos." });
+          return res.status(503).json({ error: `No se pudo confirmar con Hacienda si recibió esta factura${consulta.detalleMensaje ? ` (${consulta.detalleMensaje})` : ""}. Intente de nuevo en unos minutos.` });
         }
-        if (consulta.estado === "aceptado" || consulta.estado === "rechazado") {
-          factura.estado = consulta.estado === "aceptado" ? "ACEPTADA" : "RECHAZADA";
-          if (dbConnected && pool) {
-            await pool.query("UPDATE facturas SET estado = ?, respuesta_hacienda = COALESCE(?, respuesta_hacienda) WHERE id_factura = ?", [factura.estado, consulta.respuestaXmlBase64, factura.id]);
-          } else {
-            const local = localFacturas.find(f => f.id === factura.id);
-            if (local) local.estado = factura.estado;
-          }
-        } else if (consulta.estado !== "no_encontrado") {
+        const sincronizado = estadoTrasConsulta(factura, consulta);
+        await guardarEstadoConsultado(factura.id, sincronizado.estado, sincronizado.mensajeError, consulta.respuestaXmlBase64);
+        factura.estado = sincronizado.estado;
+        factura.mensajeError = sincronizado.mensajeError;
+        if (factura.estado === "ENVIADA") {
           return res.status(409).json({ error: "Hacienda sí recibió esta factura y todavía la está procesando. Use «Verificar estado» y anúlela cuando quede aceptada o rechazada." });
         }
       }
@@ -3299,7 +3491,7 @@ async function startServer() {
       }
 
       const facturaAnulada = { ...factura, estado: "ANULADA", motivoAnulacion: motivo, idConsulta: null };
-      const emiteNotaCredito = factura.estado === "ACEPTADA" && lineasPorAcreditar.length > 0;
+      const emiteNotaCredito = factura.estado === "ACEPTADA" && !esPruebaDeSandbox && lineasPorAcreditar.length > 0;
 
       if (!emiteNotaCredito) {
         // Sin Nota de Crédito: la factura nunca fue válida ante Hacienda (o sus Notas de Crédito
@@ -3322,7 +3514,7 @@ async function startServer() {
         return res.json({ factura: facturaAnulada, notaCredito: null });
       }
 
-      const { cert, credenciales: credencialesReales } = await exigirConfigHacienda(idCompania);
+      const { cert, credenciales: credencialesReales } = await exigirConfigHacienda(idCompania, factura.ambiente);
       const siguienteSecuencialNc = await reservarConsecutivoNota(idCompania, "03");
       const consecutivoNc = generarConsecutivo(siguienteSecuencialNc, "001", "00001", "03");
       const fechaEmisionNc = new Date();
@@ -3366,9 +3558,13 @@ async function startServer() {
       console.error("[Hacienda] Error anulando factura:", err);
       res.status(err.status || 500).json({ error: err.message });
     }
-  });
+  }));
 
   function mensajeNotaNoTransmitida(nombre: string, nota: any, consecuencia: string): string {
+    // Envío incierto: NO se invita a reintentar — si Hacienda sí la tiene, otra la duplicaría.
+    if (String(nota.mensajeError || "").startsWith(MARCA_ENVIO_INCIERTO)) {
+      return `No se pudo confirmar si Hacienda recibió la ${nombre} ${nota.consecutivo}. ${consecuencia}: no se tocó el inventario ni la cuenta por cobrar. Use «Verificar estado» sobre esa nota antes de volver a intentarlo.`;
+    }
     const motivo = nota.estado === "RECHAZADA" ? `Hacienda rechazó la ${nombre}` : `Hacienda no recibió la ${nombre}`;
     return `${motivo}: ${nota.mensajeError || "sin detalle"}. ${consecuencia}: no se tocó el inventario ni la cuenta por cobrar. Corrija el problema y vuelva a intentarlo.`;
   }
@@ -3390,6 +3586,8 @@ async function startServer() {
         : "Solo se pueden ajustar facturas que Hacienda aceptó." });
       return null;
     }
+    const incierta = notaEnEnvioIncierto(await notasDeFactura(factura.id));
+    if (incierta) { res.status(409).json({ error: mensajeEnvioIncierto(incierta) }); return null; }
 
     const { company, paciente } = await cargarEmpresaYPaciente(factura.idCompania, factura.idPaciente);
     if (!company) { res.status(404).json({ error: "Empresa no encontrada." }); return null; }
@@ -3424,8 +3622,8 @@ async function startServer() {
     company: Company;
     paciente: Patient;
     medioPago: string;
-    cert: { p12Base64: string; pin: string };
-    credenciales: { ambiente: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL'; usuarioAtv: string; passwordAtv: string };
+    cert: CertificadoEmpresa;
+    credenciales: CredencialesAtv;
     aplicarEfectos: (connection: any | null) => Promise<void>;
   }): Promise<{ nota: any; exitoso: boolean }> {
     const { tipoDocumento, factura, xmlSinFirmar, clave, consecutivo, fechaEmision, condicionVenta, resumen, lineas, motivo, company, paciente, medioPago, cert, credenciales, aplicarEfectos } = params;
@@ -3477,7 +3675,8 @@ async function startServer() {
         if (exitoso) await aplicarEfectos(connection);
         await connection.commit();
       } catch (err: any) {
-        await connection.rollback();
+        // Si la conexión misma falló, el rollback también lanza; no debe impedir el guardado de abajo.
+        await connection.rollback().catch(() => {});
         // Hacienda ya tiene esta Nota: perder su registro local (clave, XML firmado) sería peor que
         // quedarse sin sus efectos. Se guarda sola, marcada, y el error sigue hacia el usuario.
         if (exitoso) {
@@ -3503,67 +3702,78 @@ async function startServer() {
   // - Nota de Crédito parcial: resta (sin bajar de 0); si el saldo llega a 0 queda PAGADA. Solo
   //   sobre una cuenta PENDIENTE: si ya estaba pagada, lo acreditado es una devolución de dinero que
   //   se hace fuera del sistema.
-  async function ajustarCxcPorNota(connection: any | null, factura: any, delta: number): Promise<void> {
-    const redondear = (n: number) => Math.round(n * 100000) / 100000;
+  // Devuelve el saldo a favor del paciente: lo acreditado que excede lo que todavía debía (antes ese
+  // pago de más desaparecía sin rastro al recortar el saldo a 0).
+  async function ajustarCxcPorNota(connection: any | null, factura: any, delta: number): Promise<number> {
+    const redondear = redondearMonto;
+    let cuenta: any;
     if (connection) {
       const [rows] = await connection.query("SELECT * FROM cuentas_cobrar WHERE idFactura = ? FOR UPDATE", [factura.id]);
-      const cuenta = (rows as any[])[0];
-      if (!cuenta) {
-        if (delta <= 0) return;
-        const fechaEmision = fechaCR();
+      cuenta = (rows as any[])[0];
+    } else {
+      cuenta = localCuentasCobrar.find(c => c.idFactura === factura.id);
+    }
+
+    if (!cuenta) {
+      if (delta <= 0) return 0;
+      const fechaEmision = fechaCR();
+      const nueva = {
+        idCompania: factura.idCompania, idFactura: factura.id, facturaConsecutivo: factura.consecutivo, idPaciente: factura.idPaciente,
+        fechaEmision, fechaVencimiento: sumarDiasCR(fechaEmision, PLAZO_CREDITO_DIAS_DEFECTO), plazoDias: PLAZO_CREDITO_DIAS_DEFECTO,
+        montoTotal: redondear(delta), saldoPendiente: redondear(delta), estado: "PENDIENTE" as const, creadaEn: new Date().toISOString()
+      };
+      if (connection) {
         await connection.query(
           "INSERT INTO cuentas_cobrar (idCompania, idFactura, facturaConsecutivo, idPaciente, fechaEmision, fechaVencimiento, plazoDias, montoTotal, saldoPendiente, estado, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?)",
-          [factura.idCompania, factura.id, factura.consecutivo, factura.idPaciente, fechaEmision, sumarDiasCR(fechaEmision, PLAZO_CREDITO_DIAS_DEFECTO), PLAZO_CREDITO_DIAS_DEFECTO, redondear(delta), redondear(delta), new Date().toISOString()]
+          [nueva.idCompania, nueva.idFactura, nueva.facturaConsecutivo, nueva.idPaciente, nueva.fechaEmision, nueva.fechaVencimiento, nueva.plazoDias, nueva.montoTotal, nueva.saldoPendiente, nueva.creadaEn]
         );
-        return;
+      } else {
+        localCuentasCobrar.push({ id: Math.max(0, ...localCuentasCobrar.map(c => c.id), 0) + 1, ...nueva });
       }
-      if (cuenta.estado === "ANULADA") return;
-      if (delta > 0) {
-        await connection.query(
-          "UPDATE cuentas_cobrar SET montoTotal = ?, saldoPendiente = ?, estado = 'PENDIENTE' WHERE id = ?",
-          [redondear(Number(cuenta.montoTotal) + delta), redondear(Number(cuenta.saldoPendiente) + delta), cuenta.id]
-        );
-      } else if (cuenta.estado === "PENDIENTE") {
-        const saldo = Math.max(0, redondear(Number(cuenta.saldoPendiente) + delta));
-        await connection.query(
-          "UPDATE cuentas_cobrar SET montoTotal = ?, saldoPendiente = ?, estado = ? WHERE id = ?",
-          [Math.max(0, redondear(Number(cuenta.montoTotal) + delta)), saldo, saldo <= 0 ? "PAGADA" : "PENDIENTE", cuenta.id]
-        );
-      }
-      return;
+      return 0;
     }
-    const cuenta = localCuentasCobrar.find(c => c.idFactura === factura.id);
-    if (!cuenta) {
-      if (delta <= 0) return;
-      const fechaEmision = fechaCR();
-      localCuentasCobrar.push({
-        id: Math.max(0, ...localCuentasCobrar.map(c => c.id), 0) + 1, idCompania: factura.idCompania, idFactura: factura.id,
-        facturaConsecutivo: factura.consecutivo, idPaciente: factura.idPaciente, fechaEmision,
-        fechaVencimiento: sumarDiasCR(fechaEmision, PLAZO_CREDITO_DIAS_DEFECTO), plazoDias: PLAZO_CREDITO_DIAS_DEFECTO,
-        montoTotal: redondear(delta), saldoPendiente: redondear(delta), estado: "PENDIENTE", creadaEn: new Date().toISOString()
-      });
-      return;
-    }
-    if (cuenta.estado === "ANULADA") return;
+    if (cuenta.estado === "ANULADA") return 0;
+
+    let montoTotal = Number(cuenta.montoTotal);
+    let saldoPendiente = Number(cuenta.saldoPendiente);
+    let estado = cuenta.estado;
+    let saldoAFavor = 0;
     if (delta > 0) {
-      cuenta.montoTotal = redondear(cuenta.montoTotal + delta);
-      cuenta.saldoPendiente = redondear(cuenta.saldoPendiente + delta);
-      cuenta.estado = "PENDIENTE";
-    } else if (cuenta.estado === "PENDIENTE") {
-      cuenta.montoTotal = Math.max(0, redondear(cuenta.montoTotal + delta));
-      cuenta.saldoPendiente = Math.max(0, redondear(cuenta.saldoPendiente + delta));
-      if (cuenta.saldoPendiente <= 0) cuenta.estado = "PAGADA";
+      montoTotal = redondear(montoTotal + delta);
+      saldoPendiente = redondear(saldoPendiente + delta);
+      estado = "PENDIENTE";
+    } else if (estado === "PENDIENTE") {
+      saldoAFavor = Math.max(0, redondear(-delta - saldoPendiente));
+      montoTotal = Math.max(0, redondear(montoTotal + delta));
+      saldoPendiente = Math.max(0, redondear(saldoPendiente + delta));
+      if (saldoPendiente <= 0) estado = "PAGADA";
+    } else {
+      // Cuenta ya PAGADA: todo lo acreditado es dinero que hay que devolverle al paciente.
+      return redondear(-delta);
     }
+
+    if (connection) {
+      await connection.query("UPDATE cuentas_cobrar SET montoTotal = ?, saldoPendiente = ?, estado = ? WHERE id = ?", [montoTotal, saldoPendiente, estado, cuenta.id]);
+    } else {
+      Object.assign(cuenta, { montoTotal, saldoPendiente, estado });
+    }
+    return saldoAFavor;
   }
 
+  const MARCA_SALDO_A_FAVOR = "Saldo a favor del paciente:";
+
   // Mueve existencias de las líneas ARTICULO de una Nota: `signo` +1 repone (Nota de Crédito), −1
-  // descuenta (Nota de Débito, que es una entrega adicional). Nunca deja el stock negativo.
+  // descuenta (Nota de Débito, que es una entrega adicional). También la usa la anulación.
+  //
+  // No se recorta a 0: el kardex (movimientos_inventario) tiene que cuadrar con el stock. Si una
+  // Nota de Débito vende más de lo que queda —el chequeo previo no bloquea filas mientras Hacienda
+  // responde—, el stock queda negativo, que es la verdad: hay una venta sin existencias que ajustar.
   async function moverStockPorNota(connection: any | null, idCompania: number, lineas: any[], signo: 1 | -1, referencia: string, motivo: string): Promise<void> {
     for (const l of lineas) {
       if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
       if (connection) {
         const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE id_servicio = ? FOR UPDATE", [l.idServicio]);
-        const stockResultante = Math.max(0, ((servicioRows as any[])[0]?.stock || 0) + signo * Number(l.cantidad));
+        const stockResultante = (Number((servicioRows as any[])[0]?.stock) || 0) + signo * Number(l.cantidad);
         await connection.query("UPDATE servicios SET stock = ? WHERE id_servicio = ?", [stockResultante, l.idServicio]);
         await connection.query(
           `INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, '${signo > 0 ? "DEVOLUCION_VENTA" : "VENTA"}', ?, ?, ?, ?, ?, ?)`,
@@ -3571,7 +3781,7 @@ async function startServer() {
         );
       } else {
         const servicio = localServicios.find(s => s.id === l.idServicio);
-        if (servicio) servicio.stock = Math.max(0, (servicio.stock || 0) + signo * Number(l.cantidad));
+        if (servicio) servicio.stock = (servicio.stock || 0) + signo * Number(l.cantidad);
       }
     }
   }
@@ -3582,9 +3792,16 @@ async function startServer() {
   // este endpoint es para correcciones (se cobró de más, una devolución parcial) donde la factura
   // original sigue vigente. Código de referencia '02' ("Corrige monto", Nota 9 de
   // ANEXOS_Y_ESTRUCTURAS_V4.4.pdf) — nunca '01' (reservado a anulación total vía /anular).
-  app.post("/api/facturas/:id/nota-credito", requireAuth, async (req, res) => {
+  app.post("/api/facturas/:id/nota-credito", requireAuth, unaOperacionALaVez(candadoPorFactura, async (req, res) => {
     try {
-      const motivo = String(req.body.motivo || "").trim().slice(0, 255);
+      // Una Nota de Crédito "parcial" puede acreditar todo lo vendido: repone existencias y salda la
+      // deuda igual que anular. Exige lo mismo que anular, o sería la forma de saltarse ese permiso.
+      const session = sessionOf(req);
+      if (session.rol !== "Administrador" && !isSaasAdmin(session)) {
+        return res.status(403).json({ error: "Solo un usuario Administrador puede emitir Notas de Crédito." });
+      }
+      if (req.body.modoPrueba === true) return res.status(400).json({ error: MENSAJE_SIN_MODO_PRUEBA });
+      const motivo = String(req.body.motivo || "").trim().slice(0, RAZON_MAX);
       if (!motivo) return res.status(400).json({ error: "Indique el motivo de la Nota de Crédito." });
       const lineasBody: Array<{ idServicio: number; cantidad: number }> = req.body.lineas || [];
       if (lineasBody.length === 0) return res.status(400).json({ error: "Seleccione al menos una línea a acreditar." });
@@ -3593,7 +3810,7 @@ async function startServer() {
       if (!datos) return;
       const { factura, company, paciente, lineasOriginales } = datos;
       const idCompania = factura.idCompania;
-      const { cert, credenciales } = await exigirConfigHacienda(idCompania);
+      const { cert, credenciales } = await exigirConfigHacienda(idCompania, factura.ambiente);
 
       // Hacienda exige que la suma de ajustes nunca supere el comprobante original (Anexos V4.4,
       // sección "Información de referencia").
@@ -3602,7 +3819,7 @@ async function startServer() {
       for (const pedida of lineasBody) {
         const idServicio = parseInt(pedida.idServicio as any);
         const cantidad = parseFloat(pedida.cantidad as any);
-        if (!cantidad || cantidad <= 0) return res.status(400).json({ error: "Cada línea a acreditar debe tener una cantidad mayor a 0." });
+        if (!Number.isFinite(cantidad) || cantidad <= 0) return res.status(400).json({ error: "Cada línea a acreditar debe tener una cantidad mayor a 0." });
         const originales = lineasOriginales.filter((l: any) => l.idServicio === idServicio);
         if (originales.length === 0) return res.status(400).json({ error: `La factura original no tiene una línea con el servicio ${idServicio}.` });
         const original = originales[0];
@@ -3612,6 +3829,9 @@ async function startServer() {
         if (cantidad > disponible + 1e-9) {
           return res.status(400).json({ error: `"${original.detalle}": solo quedan ${disponible} unidad(es) por acreditar (ya se acreditaron ${yaAcreditado} de ${vendido}).` });
         }
+        // Lo pedido en esta misma nota también cuenta: repetir el servicio en dos líneas de la
+        // solicitud no puede acreditar más de lo vendido.
+        acreditadoPorServicio.set(idServicio, yaAcreditado + cantidad);
         lineasInput.push({
           codigoCabys: original.codigoCabys,
           detalle: original.detalle,
@@ -3651,6 +3871,7 @@ async function startServer() {
         referencia: { tipoDocumento: "01", numero: factura.clave, fechaEmision: factura.fechaEmision, codigo: "02", razon: motivo }
       });
 
+      let saldoAFavor = 0;
       const { nota: notaCredito, exitoso } = await emitirYGuardarNota({
         tipoDocumento: "03", factura, xmlSinFirmar: xml, clave, consecutivo, fechaEmision, condicionVenta, resumen,
         lineas: lineasCalculadas, motivo, company, paciente, medioPago: factura.medioPago || "01", cert, credenciales,
@@ -3659,35 +3880,42 @@ async function startServer() {
           // rebaja lo que el paciente todavía debe. Antes la CxC no se tocaba: la nota reducía la
           // deuda ante Hacienda pero el saldo por cobrar seguía igual.
           await moverStockPorNota(connection, idCompania, lineasCalculadas, 1, `Nota de Crédito ${consecutivo} sobre factura ${factura.consecutivo}`, motivo);
-          await ajustarCxcPorNota(connection, factura, -resumen.totalComprobante);
+          // Solo una venta a crédito tiene cuenta por cobrar; en una de contado la devolución es obvia.
+          if (condicionVenta === "02") saldoAFavor = await ajustarCxcPorNota(connection, factura, -resumen.totalComprobante);
         }
       });
       if (!exitoso) {
         return res.status(502).json({ error: mensajeNotaNoTransmitida("Nota de Crédito", notaCredito, "No se acreditó nada"), notaCredito });
+      }
+      if (saldoAFavor > 0) {
+        notaCredito.mensajeError = `${MARCA_SALDO_A_FAVOR} ₡${saldoAFavor.toLocaleString("es-CR")} — lo acreditado superó lo que quedaba por cobrar de la factura. Devuélvalo fuera del sistema.`;
+        await guardarEstadoConsultado(notaCredito.id, notaCredito.estado, notaCredito.mensajeError, null);
       }
       res.json(notaCredito);
     } catch (err: any) {
       console.error("[Hacienda] Error emitiendo Nota de Crédito parcial:", err);
       res.status(err.status || 500).json({ error: err.message });
     }
-  });
+  }));
 
   // Nota de Débito (total o parcial): agrega un cargo adicional sobre una factura ya emitida
   // (sesión adicional no cobrada, corrección al alza, etc.). Las líneas son nuevas — se toman del
   // catálogo VIGENTE de servicios, igual que POST /api/facturas, no de la factura original.
-  app.post("/api/facturas/:id/nota-debito", requireAuth, async (req, res) => {
+  app.post("/api/facturas/:id/nota-debito", requireAuth, unaOperacionALaVez(candadoPorFactura, async (req, res) => {
     try {
-      const motivo = String(req.body.motivo || "").trim().slice(0, 255);
+      if (req.body.modoPrueba === true) return res.status(400).json({ error: MENSAJE_SIN_MODO_PRUEBA });
+      const motivo = String(req.body.motivo || "").trim().slice(0, RAZON_MAX);
       if (!motivo) return res.status(400).json({ error: "Indique el motivo de la Nota de Débito." });
       const lineasBody: Array<{ idServicio: number; cantidad: number }> = req.body.lineas || [];
       if (lineasBody.length === 0) return res.status(400).json({ error: "Agregue al menos un servicio a debitar." });
       const medioPago = req.body.medioPago || "01";
+      if (!esCodigoCatalogo(medioPago)) return res.status(400).json({ error: "Medio de pago inválido." });
 
       const datos = await cargarFacturaParaAjuste(req, res);
       if (!datos) return;
       const { factura, company, paciente } = datos;
       const idCompania = factura.idCompania;
-      const { cert, credenciales } = await exigirConfigHacienda(idCompania);
+      const { cert, credenciales } = await exigirConfigHacienda(idCompania, factura.ambiente);
 
       let serviciosDisponibles: Servicio[];
       if (dbConnected && pool) {
@@ -3698,13 +3926,19 @@ async function startServer() {
       }
 
       const lineasInput = [];
+      // Se chequea contra lo pedido en TODAS las líneas del mismo artículo, y antes de transmitir:
+      // después de que Hacienda recibe la Nota ya no hay vuelta atrás.
+      const pedidoPorArticulo = new Map<number, number>();
       for (const l of lineasBody) {
         const servicio = serviciosDisponibles.find(s => s.id === parseInt(l.idServicio as any));
         if (!servicio) return res.status(400).json({ error: `Servicio ${l.idServicio} no encontrado.` });
         if (!servicio.codigoCabys) return res.status(400).json({ error: `El servicio "${servicio.nombre}" no tiene un código CABYS configurado.` });
         const cantidad = parseFloat((l.cantidad as any) || 1);
-        if (servicio.tipo === 'ARTICULO' && (servicio.stock || 0) < cantidad) {
-          return res.status(400).json({ error: `Existencias insuficientes de "${servicio.nombre}" (disponible: ${servicio.stock || 0}, solicitado: ${cantidad}).` });
+        if (!Number.isFinite(cantidad) || cantidad <= 0) return res.status(400).json({ error: `La cantidad de "${servicio.nombre}" debe ser mayor a 0.` });
+        const pedido = (pedidoPorArticulo.get(servicio.id) || 0) + cantidad;
+        pedidoPorArticulo.set(servicio.id, pedido);
+        if (servicio.tipo === 'ARTICULO' && (servicio.stock || 0) < pedido) {
+          return res.status(400).json({ error: `Existencias insuficientes de "${servicio.nombre}" (disponible: ${servicio.stock || 0}, solicitado: ${pedido}).` });
         }
         lineasInput.push({
           codigoCabys: servicio.codigoCabys, detalle: servicio.nombre, unidadMedida: servicio.unidadMedida || 'Sp',
@@ -3759,7 +3993,7 @@ async function startServer() {
       console.error("[Hacienda] Error emitiendo Nota de Débito:", err);
       res.status(err.status || 500).json({ error: err.message });
     }
-  });
+  }));
 
   // Vuelve a CONSULTAR a Hacienda el estado de un comprobante ya transmitido. Nunca lo reenvía
   // (ver transmitirComprobante). Sirve tanto para una factura ENVIADA que no resolvió durante el
@@ -3781,58 +4015,26 @@ async function startServer() {
       if (credenciales.ambiente === "PRUEBAS_LOCAL") {
         return res.status(400).json({ error: "La empresa está en ambiente de pruebas locales: no hay nada que consultar en Hacienda." });
       }
+      // Las credenciales de SANDBOX y PRODUCCIÓN son distintas y cada ambiente solo conoce sus claves.
+      if (factura.ambiente && credenciales.ambiente !== factura.ambiente) {
+        return res.status(400).json({ error: `Este comprobante se emitió en ${factura.ambiente} y la empresa está configurada en ${credenciales.ambiente}: no se puede consultar con estas credenciales.` });
+      }
 
-      const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
-      const consulta = await consultarEstadoHacienda(credenciales.ambiente, token, factura.clave);
+      // Si el IdP de Hacienda no responde o rechaza el login, es el mismo "no se pudo consultar" que
+      // una consulta caída: 502, sin tocar el estado (antes salía como 500).
+      let consulta: EstadoHaciendaResultado;
+      try {
+        const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
+        consulta = await consultarEstadoHacienda(credenciales.ambiente, token, factura.clave);
+      } catch (err: any) {
+        return res.status(502).json({ error: `No se pudo consultar a Hacienda en este momento (${err.message}). Intente de nuevo en unos minutos.` });
+      }
       if (consulta.estado === "error") {
-        return res.status(502).json({ error: "No se pudo consultar a Hacienda en este momento. Intente de nuevo en unos minutos." });
+        return res.status(502).json({ error: `No se pudo consultar a Hacienda en este momento${consulta.detalleMensaje ? ` (${consulta.detalleMensaje})` : ""}. Intente de nuevo en unos minutos.` });
       }
 
-      let nuevoEstado: string = factura.estado;
-      let mensajeError: string | null = factura.mensajeError ?? null;
-      if (consulta.estado === "aceptado") {
-        nuevoEstado = "ACEPTADA";
-        mensajeError = null;
-      } else if (consulta.estado === "rechazado") {
-        nuevoEstado = "RECHAZADA";
-        mensajeError = consulta.detalleMensaje || "Hacienda rechazó el comprobante.";
-      } else if (consulta.estado === "no_encontrado") {
-        if (factura.estado === "ERROR") {
-          mensajeError = factura.tipoDocumento === "01"
-            ? "Hacienda no tiene registro de esta factura: nunca le llegó. Anúlela (no requiere Nota de Crédito) y vuelva a facturar."
-            : "Hacienda no tiene registro de esta nota: nunca le llegó, y por eso no se aplicó. Vuelva a emitirla.";
-        }
-      } else if (factura.estado === "ERROR") {
-        // recibido/procesando: sí le llegó, aunque el envío se reportó como fallido.
-        nuevoEstado = "ENVIADA";
-        mensajeError = null;
-      }
-      // Una Nota que se dio por fallida al emitirla nunca aplicó sus efectos (ver emitirYGuardarNota).
-      // Si resulta que Hacienda sí la tiene, hay que avisarlo en vez de dejar el ajuste a medias.
-      if (factura.tipoDocumento !== "01" && factura.estado === "ERROR" && (nuevoEstado === "ACEPTADA" || nuevoEstado === "ENVIADA")) {
-        mensajeError = "Hacienda sí recibió esta nota, pero al emitirla se dio por fallida y su efecto en inventario y cuenta por cobrar no se aplicó: ajústelo a mano.";
-      }
-      // ANULADA se conserva: la anulación ya ocurrió y Hacienda solo informa del comprobante
-      // original. Antes esta consulta la devolvía a ACEPTADA.
-      if (factura.estado === "ANULADA") {
-        nuevoEstado = "ANULADA";
-        mensajeError = factura.mensajeError ?? null;
-      }
-
-      if (dbConnected && pool) {
-        // respuestaXmlBase64 es el XML de aceptación/rechazo de Hacienda: el tercer documento que
-        // el paciente debe recibir.
-        await pool.query(
-          "UPDATE facturas SET estado = ?, mensajeError = ?, respuesta_hacienda = COALESCE(?, respuesta_hacienda) WHERE id_factura = ?",
-          [nuevoEstado, mensajeError, consulta.respuestaXmlBase64 || null, id]
-        );
-      } else {
-        const local = localFacturas.find(f => f.id === id);
-        if (local) {
-          local.estado = nuevoEstado as any;
-          local.mensajeError = mensajeError;
-        }
-      }
+      const { estado: nuevoEstado, mensajeError } = estadoTrasConsulta(factura, consulta);
+      await guardarEstadoConsultado(id, nuevoEstado, mensajeError, consulta.respuestaXmlBase64);
 
       res.json({ id, estado: nuevoEstado, mensajeError, estadoHacienda: consulta.estado });
     } catch (err: any) {
@@ -4390,32 +4592,56 @@ async function startServer() {
         return res.status(400).json({ error: err.message || "No se pudo leer el archivo XML." });
       }
 
-      const redondear = (n: number) => Math.round(n * 100000) / 100000;
+      const redondear = redondearMonto;
+      // Recortadas una sola vez a lo que admiten las columnas (servicios.nombre /
+      // cuentas_pagar_lineas.nombre VARCHAR(150), servicios.codigoBarras VARCHAR(50)), para que la
+      // ruta con BD y la de memoria guarden exactamente lo mismo.
+      const lineasXml = parsed.lineas.map(l => ({
+        ...l,
+        nombre: l.nombre.slice(0, 150),
+        codigoComercial: l.codigoComercial ? l.codigoComercial.slice(0, 50) : null
+      }));
       const numeroFacturaProveedor = (parsed.numeroFacturaProv || "").slice(0, 100) || null;
       const fechaRegistro = parsed.fechaEmision ? parsed.fechaEmision.slice(0, 10) : fechaCR();
       const esContado = parsed.condicionVenta === "01";
       const plazoDias = esContado ? 0 : Math.max(1, parsed.plazoDias || 30);
       const fechaVencimiento = sumarDiasCR(fechaRegistro, plazoDias);
       const montoTotal = redondear(parsed.montoTotal);
-      const ivaAcreditable = redondear(parsed.lineas.reduce((sum, l) => sum + l.montoIva, 0));
-      const notas = parsed.moneda !== "CRC" ? `Importada desde XML (${parsed.moneda}, tipo de cambio ${parsed.tipoCambio})` : "Importada desde XML";
+      // Crédito fiscal (D-104): solo lo da una Factura Electrónica emitida a nombre de esta empresa.
+      // Un Tiquete, o una factura a otra cédula, no lo da — su IVA es parte del costo (y entonces el
+      // D-101 lo deduce entero, porque deduce montoTotal − ivaAcreditable).
+      const empresa = await fetchCompanyById(idCompania);
+      const cedulaEmpresa = empresa ? limpiarIdentificacion(empresa.identificacion) : "";
+      const motivoSinCredito = parsed.tipoComprobante === "04"
+        ? "es un Tiquete Electrónico"
+        : parsed.receptorIdentificacion !== cedulaEmpresa
+          ? `la factura está a nombre de ${parsed.receptorIdentificacion ? `la cédula ${parsed.receptorIdentificacion}` : "nadie (sin receptor)"}, no de la empresa`
+          : null;
+      const ivaAcreditable = motivoSinCredito ? 0 : redondear(lineasXml.reduce((sum, l) => sum + l.montoIva, 0));
+      const avisoCreditoFiscal = motivoSinCredito ? `Sin crédito fiscal: ${motivoSinCredito}. Su IVA queda como parte del costo.` : null;
+      const notas = [
+        parsed.moneda !== "CRC" ? `Importada desde XML (${parsed.moneda}, tipo de cambio ${parsed.tipoCambio})` : "Importada desde XML",
+        avisoCreditoFiscal
+      ].filter(Boolean).join(". ").slice(0, 255);
       const creadaEn = new Date().toISOString();
       const UNIDADES_VALIDAS = new Set(["Sp", "Spe", "St", "Os", "h", "Unid"]);
       const esDelProveedor = (p: Proveedor) => p.identificacion.replace(/[^0-9]/g, "") === parsed.proveedor.identificacion;
       // Costo efectivo: la base después del descuento entre la cantidad (no el precio de lista).
-      const costoDe = (linea: typeof parsed.lineas[number]) => redondear(linea.subtotal / linea.cantidad);
+      const costoDe = (linea: typeof lineasXml[number]) => redondear(linea.subtotal / linea.cantidad);
       const normalizarNombre = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 
-      // El artículo que corresponde a una línea del XML. Por código de barras (CodigoComercial)
-      // primero; sin él, por CABYS + misma descripción. Antes era solo por CABYS, que es la categoría
-      // tributaria y NO es único por producto: dos artículos distintos con el mismo CABYS (dos
-      // medicamentos, dos tipos de guante) terminaban fusionados en uno solo con el stock de ambos.
-      const buscarArticulo = (articulos: any[], linea: typeof parsed.lineas[number]) => {
+      // El artículo que corresponde a una línea del XML. Por código comercial primero; sin él, por
+      // CABYS + misma descripción. Antes era solo por CABYS, que es la categoría tributaria y NO es
+      // único por producto: dos artículos distintos con el mismo CABYS (dos medicamentos, dos tipos
+      // de guante) terminaban fusionados en uno solo con el stock de ambos. El código comercial suele
+      // ser el SKU interno del proveedor ("100", "001"), que se repite entre proveedores, así que
+      // también se exige el mismo CABYS para no fusionar productos de proveedores distintos.
+      const buscarArticulo = (articulos: any[], linea: typeof lineasXml[number]) => {
         if (linea.codigoComercial) {
-          const porCodigo = articulos.find(a => a.codigoBarras && a.codigoBarras === linea.codigoComercial);
+          const porCodigo = articulos.find(a => a.codigoBarras && a.codigoBarras === linea.codigoComercial && a.codigoCabys === linea.codigoCabys);
           if (porCodigo) return porCodigo;
         }
-        return articulos.find(a => a.codigoCabys === linea.codigoCabys && normalizarNombre(a.nombre || "") === normalizarNombre(linea.nombre.slice(0, 150)));
+        return articulos.find(a => a.codigoCabys === linea.codigoCabys && normalizarNombre(a.nombre || "") === normalizarNombre(linea.nombre));
       };
       const mensajeDuplicada = (proveedorNombre: string, total: number) =>
         `La factura ${numeroFacturaProveedor} de ${proveedorNombre} ya está registrada como cuenta por pagar (₡${Number(total).toLocaleString("es-CR")}). No se importó de nuevo para no duplicar el inventario ni la deuda.`;
@@ -4437,9 +4663,12 @@ async function startServer() {
             await connection.query("SELECT id FROM proveedores WHERE id = ? FOR UPDATE", [proveedor.id]);
             // 2. ¿Ya está registrada? La misma factura puede llegar dos veces o haberse tecleado a
             // mano antes; importarla otra vez sumaría el stock, la deuda y el IVA acreditable de nuevo.
+            // Lectura con FOR UPDATE a propósito: en REPEATABLE READ una lectura normal ve la foto
+            // tomada al inicio de la transacción, así que la segunda de dos importaciones simultáneas
+            // no vería la cuenta que la primera acaba de confirmar y la duplicaría.
             if (numeroFacturaProveedor) {
               const [dup] = await connection.query(
-                "SELECT montoTotal FROM cuentas_pagar WHERE idCompania = ? AND idProveedor = ? AND numeroFacturaProveedor = ? AND estado != 'ANULADA' LIMIT 1",
+                "SELECT montoTotal FROM cuentas_pagar WHERE idCompania = ? AND idProveedor = ? AND numeroFacturaProveedor = ? AND estado != 'ANULADA' LIMIT 1 FOR UPDATE",
                 [idCompania, proveedor.id, numeroFacturaProveedor]
               );
               if ((dup as any[]).length > 0) {
@@ -4459,7 +4688,7 @@ async function startServer() {
           if (alimentaInventario) {
             const [servRows] = await connection.query("SELECT * FROM servicios WHERE idCompania = ? AND tipo = 'ARTICULO' FOR UPDATE", [idCompania]);
             const articulos = (servRows as any[]).map(row => normalizeRow(row, 'id_servicio'));
-            for (const linea of parsed.lineas) {
+            for (const linea of lineasXml) {
               const costo = costoDe(linea);
               const existente = buscarArticulo(articulos, linea);
               let idServicio: number;
@@ -4471,21 +4700,20 @@ async function startServer() {
                 await connection.query("UPDATE servicios SET stock = ?, costoUnitario = ? WHERE id_servicio = ?", [stockResultante, costo, idServicio]);
               } else {
                 const unidadMedida = UNIDADES_VALIDAS.has(linea.unidadMedida) ? linea.unidadMedida : "Unid";
-                const codigoBarras = linea.codigoComercial ? linea.codigoComercial.slice(0, 50) : null;
                 const [result] = await connection.query(
                   "INSERT INTO servicios (idCompania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo, tipo, stock, stockMinimo, costoUnitario, codigoBarras) VALUES (?, ?, ?, ?, 0, ?, ?, 1, 'ARTICULO', ?, 0, ?, ?)",
-                  [idCompania, linea.nombre.slice(0, 150), costo, linea.porcentajeIva, linea.codigoCabys, unidadMedida, linea.cantidad, costo, codigoBarras]
+                  [idCompania, linea.nombre, costo, linea.porcentajeIva, linea.codigoCabys, unidadMedida, linea.cantidad, costo, linea.codigoComercial]
                 );
                 idServicio = (result as any).insertId;
                 stockResultante = linea.cantidad;
                 // Una segunda línea del mismo artículo en este mismo XML lo encuentra en vez de duplicarlo.
-                articulos.push({ id: idServicio, nombre: linea.nombre.slice(0, 150), codigoCabys: linea.codigoCabys, codigoBarras, stock: stockResultante });
+                articulos.push({ id: idServicio, nombre: linea.nombre, codigoCabys: linea.codigoCabys, codigoBarras: linea.codigoComercial, stock: stockResultante });
               }
               await connection.query(
                 "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'COMPRA', ?, ?, ?, ?, ?, ?)",
                 [idCompania, idServicio, linea.cantidad, stockResultante, `Importado de XML — Factura proveedor ${numeroFacturaProveedor || ""}`, null, null, creadaEn]
               );
-              lineasFinal.push({ idServicio, nombre: linea.nombre.slice(0, 150), cantidad: linea.cantidad, costoUnitario: costo });
+              lineasFinal.push({ idServicio, nombre: linea.nombre, cantidad: linea.cantidad, costoUnitario: costo });
             }
           }
 
@@ -4538,16 +4766,16 @@ async function startServer() {
         }
         if (alimentaInventario) {
           const articulos = localServicios.filter(s => s.idCompania === idCompania && s.tipo === "ARTICULO");
-          for (const linea of parsed.lineas) {
+          for (const linea of lineasXml) {
             const costo = costoDe(linea);
             const existente: any = buscarArticulo(articulos, linea);
             if (existente) {
               existente.stock = (existente.stock || 0) + linea.cantidad;
               existente.costoUnitario = costo;
-              lineasFinal.push({ idServicio: existente.id, nombre: linea.nombre.slice(0, 150), cantidad: linea.cantidad, costoUnitario: costo });
+              lineasFinal.push({ idServicio: existente.id, nombre: linea.nombre, cantidad: linea.cantidad, costoUnitario: costo });
             } else {
               const nuevo: any = {
-                id: Math.max(0, ...localServicios.map(s => s.id), 0) + 1, idCompania, nombre: linea.nombre.slice(0, 150), precio: costo,
+                id: Math.max(0, ...localServicios.map(s => s.id), 0) + 1, idCompania, nombre: linea.nombre, precio: costo,
                 porcentajeIva: linea.porcentajeIva, duracionMinutos: 0, codigoCabys: linea.codigoCabys,
                 unidadMedida: UNIDADES_VALIDAS.has(linea.unidadMedida) ? linea.unidadMedida : "Unid",
                 activo: true, tipo: "ARTICULO", stock: linea.cantidad, stockMinimo: 0, costoUnitario: costo, codigoBarras: linea.codigoComercial
@@ -4573,7 +4801,7 @@ async function startServer() {
         cxpCreada = { ...nueva, pagos };
       }
 
-      res.json({ cxp: cxpCreada, proveedor, articulosAfectados: lineasFinal.length });
+      res.json({ cxp: cxpCreada, proveedor, articulosAfectados: lineasFinal.length, avisoCreditoFiscal });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -4586,9 +4814,31 @@ async function startServer() {
   // factura ANULADA sin ninguna Nota de Crédito que la referencie se anuló localmente porque Hacienda
   // nunca la aceptó (ver POST /api/facturas/:id/anular): declararla sería declarar una venta que
   // fiscalmente no existe, sin nada que la compense.
-  const SQL_FACTURA_DECLARABLE = "(f.estado = 'ACEPTADA' OR (f.estado = 'ANULADA' AND EXISTS (SELECT 1 FROM facturas nc WHERE nc.idFacturaReferencia = f.id_factura AND nc.tipoDocumento = '03')))";
+  // Además, solo cuenta lo emitido en PRODUCCIÓN (filtro aparte en cada consulta): lo de SANDBOX son
+  // pruebas sin efecto fiscal y antes se sumaba a la declaración.
+  const SQL_FACTURA_DECLARABLE = "(f.estado = 'ACEPTADA' OR (f.estado = 'ANULADA' AND EXISTS (SELECT 1 FROM facturas nc WHERE nc.idCompania = f.idCompania AND nc.idFacturaReferencia = f.id_factura AND nc.tipoDocumento = '03')))";
   const esFacturaDeclarableLocal = (f: Factura) =>
     f.estado === "ACEPTADA" || (f.estado === "ANULADA" && localFacturas.some(nc => nc.idFacturaReferencia === f.id && nc.tipoDocumento === "03"));
+
+  // Comprobantes de PRODUCCIÓN del período que Hacienda todavía no resolvió (ENVIADA, o ERROR que
+  // pudo haberle llegado). Si se cierra así, uno que después quede aceptado nunca se declara en su
+  // período; por eso el cierre los muestra y pide confirmación explícita.
+  async function comprobantesSinResolver(idCompania: number, prefijoPeriodo: string): Promise<Array<{ consecutivo: string; tipoDocumento: string; estado: string }>> {
+    if (dbConnected && pool) {
+      const [rows] = await pool.query(
+        "SELECT consecutivo, tipoDocumento, estado FROM facturas WHERE idCompania = ? AND ambiente = 'PRODUCCION' AND fechaEmision LIKE ? AND estado IN ('ENVIADA', 'ERROR', 'FIRMADA') ORDER BY fechaEmision",
+        [idCompania, `${prefijoPeriodo}%`]
+      );
+      return rows as any[];
+    }
+    return localFacturas
+      .filter(f => f.idCompania === idCompania && f.ambiente === "PRODUCCION" && f.fechaEmision.startsWith(prefijoPeriodo) && ["ENVIADA", "ERROR", "FIRMADA"].includes(f.estado))
+      .map(f => ({ consecutivo: f.consecutivo, tipoDocumento: f.tipoDocumento, estado: f.estado }));
+  }
+
+  function mensajePendientesCierre(pendientes: Array<{ consecutivo: string; estado: string }>): string {
+    return `Hay ${pendientes.length} comprobante(s) del período que Hacienda todavía no resolvió (${pendientes.slice(0, 5).map(p => `${p.consecutivo} ${p.estado}`).join(", ")}${pendientes.length > 5 ? "…" : ""}). Verifique su estado antes de cerrar: si alguno queda aceptado después del cierre, no se habrá declarado.`;
+  }
 
   async function obtenerDatosD104(idCompania: number, periodo: string) {
     if (dbConnected && pool) {
@@ -4597,18 +4847,18 @@ async function startServer() {
       if (!company) return null;
 
       const [facturaRows] = await pool.query(
-        `SELECT f.* FROM facturas f WHERE f.idCompania = ? AND f.tipoDocumento = '01' AND f.fechaEmision LIKE ? AND ${SQL_FACTURA_DECLARABLE}`,
+        `SELECT f.id_factura FROM facturas f WHERE f.idCompania = ? AND f.tipoDocumento = '01' AND f.fechaEmision LIKE ? AND f.ambiente = 'PRODUCCION' AND ${SQL_FACTURA_DECLARABLE}`,
         [idCompania, `${periodo}%`]
       );
       const [ncRows] = await pool.query(
-        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '03' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
+        "SELECT id_factura FROM facturas WHERE idCompania = ? AND tipoDocumento = '03' AND fechaEmision LIKE ? AND ambiente = 'PRODUCCION' AND estado = 'ACEPTADA'",
         [idCompania, `${periodo}%`]
       );
       // Nota de Débito: no hay flujo de anulación para ella (a diferencia de la factura, que
       // puede quedar ANULADA y seguir contando en D-104 porque la Nota de Crédito ya la neteó) —
       // solo se declara cuando Hacienda la aceptó.
       const [ndRows] = await pool.query(
-        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '02' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
+        "SELECT id_factura FROM facturas WHERE idCompania = ? AND tipoDocumento = '02' AND fechaEmision LIKE ? AND ambiente = 'PRODUCCION' AND estado = 'ACEPTADA'",
         [idCompania, `${periodo}%`]
       );
       const idsFacturaYNotas = [...(facturaRows as any[]).map(r => r.id_factura), ...(ncRows as any[]).map(r => r.id_factura), ...(ndRows as any[]).map(r => r.id_factura)];
@@ -4630,9 +4880,9 @@ async function startServer() {
     } else {
       const company = localCompanies.find(c => c.id === idCompania);
       if (!company) return null;
-      const facturasMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(periodo) && esFacturaDeclarableLocal(f));
-      const notasCreditoMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "03" && f.fechaEmision.startsWith(periodo) && f.estado === "ACEPTADA");
-      const notasDebitoMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "02" && f.fechaEmision.startsWith(periodo) && f.estado === "ACEPTADA");
+      const facturasMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(periodo) && f.ambiente === "PRODUCCION" && esFacturaDeclarableLocal(f));
+      const notasCreditoMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "03" && f.fechaEmision.startsWith(periodo) && f.ambiente === "PRODUCCION" && f.estado === "ACEPTADA");
+      const notasDebitoMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "02" && f.fechaEmision.startsWith(periodo) && f.ambiente === "PRODUCCION" && f.estado === "ACEPTADA");
       const creditoFiscal = localCuentasPagar.filter(c => c.idCompania === idCompania && c.fechaRegistro.startsWith(periodo) && c.estado !== "ANULADA").reduce((s, c) => s + (c.ivaAcreditable || 0), 0);
       const cierre = localCierresFiscales.find(c => c.idCompania === idCompania && c.tipo === "D104" && c.periodo === periodo);
       return { company, facturasMes, notasCreditoMes, notasDebitoMes, creditoFiscal, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
@@ -4689,6 +4939,10 @@ async function startServer() {
       const datos = await obtenerDatosD104(idCompania, periodo);
       if (!datos) return res.status(404).json({ error: "Empresa no encontrada." });
       if (datos.yaCerrado) return res.status(409).json({ error: `Ya existe un cierre D-104 para el período ${periodo}.` });
+      const pendientesD104 = await comprobantesSinResolver(idCompania, periodo);
+      if (pendientesD104.length > 0 && req.body.confirmarPendientes !== true) {
+        return res.status(409).json({ error: mensajePendientesCierre(pendientesD104), pendientes: pendientesD104 });
+      }
 
       const creadoEn = new Date().toISOString();
       const reporte = { ...construirReporteD104(periodo, datos.company, datos.facturasMes, datos.notasCreditoMes, datos.notasDebitoMes, datos.creditoFiscal, true, creadoEn) };
@@ -4728,26 +4982,26 @@ async function startServer() {
       // seguían ACEPTADAS e ignoraba las Notas de Crédito, así que una NC parcial nunca rebajaba el
       // ingreso, y anular en enero una factura de diciembre la sacaba del año ya cerrado.
       const [facturaRows] = await pool.query(
-        `SELECT f.* FROM facturas f WHERE f.idCompania = ? AND f.tipoDocumento = '01' AND f.fechaEmision LIKE ? AND ${SQL_FACTURA_DECLARABLE}`,
+        `SELECT f.id_factura, f.subtotal, f.totalIva FROM facturas f WHERE f.idCompania = ? AND f.tipoDocumento = '01' AND f.fechaEmision LIKE ? AND f.ambiente = 'PRODUCCION' AND ${SQL_FACTURA_DECLARABLE}`,
         [idCompania, `${anioStr}%`]
       );
       const facturasAnio = facturaRows as any[];
 
       const [ncRows] = await pool.query(
-        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '03' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
+        "SELECT id_factura, subtotal, totalIva FROM facturas WHERE idCompania = ? AND tipoDocumento = '03' AND fechaEmision LIKE ? AND ambiente = 'PRODUCCION' AND estado = 'ACEPTADA'",
         [idCompania, `${anioStr}%`]
       );
       const notasCreditoAnio = ncRows as any[];
 
       const [ndRows] = await pool.query(
-        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '02' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
+        "SELECT id_factura, subtotal, totalIva FROM facturas WHERE idCompania = ? AND tipoDocumento = '02' AND fechaEmision LIKE ? AND ambiente = 'PRODUCCION' AND estado = 'ACEPTADA'",
         [idCompania, `${anioStr}%`]
       );
       const notasDebitoAnio = ndRows as any[];
 
       // Lo deducible de una compra es su costo SIN IVA: el IVA acreditable ya se recupera como
       // crédito fiscal en el D-104, y deducirlo también aquí lo contaba dos veces (corrección del
-      // POS, src/d104Compras.ts). Lo que el proveedor cobra sin IVA propio sí queda deducible.
+      // POS de restaurante, d104Compras.ts). Lo que el proveedor cobra sin IVA propio sí queda deducible.
       const [cxpRows] = await pool.query(
         "SELECT COALESCE(SUM(montoTotal - ivaAcreditable), 0) AS total FROM cuentas_pagar WHERE idCompania = ? AND fechaRegistro LIKE ? AND estado != 'ANULADA'",
         [idCompania, `${anioStr}%`]
@@ -4767,9 +5021,9 @@ async function startServer() {
     } else {
       const company = localCompanies.find(c => c.id === idCompania);
       if (!company) return null;
-      const facturasAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(anioStr) && esFacturaDeclarableLocal(f));
-      const notasCreditoAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "03" && f.fechaEmision.startsWith(anioStr) && f.estado === "ACEPTADA");
-      const notasDebitoAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "02" && f.fechaEmision.startsWith(anioStr) && f.estado === "ACEPTADA");
+      const facturasAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(anioStr) && f.ambiente === "PRODUCCION" && esFacturaDeclarableLocal(f));
+      const notasCreditoAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "03" && f.fechaEmision.startsWith(anioStr) && f.ambiente === "PRODUCCION" && f.estado === "ACEPTADA");
+      const notasDebitoAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "02" && f.fechaEmision.startsWith(anioStr) && f.ambiente === "PRODUCCION" && f.estado === "ACEPTADA");
       const comprasCxPAnio = localCuentasPagar.filter(c => c.idCompania === idCompania && c.fechaRegistro.startsWith(anioStr) && c.estado !== "ANULADA").reduce((s, c) => s + c.montoTotal - (c.ivaAcreditable || 0), 0);
       const gm = localGastosManuales.find(g => g.idCompania === idCompania && g.anio === anio);
       const gastosManuales: GastosManualesAnuales = gm
@@ -4835,6 +5089,10 @@ async function startServer() {
       const datos = await obtenerDatosD101(idCompania, anio);
       if (!datos) return res.status(404).json({ error: "Empresa no encontrada." });
       if (datos.yaCerrado) return res.status(409).json({ error: `Ya existe una liquidación de Renta para el año ${anio}.` });
+      const pendientesD101 = await comprobantesSinResolver(idCompania, String(anio));
+      if (pendientesD101.length > 0 && req.body.confirmarPendientes !== true) {
+        return res.status(409).json({ error: mensajePendientesCierre(pendientesD101), pendientes: pendientesD101 });
+      }
 
       const creadoEn = new Date().toISOString();
       const reporte = construirReporteD101(anio, datos.company, datos.facturasAnio, datos.notasCreditoAnio, datos.notasDebitoAnio, datos.comprasCxPAnio, datos.gastosManuales, true, creadoEn);

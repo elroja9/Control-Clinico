@@ -8,6 +8,7 @@ interface ImportarXmlResultado {
   cxp: CuentaPagar;
   proveedor: Proveedor;
   articulosAfectados: number;
+  avisoCreditoFiscal?: string | null; // por qué la compra no da crédito fiscal (tiquete, otra cédula)
 }
 
 interface CxPManagerProps {
@@ -293,7 +294,8 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
           <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
           <div>
             <p className="font-bold">Factura importada correctamente.</p>
-            <p>Proveedor: {xmlResultado.proveedor.nombre} &middot; Total ₡{xmlResultado.cxp.montoTotal.toLocaleString('es-CR')} &middot; {xmlResultado.articulosAfectados} artículo(s) afectado(s) en inventario.</p>
+            <p>Proveedor: {xmlResultado.proveedor.nombre} &middot; Total ₡{xmlResultado.cxp.montoTotal.toLocaleString('es-CR')} &middot; IVA acreditable ₡{xmlResultado.cxp.ivaAcreditable.toLocaleString('es-CR')} &middot; {xmlResultado.articulosAfectados} artículo(s) afectado(s) en inventario.</p>
+            {xmlResultado.avisoCreditoFiscal && <p className="mt-1 font-semibold text-amber-800">{xmlResultado.avisoCreditoFiscal}</p>}
           </div>
           <button type="button" onClick={() => setXmlResultado(null)} className="ml-auto shrink-0 p-2.5 -m-1 rounded-lg text-emerald-700 hover:text-emerald-900 hover:bg-emerald-100 transition-colors" aria-label="Cerrar aviso"><X className="w-4 h-4" /></button>
         </div>
@@ -433,9 +435,9 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
               <input id="cxpmanager-notas" type="text" value={notas} onChange={(e) => setNotas(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
             </div>
             <div>
-              <label htmlFor="cxpmanager-iva-acreditable" className="block text-slate-600 text-xs font-medium mb-1">IVA Acreditable (₡)</label>
+              <label htmlFor="cxpmanager-iva-acreditable" className="block text-slate-600 text-xs font-medium mb-1">IVA de la factura del proveedor (₡)</label>
               <input id="cxpmanager-iva-acreditable" type="number" min="0" step="0.01" value={ivaAcreditable} onChange={(e) => setIvaAcreditable(e.target.value)} placeholder="Según la factura de compra recibida" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
-              <p className="text-[11px] text-slate-500 mt-0.5">Crédito fiscal para el D-104. Tómelo del desglose de IVA de la factura del proveedor.</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Tómelo del desglose de IVA de la factura. Es crédito fiscal en el D-104 y, en una compra de artículos, se suma al total a pagar.</p>
             </div>
           </div>
 

@@ -354,7 +354,7 @@ function construirCuerpoComprobante(datos: DatosFacturaXml): string {
     </Identificacion>
     ${receptor.correoElectronico ? `<CorreoElectronico>${escapeXml(receptor.correoElectronico)}</CorreoElectronico>` : ""}
   </Receptor>
-  <CondicionVenta>${condicionVenta}</CondicionVenta>
+  <CondicionVenta>${escapeXml(condicionVenta)}</CondicionVenta>
   ${condicionVenta === "02" ? `<PlazoCredito>${PLAZO_CREDITO_DIAS_DEFECTO}</PlazoCredito>\n  ` : ""}<DetalleServicio>${lineasXml}
   </DetalleServicio>
   <ResumenFactura>
@@ -386,7 +386,7 @@ function construirCuerpoComprobante(datos: DatosFacturaXml): string {
     <TotalImpAsumEmisorFabrica>${fmtDinero(resumen.totalImpAsumEmisorFabrica)}</TotalImpAsumEmisorFabrica>
     <TotalIVADevuelto>${fmtDinero(resumen.totalIVADevuelto)}</TotalIVADevuelto>${condicionVenta === "02" ? "" : `
     <MedioPago>
-      <TipoMedioPago>${medioPago}</TipoMedioPago>
+      <TipoMedioPago>${escapeXml(medioPago)}</TipoMedioPago>
       <TotalMedioPago>${fmtDinero(resumen.totalComprobante)}</TotalMedioPago>
     </MedioPago>`}
     <TotalComprobante>${fmtDinero(resumen.totalComprobante)}</TotalComprobante>
@@ -425,13 +425,17 @@ export interface DatosNotaCreditoXml extends DatosFacturaXml {
  * documento referenciado es <TipoDocIR> (no <TipoDoc>) y su fecha es <FechaEmisionIR> (no
  * <FechaEmision>, que ya identifica la fecha del propio comprobante en la sección superior). Con
  * los nombres viejos, Hacienda habría rechazado toda Nota de Crédito/Débito emitida hasta ahora. */
+// <Razon> admite como máximo 180 caracteres en el XSD v4.4 (maxLength="180"). Uno más largo hace
+// rechazar la Nota por esquema — y cada reintento quema un consecutivo.
+export const RAZON_MAX = 180;
+
 function construirInformacionReferencia(referencia: InformacionReferenciaFactura): string {
   return `  <InformacionReferencia>
     <TipoDocIR>${referencia.tipoDocumento}</TipoDocIR>
     <Numero>${referencia.numero}</Numero>
     <FechaEmisionIR>${typeof referencia.fechaEmision === "string" ? escapeXml(referencia.fechaEmision) : fechaEmisionCR(referencia.fechaEmision)}</FechaEmisionIR>
     <Codigo>${referencia.codigo}</Codigo>
-    <Razon>${escapeXml(referencia.razon)}</Razon>
+    <Razon>${escapeXml(referencia.razon.slice(0, RAZON_MAX))}</Razon>
   </InformacionReferencia>`;
 }
 

@@ -52,7 +52,7 @@ Otros ajustes del cliente HTTP:
 
 - Header `Authorization: Bearer` (con mayúscula, como el POS).
 - Cuando Hacienda rechaza la recepción, el mensaje incluye el header `X-Error-Cause`, que es donde Hacienda explica el rechazo, a menudo con el cuerpo vacío.
-- `consultarEstadoHacienda` distingue `no_encontrado` (404/400: Hacienda no tiene esa clave) de `error` (no se pudo saber).
+- `consultarEstadoHacienda` distingue `no_encontrado` (solo un 404: Hacienda no tiene esa clave) de `error` (no se pudo saber, incluido cualquier otro 4xx/5xx o un 200 ilegible). De `no_encontrado` depende anular sin Nota de Crédito, así que falla cerrado. El `ind-estado: "error"` propio de Hacienda es un estado final y se reporta como `rechazado`.
 - `extraerDetalleMensajeHacienda` saca el `<DetalleMensaje>` del rechazo, como `extraerDetalleMensajeHacienda` del POS.
 
 ### `POST /api/facturas/:id/estado`
@@ -152,6 +152,7 @@ Todo viene del POS, commit `fc600d9` y anteriores.
 
 ## Reportes fiscales
 
+- **Solo PRODUCCIÓN.** Los comprobantes de SANDBOX son pruebas sin efecto fiscal y ya no se suman al D-104 ni al D-101.
 - **D-104: solo facturas que existen ante Hacienda.** Las facturas anuladas localmente no se declaran. Cuentan las ACEPTADAS y las ANULADAS que tienen una Nota de Crédito que las referencia (`SQL_FACTURA_DECLARABLE`): esas sí existen ante Hacienda, y su NC resta aparte en su propio período. Una ANULADA sin NC nunca fue válida y declararla sería declarar una venta inexistente. El POS hizo la misma corrección (commit `7f71540`).
 - **D-101: mismo criterio de facturas, y resta las Notas de Crédito aceptadas.** Antes las ignoraba, así que una NC parcial nunca rebajaba el ingreso. Además, anular en enero una factura de diciembre la sacaba del año ya cerrado. El reporte trae `cantidadNotasCredito`, opcional en el tipo porque los cierres guardados antes no lo tienen.
 - **D-101: compras sin IVA.** Se deduce `montoTotal − ivaAcreditable`. El IVA acreditable ya se recupera como crédito fiscal en el D-104, así que deducirlo también en la renta lo contaba dos veces. Viene de `src/d104Compras.ts` del POS. Lo que el proveedor cobra sin IVA propio sigue siendo deducible (commit `8eaf5d2` del POS).
@@ -165,12 +166,16 @@ Todo viene del POS, commit `fc600d9` y anteriores.
 
 | Endpoint | Cambio |
 |---|---|
-| `POST /api/facturas/:id/anular` | Responde `{ factura, notaCredito }`, con `notaCredito: null` si no se emitió NC. **403** si no es Administrador, **409** si la factura está ENVIADA o Hacienda la procesa, **503** si no se pudo confirmar con Hacienda, **502** con `notaCredito` si Hacienda no recibió la NC (y la factura **no** se anula). |
-| `POST /api/facturas/:id/nota-credito` y `/nota-debito` | Ignoran `modoPrueba`. Solo sobre ACEPTADA (400 si no). **502** con `notaCredito` o `notaDebito` si Hacienda no la recibió. |
-| `POST /api/facturas/:id/estado` | Devuelve también `mensajeError`. 400 para SIMULADA o PRUEBAS_LOCAL, 502 si Hacienda no responde. |
-| `POST /api/cxp/importar-xml` | **409** si la factura del proveedor ya está registrada. |
-| `GET` / `POST /api/hacienda-config` | `ultimoConsecutivo`, `ultimoConsecutivoNc`, `ultimoConsecutivoNd`. |
-| `GET /api/reportes/d101` | `cantidadNotasCredito`; `comprasCxP` ahora sin IVA. |
+| `POST /api/facturas/:id/anular` | Responde `{ factura, notaCredito }`, con `notaCredito: null` si no se emitió NC. **403** si no es Administrador. **409** si: la factura está ENVIADA o Hacienda la procesa; tiene Notas de Débito vigentes; una nota suya tiene envío incierto; ya hay otra operación en curso sobre ella; o es de PRODUCCIÓN y la empresa está en otro ambiente. **503** si no se pudo confirmar con Hacienda. **502** con `notaCredito` si Hacienda no recibió la NC (y la factura **no** se anula). |
+| `POST /api/facturas/:id/nota-credito` | **403** si no es Administrador. **400** con `modoPrueba: true` (pestaña con la pantalla vieja). Solo sobre ACEPTADA (400 si no). **409** por envío incierto, operación en curso o ambiente distinto. **502** con `notaCredito` si Hacienda no la recibió. `mensajeError` anota el saldo a favor si lo acreditado supera lo que quedaba por cobrar. |
+| `POST /api/facturas/:id/nota-debito` | Igual que la anterior, sin la restricción de rol. Cantidades > 0 y medio de pago de catálogo (400 si no). |
+| `POST /api/facturas` | Cantidades > 0 y `condicionVenta`/`medioPago` de catálogo (400 si no). **409** si la misma consulta se está facturando en otra solicitud. |
+| `POST /api/facturas/:id/estado` | Devuelve también `mensajeError`. **400** para SIMULADA, PRUEBAS_LOCAL o un comprobante de otro ambiente. **502** si Hacienda (consulta o login) no responde. |
+| `POST /api/cxp/importar-xml` | **409** si la factura del proveedor ya está registrada. Devuelve `avisoCreditoFiscal` cuando la compra no da crédito (tiquete o factura a otra cédula). |
+| `GET` / `POST /api/hacienda-config` | `ultimoConsecutivo`, `ultimoConsecutivoNc`, `ultimoConsecutivoNd` (también sin configuración guardada). El `POST` completo es solo para Administrador (403 si no). |
+| `POST /api/hacienda/firmar` | Solo Administrador. |
+| `GET /api/reportes/d104` y `/d101` | Solo comprobantes de PRODUCCIÓN. D-101: `cantidadNotasCredito` y `comprasCxP` sin IVA. |
+| `POST /api/reportes/d104/cerrar` y `/d101/cerrar` | **409** con `pendientes` si hay comprobantes de PRODUCCIÓN sin resolver en el período; se cierra igual con `confirmarPendientes: true`. |
 
 Después de anular o de emitir una Nota, la interfaz vuelve a cargar facturas, CxC y servicios (`recargarFacturacion` en `App.tsx`) en vez de imitar las reglas del servidor. La recarga ocurre también cuando la operación falla, porque la Nota fallida queda registrada.
 
@@ -184,23 +189,119 @@ Después de anular o de emitir una Nota, la interfaz vuelve a cargar facturas, C
 | Correo automático al aceptarse una factura o NC | Funcionalidad; aquí el correo se envía con "Reenviar". |
 | Sucursal/terminal configurables, facturación recurrente, exoneración Zona Franca, pago dividido, 10 % de servicio, modo offline | Funcionalidades o reglas propias de restaurante. |
 
+## Revisión antes de unir a `main` (2026-10-01)
+
+Se pasó la rama por la revisión de gstack (`/review`): seis especialistas (pruebas, mantenibilidad, seguridad, rendimiento, diseño, simplificación), un *red team* y una revisión adversarial. Codex no está instalado, así que la adversarial corrió en un subagente de Claude. Salieron 52 hallazgos. Se verificó cada uno contra el código y la BD antes de tocar nada.
+
+**Corregidos sin preguntar** (mecánicos):
+- **Esquema y datos:**
+  - `<Razon>` se recorta a 180 caracteres, el `maxLength` del XSD.
+  - El tope del consecutivo baja a 2 147 483 647, el máximo de las columnas `INT`.
+  - `condicionVenta` y `medioPago` se validan y se escapan en el XML firmado.
+  - Las cantidades deben ser > 0.
+- **Concurrencia en la importación:** el chequeo de duplicado usa `FOR UPDATE`. En REPEATABLE READ una lectura normal no veía la compra que otra importación acababa de confirmar.
+- **Consulta a Hacienda:**
+  - Falla cerrado: solo un 404 es "no lo tiene".
+  - El "error" propio de Hacienda es final.
+  - El sondeo tiene un plazo total de ~12 s; antes podía llegar a ~88 s.
+  - `/estado` responde 502 si falla el login del IdP.
+  - `/anular` y `/estado` comparten la misma conversión de respuesta a estado.
+- **Notas:**
+  - Repetir un servicio en varias líneas ya no salta el tope de la NC parcial.
+  - Una pestaña vieja con "modo prueba" recibe 400 en vez de transmitir de verdad.
+  - La anulación es condicional (`estado <> 'ANULADA'`) y repone existencias con `moverStockPorNota`.
+  - El stock ya no se recorta a 0, para que el kardex cuadre.
+  - Al guardar una nota ya transmitida, un `rollback` fallido ya no impide registrarla.
+- **Rendimiento:**
+  - `GET /api/facturas` ya no envía `xml_firmado` ni `respuesta_hacienda`.
+  - Los reportes leen solo las columnas que usan.
+  - El `EXISTS` de facturas declarables se acota por empresa.
+- **Importación:** el código comercial solo une artículos con el mismo CABYS (es el SKU interno del proveedor, que se repite entre proveedores), y nombre y código se recortan una sola vez para las dos rutas.
+- **Interfaz:**
+  - El texto de anulación dice exactamente lo que va a pasar (ERROR, factura ya acreditada completa, conjunciones bien puestas), y al terminar avisa si hubo NC.
+  - Los avisos de una nota aceptada se muestran antes del "aceptado" verde.
+  - El modal acota lo tecleado a lo disponible, muestra cuando ya no queda nada y tiene etiquetas accesibles.
+  - Subir la numeración pide confirmación y muestra el valor actual como texto.
+- **Pruebas:**
+  - `server/haciendaApi.test.ts`, nuevo, con `fetch` simulado.
+  - Notas de Crédito y Débito y los respaldos del parser.
+  - Zona horaria fija (`Asia/Tokyo`) en `vitest.config.ts`: en una máquina en Costa Rica la prueba de la clave pasaba incluso con el error viejo.
+
+**Decididos por el usuario (aplicados):**
+1. **Envío incierto.** Si la conexión se corta *durante* el envío, se consulta a Hacienda por la clave antes de dar el comprobante por fallido.
+   - Si no se puede saber, queda en ERROR con el prefijo `Envío incierto:`.
+   - Mientras una nota esté así, no se emiten otras ni se anula su factura.
+   - El 502 ya no invita a reintentar.
+   - Si una nota ENVIADA termina RECHAZADA, se avisa que sus efectos ya aplicados hay que revertirlos a mano.
+2. **Una operación a la vez por factura.** Un candado en memoria (`unaOperacionALaVez`) cubre `/anular`, `/nota-credito` y `/nota-debito`, y otro cubre facturar una misma consulta. El servidor es un solo proceso pm2. La prueba con dos anulaciones simultáneas transmite una sola NC.
+3. **Notas de Crédito solo para Administrador:** una NC "parcial" por el 100% equivale a anular.
+4. **Ambiente.**
+   - Los reportes fiscales cuentan solo PRODUCCIÓN.
+   - Las Notas y la consulta de estado usan el ambiente en que se emitió la factura.
+   - Una factura de SANDBOX, estando ya en otro ambiente, se anula solo en el sistema.
+   - Una de PRODUCCIÓN no se anula fuera de PRODUCCIÓN.
+5. **No se anula una factura con Notas de Débito vigentes:** esas notas seguirían válidas ante Hacienda mientras el sistema anula la CxC. Todavía no hay Notas de Crédito sobre Notas de Débito.
+6. **Crédito fiscal solo de una Factura Electrónica a nombre de la empresa.** Un tiquete, o una factura a otra cédula, entra con `ivaAcreditable = 0` y un aviso. Su IVA queda en el costo, que el D-101 deduce completo.
+7. **Configuración de Hacienda solo para Administrador:** credenciales, certificado, ambiente y numeración. `/api/hacienda/firmar` tampoco lo usa ninguna pantalla; queda solo para Administrador.
+8. **Saldo a favor.** Una NC mayor que el saldo de una cuenta, o sobre una ya pagada, anota "Saldo a favor del paciente: ₡X" en la nota en vez de perder ese monto. Se conserva al verificarla.
+9. **Cierre con pendientes.** Cerrar el D-104 o el D-101 con comprobantes de PRODUCCIÓN sin resolver (ENVIADA/ERROR/FIRMADA) muestra la lista y pide una segunda confirmación.
+
+**Descartado con evidencia:**
+- *"Las CxP manuales viejas quedan mal en el D-101."* No hay datos afectados: `cuentas_pagar` tiene 0 filas en producción.
+
+**Pendiente (decidido dejar para después):**
+10. **Guardar el comprobante antes de transmitirlo** (estado "enviando") y reconciliar al arrancar. Hoy, si pm2 reinicia durante los segundos de envío y sondeo, se puede perder el registro local de un comprobante que Hacienda aceptó.
+11. **Pruebas de rutas completas.** Hay que separar `server.ts` en una fábrica `createApp()` para poder importarlo, y subir el arnés de punta a punta al repositorio.
+12. **Simplificaciones opcionales:**
+    - helpers para el bloque emisor, el tipo de receptor y la creación de CxC;
+    - `construirReporteD101` con un objeto en vez de 9 parámetros;
+    - `extraerDetalleMensajeHacienda` con DOMParser;
+    - quitar los envoltorios `hoyISO`.
+
+Además: decidir si se elimina `/api/hacienda/firmar`, y confirmar en SANDBOX que Hacienda responde 404 a una clave que no tiene.
+
 ## Verificación
 
 - **`tsc --noEmit`** limpio.
-- **31 pruebas unitarias** (`npx vitest run`), 15 nuevas:
-  - `server/haciendaFactura.test.ts`: hora de Costa Rica, clave y fecha el mismo día, `<MedioPago>` en contado y en crédito.
+- **56 pruebas unitarias** (`npx vitest run`), 40 nuevas:
+  - `server/haciendaFactura.test.ts`:
+    - hora de Costa Rica, clave y fecha el mismo día;
+    - `<MedioPago>` en contado y en crédito;
+    - Notas: `FechaEmisionIR` tal cual, `InformacionReferencia` después del resumen, `<Razon>` de 180, escape de códigos.
+  - `server/haciendaApi.test.ts`:
+    - 404 vs. resto de respuestas;
+    - el "error" de Hacienda;
+    - detalle del rechazo, sondeo y su plazo;
+    - `X-Error-Cause` y URL de sandbox.
   - `server/xmlProveedorParser.test.ts`:
-    - IVA con varios impuestos y descuento, exoneración.
-    - Conversión de USD y bloqueo sin tipo de cambio.
-    - XML truncado o que no es XML, Nota de Crédito de proveedor.
-- **Recorrido de punta a punta: 64 verificaciones, todas pasan.**
-  - **Montaje:** `server.ts` real en modo memoria (sin MySQL, puerto aparte). Un Hacienda falso dentro del mismo proceso responde al IdP, la recepción y la consulta. Un `.p12` autofirmado de prueba hace que la firma XAdES corra de verdad.
-  - **Factura y Notas:** factura a crédito aceptada; NC parcial; ND, también sobre una CxC ya pagada; Nota no recibida que no aplica nada.
-  - **Anulación:** con NC por lo pendiente, local de SIMULADA, de ERROR que Hacienda no tiene y de RECHAZADA; bloqueo de ENVIADA; liberación de la consulta.
-  - **Consulta de estado:** reconciliación de un ERROR que Hacienda sí aceptó; verificación de que `/estado` no reenvía.
-  - **Reportes:** totales de D-104 y D-101.
-  - **CxP:** importación de las dos facturas reales y del duplicado; compra a mano.
-  - **Numeración:** corrección del consecutivo.
+    - IVA con varios impuestos y descuento, exoneración;
+    - conversión de USD y bloqueo sin tipo de cambio;
+    - XML inválido, Nota de Crédito de proveedor;
+    - respaldos cuando faltan nodos.
+- **Recorrido de punta a punta: 71 verificaciones, todas pasan** (64 en la primera versión, ampliado tras la revisión).
+  - **Montaje:** `server.ts` real en modo memoria (sin MySQL, puerto aparte). Un Hacienda falso dentro del mismo proceso responde al IdP, la recepción y la consulta, y simula envíos cortados antes y después de llegar y Hacienda caída. Un `.p12` autofirmado de prueba hace que la firma XAdES corra de verdad.
+  - **Permisos:** Profesional sin acceso a anular, emitir NC ni configurar Hacienda.
+  - **Ambiente:** factura de SANDBOX anulada en local al pasar a PRODUCCIÓN.
+  - **Factura y Notas:**
+    - factura a crédito aceptada; NC parcial, con su tope incluso repitiendo líneas;
+    - ND, también sobre una CxC ya pagada; ND con cantidad negativa y "modo prueba" rechazadas;
+    - Nota no recibida que no aplica nada; saldo a favor.
+  - **Anulación:**
+    - bloqueada con ND vigentes;
+    - dos simultáneas: una sola NC transmitida, por lo pendiente;
+    - local de SIMULADA, de ERROR que Hacienda no tiene y de RECHAZADA;
+    - bloqueo de ENVIADA; liberación de la consulta.
+  - **Envíos cortados:**
+    - Hacienda no lo tiene → ERROR;
+    - sí lo aceptó → ACEPTADA;
+    - Hacienda caída → envío incierto, que bloquea notas hasta verificarlo;
+    - nota ENVIADA luego RECHAZADA con aviso;
+    - `/estado` nunca reenvía.
+  - **Reportes:** totales de D-104 y D-101 sin SANDBOX ni anuladas sin NC; cierre con pendientes.
+  - **CxP:**
+    - importación de facturas reales (a otra cédula: sin crédito fiscal) y del duplicado;
+    - compra a mano; D-101 sin IVA.
+  - **Numeración:** corrección del consecutivo y tope `INT`.
   - El arnés quedó fuera del repositorio (carpeta temporal).
 - **SQL contra MySQL real.** Las consultas nuevas del D-104 y el D-101 se corrieron contra la BD real, **solo lectura**.
 

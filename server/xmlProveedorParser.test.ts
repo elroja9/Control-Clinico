@@ -74,8 +74,7 @@ describe('parsearFacturaProveedorXML — IVA real por línea', () => {
     expect(parsed.lineas[1].montoIva).toBeCloseTo(500, 5);
   });
 
-  it('conserva la clave y el consecutivo del proveedor', () => {
-    expect(parsed.claveHacienda).toHaveLength(50);
+  it('conserva el consecutivo del proveedor y la condición de venta', () => {
     expect(parsed.numeroFacturaProv).toBe('00100001010000000123');
     expect(parsed.condicionVenta).toBe('02');
     expect(parsed.plazoDias).toBe(15);
@@ -112,5 +111,31 @@ describe('parsearFacturaProveedorXML — archivos inválidos', () => {
   it('explica que las Notas de Crédito del proveedor no se importan', () => {
     expect(() => parsearFacturaProveedorXML(facturaXml({ raiz: 'NotaCreditoElectronica', lineas: LINEA_GUANTES, total: '5500' })))
       .toThrow(/Nota de Crédito\/Débito/);
+  });
+});
+
+describe('parsearFacturaProveedorXML — respaldos cuando el XML omite nodos', () => {
+  it('sin <SubTotal>: la base es MontoTotal menos los descuentos', () => {
+    const linea = LINEA_CERVEZA.replace('<SubTotal>22000.00000</SubTotal>', '');
+    expect(parsearFacturaProveedorXML(facturaXml({ lineas: linea, total: '1' })).lineas[0].subtotal).toBe(22000);
+  });
+
+  it('un <Impuesto> sin <Codigo> ni <Monto> cuenta como IVA y se calcula con la tarifa', () => {
+    const linea = LINEA_GUANTES.replace(/<Impuesto>[\s\S]*<\/Impuesto>/, '<Impuesto><Tarifa>13.00</Tarifa></Impuesto>');
+    const l = parsearFacturaProveedorXML(facturaXml({ lineas: linea, total: '1' })).lineas[0];
+    expect(l.porcentajeIva).toBe(13);
+    expect(l.montoIva).toBeCloseTo(650, 5);
+  });
+
+  it('una línea con solo el impuesto específico no tiene IVA acreditable', () => {
+    const linea = LINEA_CERVEZA.replace(/<Impuesto><Codigo>0[27]<\/Codigo>[\s\S]*?<\/Impuesto>/g, '');
+    const l = parsearFacturaProveedorXML(facturaXml({ lineas: linea, total: '1' })).lineas[0];
+    expect(l.porcentajeIva).toBe(0);
+    expect(l.montoIva).toBe(0);
+  });
+
+  it('en dólares sin <TotalComprobante>, el total es la suma de líneas ya convertidas (sin doble conversión)', () => {
+    const xml = facturaXml({ moneda: 'USD', tipoCambio: '500', lineas: LINEA_GUANTES, total: '' }).replace('<TotalComprobante></TotalComprobante>', '');
+    expect(parsearFacturaProveedorXML(xml).montoTotal).toBe(5500 * 500);
   });
 });

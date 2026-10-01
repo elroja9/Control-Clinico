@@ -50,6 +50,29 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
 
   useEffect(() => { cargarD104(periodo); }, [periodo]);
 
+  // Cierra un período. Si el servidor responde que hay comprobantes que Hacienda todavía no resolvió,
+  // los muestra y solo cierra con una segunda confirmación explícita.
+  const cerrarPeriodo = async (url: string, body: object): Promise<any> => {
+    const enviar = (confirmarPendientes: boolean) => fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, confirmarPendientes })
+    }).then(async res => ({ res, data: await res.json() }));
+    let { res, data } = await enviar(false);
+    if (res.status === 409 && Array.isArray(data.pendientes)) {
+      const cerrarIgual = await confirmar({
+        title: 'Hay comprobantes sin resolver en Hacienda',
+        message: `${data.error} ¿Cerrar de todos modos?`,
+        confirmText: 'Cerrar de todos modos',
+        tone: 'warning'
+      });
+      if (!cerrarIgual) return null;
+      ({ res, data } = await enviar(true));
+    }
+    if (!res.ok) throw new Error(data.error);
+    return data;
+  };
+
   const handleCerrarD104 = async () => {
     const ok = await confirmar({
       title: `¿Cerrar el período ${periodo}?`,
@@ -61,14 +84,8 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
     setCerrandoD104(true);
     setErrorD104('');
     try {
-      const res = await fetch('/api/reportes/d104/cerrar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ periodo })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setD104(data);
+      const data = await cerrarPeriodo('/api/reportes/d104/cerrar', { periodo });
+      if (data) setD104(data);
     } catch (err: any) {
       setErrorD104(err.message || 'No se pudo cerrar el período.');
     } finally {
@@ -131,14 +148,8 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
     setCerrandoD101(true);
     setErrorD101('');
     try {
-      const res = await fetch('/api/reportes/d101/cerrar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ anio })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setD101(data);
+      const data = await cerrarPeriodo('/api/reportes/d101/cerrar', { anio });
+      if (data) setD101(data);
     } catch (err: any) {
       setErrorD101(err.message || 'No se pudo presentar la liquidación.');
     } finally {
@@ -314,8 +325,9 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
                   <span className="text-sm font-bold text-slate-800">{colones(d101.ventasNetas)}</span>
                 </div>
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase block" title="El IVA de las compras no se deduce aquí: se recupera como crédito fiscal en el D-104">Compras (CxP, sin IVA)</span>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Compras (CxP, sin IVA)</span>
                   <span className="text-sm font-bold text-slate-800">{colones(d101.comprasCxP)}</span>
+                  <span className="text-[11px] text-slate-500 block mt-0.5">El IVA de las compras se recupera en el D-104, no se deduce aquí.</span>
                 </div>
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
                   <span className="text-[11px] font-bold text-slate-500 uppercase block">Gastos Deducibles</span>

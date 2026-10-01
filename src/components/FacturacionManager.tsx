@@ -10,8 +10,8 @@ interface FacturacionManagerProps {
   patients: Patient[];
   company: Company;
   servicios: Servicio[];
-  puedeAnular: boolean; // solo Administrador (el servidor también lo exige)
-  onAnularFactura: (idFactura: number, motivo: string) => Promise<Factura>;
+  puedeAnular: boolean; // Administrador: anular y Notas de Crédito (el servidor también lo exige)
+  onAnularFactura: (idFactura: number, motivo: string) => Promise<{ factura: Factura; notaCredito: Factura | null }>;
   onEmitirNotaCredito: (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }> }) => Promise<Factura>;
   onEmitirNotaDebito: (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }>; medioPago?: string }) => Promise<Factura>;
   onVerificarEstadoFactura: (idFactura: number) => Promise<Factura>;
@@ -38,9 +38,59 @@ const MEDIO_PAGO_LABEL: Record<string, string> = {
 const MOTIVO_SIN_NOTA_CREDITO: Record<string, string> = {
   SIMULADA: 'es de prueba y nunca se envió a Hacienda',
   RECHAZADA: 'Hacienda la rechazó, así que nunca fue un comprobante válido',
-  ERROR: 'no llegó a Hacienda (se confirma con Hacienda antes de anular)',
   FIRMADA: 'nunca se envió a Hacienda'
 };
+
+// Máximo de <Razon> en el XSD v4.4 (RAZON_MAX en server/haciendaFactura.ts).
+const MOTIVO_MAX = 180;
+
+// Espejo de cantidadesAcreditadas() en server.ts: suma por servicio lo acreditado en Notas de Crédito
+// que referencian la factura, sin contar las que Hacienda nunca recibió (ERROR) o rechazó. Si esa
+// regla cambia en el servidor, tiene que cambiar aquí también.
+function cantidadesAcreditadas(facturas: Factura[], idFactura: number): Record<number, number> {
+  return facturas
+    .filter(n => n.idFacturaReferencia === idFactura && n.tipoDocumento === '03' && n.estado !== 'ERROR' && n.estado !== 'RECHAZADA')
+    .flatMap(n => n.lineas)
+    .reduce<Record<number, number>>((acc, l) => {
+      if (l.idServicio != null) acc[l.idServicio] = (acc[l.idServicio] || 0) + Number(l.cantidad);
+      return acc;
+    }, {});
+}
+
+function quedaPorAcreditar(f: Factura, acreditado: Record<number, number>): boolean {
+  const vendido: Record<number, number> = {};
+  for (const l of f.lineas) {
+    if (l.idServicio == null) return true;
+    vendido[l.idServicio] = (vendido[l.idServicio] || 0) + Number(l.cantidad);
+  }
+  return Object.entries(vendido).some(([id, cantidad]) => cantidad - (acreditado[Number(id)] || 0) > 1e-9);
+}
+
+/** "a", "a y b", "a, b y c". */
+function unirFrases(partes: string[]): string {
+  return partes.length <= 1 ? (partes[0] || '') : `${partes.slice(0, -1).join(', ')} y ${partes[partes.length - 1]}`;
+}
+
+// Lo que va a pasar al anular, dicho antes de confirmar — tiene que coincidir con lo que hace
+// POST /api/facturas/:id/anular, porque la acción no se puede deshacer.
+function explicacionAnulacion(f: Factura, acreditado: Record<number, number>): string {
+  const pendiente = quedaPorAcreditar(f, acreditado);
+  let inicio: string;
+  if (f.estado === 'ACEPTADA') {
+    inicio = pendiente
+      ? 'Se emite y transmite a Hacienda una Nota de Crédito que anula esta factura'
+      : 'No se emite otra Nota de Crédito: las anteriores ya acreditaron la factura completa. Se anula en el sistema';
+  } else if (f.estado === 'ERROR') {
+    inicio = 'Primero se consulta a Hacienda: si la tiene aceptada, se emite una Nota de Crédito; si nunca le llegó, se anula solo en el sistema';
+  } else {
+    inicio = `No se emite Nota de Crédito porque esta factura ${MOTIVO_SIN_NOTA_CREDITO[f.estado] || `no fue aceptada por Hacienda (estado ${f.estado})`}; se anula solo en el sistema`;
+  }
+  const efectos: string[] = [];
+  if (pendiente && f.lineas.some(l => l.tipo === 'ARTICULO')) efectos.push('se reponen las existencias de los artículos facturados');
+  if (f.condicionVenta === '02') efectos.push('se anula el saldo pendiente de cobro');
+  if (f.idConsulta != null) efectos.push('se libera la consulta para volver a facturarla');
+  return `${inicio}.${efectos.length ? ` Además, ${unirFrases(efectos)}.` : ''} No se puede deshacer.`;
+}
 
 export default function FacturacionManager({ facturas, patients, company, servicios, puedeAnular, onAnularFactura, onEmitirNotaCredito, onEmitirNotaDebito, onVerificarEstadoFactura, onReenviarCorreo }: FacturacionManagerProps) {
   const [anulandoId, setAnulandoId] = useState<number | null>(null);
@@ -55,9 +105,11 @@ export default function FacturacionManager({ facturas, patients, company, servic
     setVerificandoId(id);
     try {
       const actualizada = await onVerificarEstadoFactura(id);
-      if (actualizada.estado === 'ACEPTADA') notify.success(`Hacienda aceptó el comprobante ${actualizada.consecutivo}.`);
-      else if (actualizada.estado === 'RECHAZADA') notify.error(actualizada.mensajeError || 'Hacienda rechazó el comprobante.', 'Comprobante rechazado');
-      else if (actualizada.mensajeError) notify.warning(actualizada.mensajeError);
+      // El mensaje va primero: una Nota ACEPTADA puede traer el aviso de que su ajuste de inventario
+      // o cuenta por cobrar hay que hacerlo a mano, y un "aceptado" verde lo escondería.
+      if (actualizada.estado === 'RECHAZADA') notify.error(actualizada.mensajeError || 'Hacienda rechazó el comprobante.', 'Comprobante rechazado');
+      else if (actualizada.mensajeError) notify.warning(actualizada.mensajeError, actualizada.estado === 'ACEPTADA' ? 'Aceptado — requiere ajuste manual' : undefined);
+      else if (actualizada.estado === 'ACEPTADA') notify.success(`Hacienda aceptó el comprobante ${actualizada.consecutivo}.`);
       else notify.info('Hacienda todavía está procesando el comprobante. Vuelva a verificar en unos minutos.');
     } catch (err: any) {
       // Antes este error iba al recuadro del panel de anulación, que casi nunca está abierto.
@@ -90,7 +142,10 @@ export default function FacturacionManager({ facturas, patients, company, servic
     setAnulando(true);
     setError('');
     try {
-      await onAnularFactura(id, motivoAnulacion.trim());
+      const { factura, notaCredito } = await onAnularFactura(id, motivoAnulacion.trim());
+      notify.success(notaCredito
+        ? `Factura ${factura.consecutivo} anulada con la Nota de Crédito ${notaCredito.consecutivo} (${notaCredito.estado}).`
+        : `Factura ${factura.consecutivo} anulada en el sistema, sin Nota de Crédito.`);
       setAnulandoId(null);
       setMotivoAnulacion('');
     } catch (err: any) {
@@ -166,7 +221,8 @@ export default function FacturacionManager({ facturas, patients, company, servic
                       <RefreshCw className={`w-3.5 h-3.5 ${verificandoId === f.id ? 'animate-spin' : ''}`} />
                     </button>
                   )}
-                  {puedeAjustar(f) && (
+                  {/* Una Nota de Crédito puede acreditar todo lo vendido (equivale a anular): mismo permiso. */}
+                  {puedeAjustar(f) && puedeAnular && (
                     <button
                       onClick={() => setAjustando({ tipo: 'CREDITO', factura: f })}
                       title="Emitir Nota de Crédito parcial"
@@ -208,19 +264,15 @@ export default function FacturacionManager({ facturas, patients, company, servic
                     </div>
                   )}
                   <p className="text-[11px] text-slate-500">
-                    {f.estado === 'ACEPTADA'
-                      ? 'Esto emite y transmite a Hacienda una Nota de Crédito Electrónica que anula esta factura'
-                      : `No se emite Nota de Crédito porque esta factura ${MOTIVO_SIN_NOTA_CREDITO[f.estado] || `no fue aceptada por Hacienda (estado ${f.estado})`}; se anula solo en el sistema`}
-                    {f.lineas.some(l => l.tipo === 'ARTICULO') ? ', repone las existencias de los artículos facturados' : ''}
-                    {f.condicionVenta === '02' ? ', anula el saldo pendiente de cobro' : ''}
-                    {f.idConsulta != null ? ' y libera la consulta para volver a facturarla' : ''}.
-                    No se puede deshacer.
+                    {explicacionAnulacion(f, cantidadesAcreditadas(facturas, f.id))}
                   </p>
                   <div className="flex gap-2 items-end">
                     <div className="flex-1">
-                      <label className="block text-slate-600 font-medium mb-1 text-[11px]">Motivo de la anulación *</label>
+                      <label htmlFor={`motivo-anulacion-${f.id}`} className="block text-slate-600 font-medium mb-1 text-[11px]">Motivo de la anulación *</label>
                       <input
+                        id={`motivo-anulacion-${f.id}`}
                         type="text"
+                        maxLength={MOTIVO_MAX}
                         value={motivoAnulacion}
                         onChange={(e) => setMotivoAnulacion(e.target.value)}
                         placeholder="ej: Error en el monto facturado"
@@ -268,13 +320,8 @@ export default function FacturacionManager({ facturas, patients, company, servic
           factura={ajustando.factura}
           servicios={servicios}
           ivaPorDefecto={company.ivaPorDefecto}
-          yaAcreditado={facturas
-            .filter(n => n.idFacturaReferencia === ajustando.factura.id && n.tipoDocumento === '03' && n.estado !== 'ERROR' && n.estado !== 'RECHAZADA')
-            .flatMap(n => n.lineas)
-            .reduce<Record<number, number>>((acc, l) => {
-              if (l.idServicio != null) acc[l.idServicio] = (acc[l.idServicio] || 0) + Number(l.cantidad);
-              return acc;
-            }, {})}
+          yaAcreditado={cantidadesAcreditadas(facturas, ajustando.factura.id)}
+          motivoMax={MOTIVO_MAX}
           onEmitir={ajustando.tipo === 'CREDITO' ? onEmitirNotaCredito : onEmitirNotaDebito}
           onClose={() => setAjustando(null)}
           themeColor={company.colorPrimario}

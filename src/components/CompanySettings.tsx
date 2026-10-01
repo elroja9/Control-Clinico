@@ -3,7 +3,14 @@ import PlantillaDietaManager from './PlantillaDietaManager';
 import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION, Servicio, PorcentajeDieta, PlantillaDieta } from '../data/mockData';
 import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X } from 'lucide-react';
-import { notify } from './ui/Feedback';
+import { notify, confirmar } from './ui/Feedback';
+
+// Contadores de consecutivo que el Administrador puede corregir (ver POST /api/hacienda-config).
+const CAMPOS_CONSECUTIVO = [
+  { campo: 'ultimoConsecutivo', etiqueta: 'Facturas' },
+  { campo: 'ultimoConsecutivoNc', etiqueta: 'Notas de Crédito' },
+  { campo: 'ultimoConsecutivoNd', etiqueta: 'Notas de Débito' }
+] as const;
 
 interface CompanySettingsProps {
   companies: Company[];
@@ -288,13 +295,24 @@ export default function CompanySettings({
         ...(haciendaPasswordAtv.trim() ? { passwordAtv: haciendaPasswordAtv.trim() } : {}),
         ...(haciendaCertificadoBase64 ? { certificadoP12Base64: haciendaCertificadoBase64, certificadoNombreArchivo: haciendaCertificadoNombreNuevo } : {}),
         ...(haciendaCertificadoPin.trim() ? { certificadoPin: haciendaCertificadoPin.trim() } : {}),
-        ...(haciendaCorreccion.ultimoConsecutivo.trim() ? { ultimoConsecutivo: Number(haciendaCorreccion.ultimoConsecutivo) } : {}),
-        ...(haciendaCorreccion.ultimoConsecutivoNc.trim() ? { ultimoConsecutivoNc: Number(haciendaCorreccion.ultimoConsecutivoNc) } : {}),
-        ...(haciendaCorreccion.ultimoConsecutivoNd.trim() ? { ultimoConsecutivoNd: Number(haciendaCorreccion.ultimoConsecutivoNd) } : {})
+        ...Object.fromEntries(CAMPOS_CONSECUTIVO
+          .filter(({ campo }) => haciendaCorreccion[campo].trim() !== '')
+          .map(({ campo }) => [campo, Number(haciendaCorreccion[campo])]))
       };
-      const pidioBajar = (['ultimoConsecutivo', 'ultimoConsecutivoNc', 'ultimoConsecutivoNd'] as const)
-        .some(k => haciendaCorreccion[k].trim() !== '' && Number(haciendaCorreccion[k]) < haciendaConsecutivos[k]);
-      if (pidioBajar) throw new Error('El último consecutivo solo se puede subir: bajarlo volvería a emitir números que Hacienda ya tiene.');
+      const correcciones = CAMPOS_CONSECUTIVO.filter(({ campo }) => haciendaCorreccion[campo].trim() !== '');
+      if (correcciones.some(({ campo }) => Number(haciendaCorreccion[campo]) < haciendaConsecutivos[campo])) {
+        throw new Error('El último consecutivo solo se puede subir: bajarlo volvería a emitir números que Hacienda ya tiene.');
+      }
+      // Subir la numeración no se puede deshacer: un error de dedo salta números para siempre.
+      if (correcciones.length > 0) {
+        const ok = await confirmar({
+          title: '¿Subir la numeración ante Hacienda?',
+          message: `${correcciones.map(({ campo, etiqueta }) => `${etiqueta}: ${haciendaConsecutivos[campo]} → ${Number(haciendaCorreccion[campo])}`).join(' · ')}. El siguiente comprobante usará ese número más uno. No se puede volver a bajar.`,
+          confirmText: 'Subir numeración',
+          tone: 'warning'
+        });
+        if (!ok) return;
+      }
       const res = await fetch('/api/hacienda-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -972,8 +990,14 @@ export default function CompanySettings({
         </form>
       )}
 
-      {/* Hacienda Digital Signature configuration per company */}
-      {!isEditing && !isAdding && (
+      {/* Hacienda Digital Signature configuration per company — solo Administrador (el servidor
+          también lo exige): credenciales, certificado y ambiente deciden qué se declara a Hacienda. */}
+      {!isEditing && !isAdding && currentUser.rol !== 'Administrador' && (
+        <p className="mt-5 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600">
+          La configuración de Hacienda (credenciales ATV, firma digital y ambiente) solo la puede ver y cambiar un usuario Administrador.
+        </p>
+      )}
+      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
         <form onSubmit={handleSaveHacienda} className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4 text-xs">
           <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
             <ShieldCheck className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
@@ -1074,20 +1098,18 @@ export default function CompanySettings({
                 Escriba el último número que ya emitió ante Hacienda; el siguiente comprobante usará ese más uno. Solo se puede subir.
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                {([
-                  ['ultimoConsecutivo', 'Facturas'],
-                  ['ultimoConsecutivoNc', 'Notas de Crédito'],
-                  ['ultimoConsecutivoNd', 'Notas de Débito']
-                ] as const).map(([campo, etiqueta]) => (
+                {CAMPOS_CONSECUTIVO.map(({ campo, etiqueta }) => (
                   <div key={campo}>
                     <label htmlFor={`companyset-consecutivo-${campo}`} className="block text-slate-600 mb-1 font-semibold">{etiqueta} — último emitido</label>
                     <input id={`companyset-consecutivo-${campo}`}
                       type="number" min={haciendaConsecutivos[campo]} step="1" inputMode="numeric"
                       value={haciendaCorreccion[campo]}
                       onChange={(e) => setHaciendaCorreccion(prev => ({ ...prev, [campo]: e.target.value }))}
-                      placeholder={String(haciendaConsecutivos[campo])}
+                      placeholder="Sin cambio"
+                      aria-describedby={`companyset-consecutivo-${campo}-actual`}
                       className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
                     />
+                    <span id={`companyset-consecutivo-${campo}-actual`} className="block text-[11px] text-slate-500 mt-0.5">Actual: {haciendaConsecutivos[campo]}</span>
                   </div>
                 ))}
               </div>

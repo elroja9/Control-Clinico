@@ -786,7 +786,7 @@ export default function App() {
     }
   };
 
-  const handleAnularFactura = async (idFactura: number, motivo: string): Promise<Factura> => {
+  const handleAnularFactura = async (idFactura: number, motivo: string): Promise<{ factura: Factura; notaCredito: Factura | null }> => {
     const res = await fetch(`/api/facturas/${idFactura}/anular`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -795,7 +795,7 @@ export default function App() {
     const data = await res.json();
     await recargarFacturacion().catch(() => {});
     if (!res.ok) throw new Error(data.error || 'No se pudo anular la factura.');
-    return data.factura;
+    return { factura: data.factura, notaCredito: data.notaCredito };
   };
 
   const handleEmitirNotaCredito = async (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }> }): Promise<Factura> => {
@@ -911,7 +911,7 @@ export default function App() {
       : c));
   };
 
-  const handleImportarXmlCxp = async (xmlTexto: string, alimentaInventario: boolean): Promise<{ cxp: CuentaPagar; proveedor: Proveedor; articulosAfectados: number }> => {
+  const handleImportarXmlCxp = async (xmlTexto: string, alimentaInventario: boolean): Promise<{ cxp: CuentaPagar; proveedor: Proveedor; articulosAfectados: number; avisoCreditoFiscal?: string | null }> => {
     const res = await fetch('/api/cxp/importar-xml', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

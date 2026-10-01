@@ -10,6 +10,7 @@ interface AjusteFacturaModalProps {
   ivaPorDefecto: number;
   // Cuánto se acreditó ya de cada servicio en Notas de Crédito anteriores sobre esta factura.
   yaAcreditado: Record<number, number>;
+  motivoMax: number;
   onEmitir: (idFactura: number, payload: {
     motivo: string;
     lineas: Array<{ idServicio: number; cantidad: number }>;
@@ -23,7 +24,7 @@ interface AjusteFacturaModalProps {
  * facturadas, sin anular toda la factura — para eso está el botón "Anular Factura") o una Nota de
  * Débito (agrega un cargo nuevo sobre una factura ya emitida) — ambas pueden ser parciales o
  * cubrir el total, según cuánto seleccione el usuario. */
-export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDefecto, yaAcreditado, onEmitir, onClose, themeColor }: AjusteFacturaModalProps) {
+export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDefecto, yaAcreditado, motivoMax, onEmitir, onClose, themeColor }: AjusteFacturaModalProps) {
   const esCredito = tipo === 'CREDITO';
   const [cantidades, setCantidades] = useState<Record<number, number>>({});
   const [motivo, setMotivo] = useState('');
@@ -51,6 +52,8 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
           return porServicio;
         }, new Map<number, Opcion>()).values())
     : servicios.map(s => ({ key: s.id, nombre: s.nombre, precio: s.precio, porcentajeIva: s.porcentajeIva != null ? s.porcentajeIva : ivaPorDefecto, cantidadFacturada: null, cantidadMaxima: null, sinCabys: !s.codigoCabys }));
+  // Notas de Crédito anteriores ya acreditaron todo lo vendido: no queda nada que acreditar.
+  const yaAcreditadaCompleta = esCredito && opciones.length > 0 && opciones.every(o => o.cantidadMaxima === 0);
 
   const desglose = (Object.entries(cantidades) as unknown as [string, number][]).reduce((acc, [key, cantidad]) => {
     if (!cantidad || cantidad <= 0) return acc;
@@ -149,13 +152,17 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                 <p className="text-xs text-slate-500">
                   {esCredito ? 'Esta factura no tiene líneas con servicio asociado para acreditar.' : 'Esta empresa no tiene servicios configurados. Agréguelos primero en Configuración de Empresa.'}
                 </p>
+              ) : yaAcreditadaCompleta ? (
+                <p role="status" className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+                  Esta factura ya fue acreditada por completo en Notas de Crédito anteriores: no queda nada por acreditar.
+                </p>
               ) : (
                 <div className="space-y-1.5 max-h-64 overflow-y-auto">
                   {opciones.map(o => (
                     <div key={o.key} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-lg">
                       <div className="min-w-0">
                         <span className="text-xs font-semibold text-slate-800 block truncate">{o.nombre}</span>
-                        <span className="text-[11px] text-slate-500">
+                        <span id={`ajuste-detalle-${o.key}`} className="text-[11px] text-slate-500">
                           ₡{o.precio.toLocaleString('es-CR')}
                           {esCredito && ` · facturado: ${o.cantidadFacturada} · disponible: ${o.cantidadMaxima}`}
                           {o.sinCabys && <span className="text-amber-600 font-bold"> (sin CABYS)</span>}
@@ -166,8 +173,16 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                         min="0"
                         max={o.cantidadMaxima ?? undefined}
                         step="1"
+                        aria-label={`Cantidad a ${esCredito ? 'acreditar' : 'debitar'} de ${o.nombre}`}
+                        aria-describedby={`ajuste-detalle-${o.key}`}
                         value={cantidades[o.key] || 0}
-                        onChange={(e) => setCantidades(prev => ({ ...prev, [o.key]: parseInt(e.target.value) || 0 }))}
+                        // `max` solo limita las flechas del campo: lo tecleado también se acota a lo
+                        // disponible, para que el total mostrado nunca sea uno que el servidor rechace.
+                        onChange={(e) => {
+                          const tecleado = Math.max(0, parseInt(e.target.value) || 0);
+                          const cantidad = o.cantidadMaxima != null ? Math.min(tecleado, o.cantidadMaxima) : tecleado;
+                          setCantidades(prev => ({ ...prev, [o.key]: cantidad }));
+                        }}
                         disabled={o.sinCabys || o.cantidadMaxima === 0}
                         className="w-16 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-center disabled:opacity-40"
                       />
@@ -195,6 +210,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                 <label htmlFor="ajustefact-motivo" className="block text-slate-600 text-xs font-bold mb-1.5">Motivo *</label>
                 <input id="ajustefact-motivo"
                   type="text"
+                  maxLength={motivoMax}
                   value={motivo}
                   onChange={(e) => setMotivo(e.target.value)}
                   placeholder={esCredito ? 'ej: Se cobró de más en una sesión' : 'ej: Sesión adicional no facturada'}
@@ -233,7 +249,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                 </button>
                 <button
                   type="button"
-                  disabled={enviando}
+                  disabled={enviando || yaAcreditadaCompleta}
                   onClick={handleEmitir}
                   className="text-white text-xs font-extrabold px-4 py-2 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-60"
                   style={{ backgroundColor: themeColor }}

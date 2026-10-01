@@ -1,7 +1,8 @@
 // Cliente HTTP para el API de Recepción de Comprobantes Electrónicos de Hacienda Costa Rica
 // (envío del XML firmado) y el IdP de Hacienda (token OAuth2). Las URLs, el header y el sondeo de
-// estado siguen lo que el POS (D:\pos-restaurante\POS--RESTAURANTE, src/haciendaRoutes.ts) ya
-// valida en producción contra Hacienda.
+// estado siguen lo que el POS de restaurante (repositorio pos-restaurante, haciendaRoutes.ts) ya
+// valida en producción contra Hacienda — ver
+// docs/superpowers/specs/2026-09-30-fixes-pos-facturacion-anulacion-cxc-cxp-design.md.
 //
 // Import exclusivo del servidor.
 
@@ -32,8 +33,9 @@ const RECEPCION_BASE_URL: Record<AmbienteHacienda, string> = {
 };
 
 // Sin límite, un IdP o API de recepción que acepta la conexión y nunca responde deja colgada la
-// solicitud de facturar indefinidamente. Mismo valor que usa el POS.
-const HACIENDA_FETCH_TIMEOUT_MS = 20000;
+// solicitud de facturar indefinidamente. Mismo valor que usa el POS. Exportado para que todo fetch
+// a Hacienda (también el buscador CABYS de server.ts) use el mismo.
+export const HACIENDA_FETCH_TIMEOUT_MS = 20000;
 
 export class HaciendaApiError extends Error {}
 
@@ -119,8 +121,12 @@ export async function enviarFacturaHacienda(params: {
 
 export interface EstadoHaciendaResultado {
   // "no_encontrado": Hacienda no tiene ningún comprobante con esa clave (nunca le llegó).
-  // "error": no se pudo saber (Hacienda caída, timeout) — NO significa que no lo tenga.
-  estado: "recibido" | "procesando" | "aceptado" | "rechazado" | "error" | "no_encontrado" | "desconocido";
+  // "error": no se pudo saber (Hacienda caída, timeout, respuesta ilegible) — NO significa que no
+  // lo tenga. Nunca se toma una decisión irreversible sobre "error".
+  // El "error" PROPIO de Hacienda (ind-estado = "error": recibió el documento y no lo pudo
+  // procesar) es un estado final y se reporta como "rechazado": antes se confundía con "no pude
+  // consultar", y el comprobante quedaba reintentándose para siempre sin poder anularse.
+  estado: "recibido" | "procesando" | "aceptado" | "rechazado" | "error" | "no_encontrado";
   respuestaXmlBase64: string | null;
   // Motivo legible del rechazo (<DetalleMensaje> del MensajeHacienda), si lo hay.
   detalleMensaje: string | null;
@@ -138,49 +144,58 @@ export function extraerDetalleMensajeHacienda(respuestaXmlBase64: string | null)
     .trim() || null;
 }
 
-export async function consultarEstadoHacienda(ambiente: AmbienteHacienda, token: string, clave: string): Promise<EstadoHaciendaResultado> {
+export async function consultarEstadoHacienda(ambiente: AmbienteHacienda, token: string, clave: string, timeoutMs = HACIENDA_FETCH_TIMEOUT_MS): Promise<EstadoHaciendaResultado> {
   let res: Response;
   try {
     res = await fetch(`${RECEPCION_BASE_URL[ambiente]}/recepcion/${clave}`, {
       headers: { "Authorization": `Bearer ${token}` },
-      signal: AbortSignal.timeout(HACIENDA_FETCH_TIMEOUT_MS)
+      signal: AbortSignal.timeout(timeoutMs)
     });
   } catch {
     return { estado: "error", respuestaXmlBase64: null, detalleMensaje: null };
   }
 
-  // 404/400 con un token válido y una clave bien formada (siempre lo está: la genera este sistema)
-  // es Hacienda diciendo que no tiene esa clave. 401/403/5xx caen abajo como "error" (no se sabe).
-  if (res.status === 404 || res.status === 400) {
+  // Solo un 404 cuenta como "Hacienda no tiene esa clave": de eso depende anular sin Nota de
+  // Crédito, que es irreversible, así que cualquier otra respuesta (400 incluido) falla cerrado
+  // como "error" y se informa la causa que dio Hacienda.
+  if (res.status === 404) {
     return { estado: "no_encontrado", respuestaXmlBase64: null, detalleMensaje: null };
   }
   if (!res.ok) {
-    return { estado: "error", respuestaXmlBase64: null, detalleMensaje: null };
+    return { estado: "error", respuestaXmlBase64: null, detalleMensaje: res.headers.get("x-error-cause") };
   }
   const data: any = await res.json().catch(() => null);
-  const estadoCrudo = (data?.["ind-estado"] || "").toLowerCase();
-  const estado: EstadoHaciendaResultado["estado"] =
-    estadoCrudo === "recibido" || estadoCrudo === "procesando" || estadoCrudo === "aceptado" || estadoCrudo === "rechazado" || estadoCrudo === "error"
-      ? estadoCrudo
-      : "desconocido";
+  const estadoCrudo = String(data?.["ind-estado"] || "").toLowerCase();
   const respuestaXmlBase64 = data?.["respuesta-xml"] || null;
-  return { estado, respuestaXmlBase64, detalleMensaje: extraerDetalleMensajeHacienda(respuestaXmlBase64) };
+  const detalleMensaje = extraerDetalleMensajeHacienda(respuestaXmlBase64);
+  if (estadoCrudo === "error") {
+    return { estado: "rechazado", respuestaXmlBase64, detalleMensaje: detalleMensaje || "Hacienda no pudo procesar el comprobante (estado «error»)." };
+  }
+  if (estadoCrudo === "recibido" || estadoCrudo === "procesando" || estadoCrudo === "aceptado" || estadoCrudo === "rechazado") {
+    return { estado: estadoCrudo, respuestaXmlBase64, detalleMensaje };
+  }
+  // Un 200 con un cuerpo que no se entiende (p. ej. una página de un proxy) no prueba nada.
+  return { estado: "error", respuestaXmlBase64: null, detalleMensaje: null };
 }
 
 /**
  * Sondeo corto justo DESPUÉS de un envío aceptado para procesar (mismo patrón que el POS: 4
  * consultas, 2 s entre cada una). Casi siempre basta para que el comprobante quede ACEPTADO o
- * RECHAZADO en la misma operación, con su MensajeHacienda guardado.
+ * RECHAZADO en la misma operación, con su MensajeHacienda guardado. Tiene un plazo TOTAL
+ * (`plazoMs`): sin él, una consulta de Hacienda colgada sumaba 4 × 20 s a la espera del usuario.
  *
  * Si no resuelve a tiempo, el comprobante queda ENVIADO y lo que sigue es SOLO volver a consultar
  * (POST /api/facturas/:id/estado), nunca reenviarlo: Hacienda rechaza el reenvío de una clave que ya
  * tiene, y el POS llegó a reintentar así una factura durante 7 horas que Hacienda ya había aceptado.
  */
-export async function esperarResolucionHacienda(ambiente: AmbienteHacienda, token: string, clave: string, intentos = 4, esperaMs = 2000): Promise<EstadoHaciendaResultado> {
+export async function esperarResolucionHacienda(ambiente: AmbienteHacienda, token: string, clave: string, intentos = 4, esperaMs = 2000, plazoMs = 12000): Promise<EstadoHaciendaResultado> {
+  const limite = Date.now() + plazoMs;
   let ultimo: EstadoHaciendaResultado = { estado: "recibido", respuestaXmlBase64: null, detalleMensaje: null };
   for (let i = 0; i < intentos; i++) {
     await new Promise(r => setTimeout(r, esperaMs));
-    const consulta = await consultarEstadoHacienda(ambiente, token, clave);
+    const restante = limite - Date.now();
+    if (restante <= 0) break;
+    const consulta = await consultarEstadoHacienda(ambiente, token, clave, Math.min(5000, restante));
     if (consulta.estado === "aceptado" || consulta.estado === "rechazado") return consulta;
     ultimo = consulta;
   }
