@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { CuentaPagar, Proveedor, Servicio } from '../data/mockData';
 import { Landmark, Plus, AlertCircle, DollarSign, Trash2, Upload, X, CheckCircle } from 'lucide-react';
 import { notify, confirmar } from './ui/Feedback';
+import { fechaCR } from '../utils/fechaCR';
 
 interface ImportarXmlResultado {
   cxp: CuentaPagar;
@@ -34,8 +35,10 @@ const MEDIOS_PAGO: Record<string, string> = {
   '04': 'Cheque'
 };
 
+// Fecha de hoy en Costa Rica: con la fecha UTC, después de las 6 p.m. una cuenta que vence hoy ya
+// aparecía VENCIDA.
 function hoyISO(): string {
-  return new Date().toISOString().split('T')[0];
+  return fechaCR();
 }
 
 function estadoEfectivo(c: CuentaPagar): 'PENDIENTE' | 'VENCIDA' | 'PAGADA' | 'ANULADA' {
@@ -158,6 +161,7 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
   };
 
   const totalLineas = lineas.reduce((s, l) => s + (parseFloat(l.cantidad) || 0) * (parseFloat(l.costoUnitario) || 0), 0);
+  const ivaFormulario = parseFloat(ivaAcreditable) || 0;
 
   const handleGuardar = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -381,7 +385,7 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
 
           {modo === 'GASTO' ? (
             <div>
-              <label htmlFor="cxpmanager-monto-total" className="block text-slate-600 text-xs font-medium mb-1">Monto Total (₡) *</label>
+              <label htmlFor="cxpmanager-monto-total" className="block text-slate-600 text-xs font-medium mb-1">Monto Total con IVA (₡) *</label>
               <input id="cxpmanager-monto-total" type="number" min="0" step="0.01" value={montoTotal} onChange={(e) => setMontoTotal(e.target.value)} placeholder="ej: alquiler, servicios, honorarios" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
             </div>
           ) : (
@@ -400,7 +404,7 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
                     <input type="number" min="0" step="1" value={l.cantidad} onChange={(e) => actualizarLinea(idx, 'cantidad', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
                   </div>
                   <div className="col-span-3">
-                    <label className="block text-slate-600 text-[11px] font-medium mb-1">Costo Unitario (₡)</label>
+                    <label className="block text-slate-600 text-[11px] font-medium mb-1">Costo Unitario sin IVA (₡)</label>
                     <input type="number" min="0" step="0.01" value={l.costoUnitario} onChange={(e) => actualizarLinea(idx, 'costoUnitario', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
                   </div>
                   <div className="col-span-1">
@@ -415,7 +419,10 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
               <button type="button" onClick={() => setLineas(prev => [...prev, { idServicio: '', cantidad: '1', costoUnitario: '' }])} className="text-[11px] font-semibold text-teal-700 hover:underline">
                 + Agregar artículo
               </button>
-              <p className="text-[11px] font-bold text-slate-700">Total: ₡{totalLineas.toLocaleString('es-CR', { maximumFractionDigits: 2 })}</p>
+              {/* La deuda con el proveedor incluye el IVA de su factura (igual que una compra importada desde XML). */}
+              <p className="text-[11px] font-bold text-slate-700">
+                Subtotal ₡{totalLineas.toLocaleString('es-CR', { maximumFractionDigits: 2 })} + IVA ₡{ivaFormulario.toLocaleString('es-CR', { maximumFractionDigits: 2 })} = Total a pagar ₡{(totalLineas + ivaFormulario).toLocaleString('es-CR', { maximumFractionDigits: 2 })}
+              </p>
               <p className="text-[11px] text-slate-500">Esto incrementa las existencias del artículo y actualiza su costo unitario al costo de esta compra.</p>
             </div>
           )}

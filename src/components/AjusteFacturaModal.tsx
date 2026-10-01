@@ -8,11 +8,12 @@ interface AjusteFacturaModalProps {
   factura: Factura;
   servicios: Servicio[];
   ivaPorDefecto: number;
+  // Cuánto se acreditó ya de cada servicio en Notas de Crédito anteriores sobre esta factura.
+  yaAcreditado: Record<number, number>;
   onEmitir: (idFactura: number, payload: {
     motivo: string;
     lineas: Array<{ idServicio: number; cantidad: number }>;
     medioPago?: string;
-    modoPrueba: boolean;
   }) => Promise<Factura>;
   onClose: () => void;
   themeColor: string;
@@ -22,12 +23,11 @@ interface AjusteFacturaModalProps {
  * facturadas, sin anular toda la factura — para eso está el botón "Anular Factura") o una Nota de
  * Débito (agrega un cargo nuevo sobre una factura ya emitida) — ambas pueden ser parciales o
  * cubrir el total, según cuánto seleccione el usuario. */
-export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDefecto, onEmitir, onClose, themeColor }: AjusteFacturaModalProps) {
+export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDefecto, yaAcreditado, onEmitir, onClose, themeColor }: AjusteFacturaModalProps) {
   const esCredito = tipo === 'CREDITO';
   const [cantidades, setCantidades] = useState<Record<number, number>>({});
   const [motivo, setMotivo] = useState('');
   const [medioPago, setMedioPago] = useState('01');
-  const [modoPrueba, setModoPrueba] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState('');
   const [resultado, setResultado] = useState<Factura | null>(null);
@@ -36,12 +36,21 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
   // Para Nota de Crédito, las opciones son las propias líneas de la factura original (se acredita
   // al precio/IVA con que se facturó, no al precio vigente hoy). Para Nota de Débito, son el
   // catálogo vigente de servicios (es un cargo nuevo, como una mini-factura adicional).
-  type Opcion = { key: number; nombre: string; precio: number; porcentajeIva: number; cantidadMaxima: number | null; sinCabys: boolean };
+  // En una Nota de Crédito el máximo por línea es lo facturado menos lo ya acreditado en notas
+  // anteriores (el servidor lo vuelve a validar). Un mismo servicio facturado en dos líneas se suma.
+  type Opcion = { key: number; nombre: string; precio: number; porcentajeIva: number; cantidadFacturada: number | null; cantidadMaxima: number | null; sinCabys: boolean };
   const opciones: Opcion[] = esCredito
-    ? factura.lineas
+    ? Array.from(factura.lineas
         .filter((l: FacturaLinea) => l.idServicio != null)
-        .map((l: FacturaLinea) => ({ key: l.idServicio as number, nombre: l.detalle, precio: l.precioUnitario, porcentajeIva: l.porcentajeIva, cantidadMaxima: l.cantidad, sinCabys: false }))
-    : servicios.map(s => ({ key: s.id, nombre: s.nombre, precio: s.precio, porcentajeIva: s.porcentajeIva != null ? s.porcentajeIva : ivaPorDefecto, cantidadMaxima: null, sinCabys: !s.codigoCabys }));
+        .reduce((porServicio, l: FacturaLinea) => {
+          const cantidadFacturada = (porServicio.get(l.idServicio as number)?.cantidadFacturada || 0) + Number(l.cantidad);
+          porServicio.set(l.idServicio as number, {
+            key: l.idServicio as number, nombre: l.detalle, precio: l.precioUnitario, porcentajeIva: l.porcentajeIva, sinCabys: false,
+            cantidadFacturada, cantidadMaxima: Math.max(0, cantidadFacturada - (yaAcreditado[l.idServicio as number] || 0))
+          });
+          return porServicio;
+        }, new Map<number, Opcion>()).values())
+    : servicios.map(s => ({ key: s.id, nombre: s.nombre, precio: s.precio, porcentajeIva: s.porcentajeIva != null ? s.porcentajeIva : ivaPorDefecto, cantidadFacturada: null, cantidadMaxima: null, sinCabys: !s.codigoCabys }));
 
   const desglose = (Object.entries(cantidades) as unknown as [string, number][]).reduce((acc, [key, cantidad]) => {
     if (!cantidad || cantidad <= 0) return acc;
@@ -72,8 +81,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
       const nota = await onEmitir(factura.id, {
         motivo: motivo.trim(),
         lineas,
-        ...(esCredito ? {} : { medioPago }),
-        modoPrueba
+        ...(esCredito ? {} : { medioPago })
       });
       setResultado(nota);
     } catch (err: any) {
@@ -149,7 +157,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                         <span className="text-xs font-semibold text-slate-800 block truncate">{o.nombre}</span>
                         <span className="text-[11px] text-slate-500">
                           ₡{o.precio.toLocaleString('es-CR')}
-                          {esCredito && ` · facturado: ${o.cantidadMaxima}`}
+                          {esCredito && ` · facturado: ${o.cantidadFacturada} · disponible: ${o.cantidadMaxima}`}
                           {o.sinCabys && <span className="text-amber-600 font-bold"> (sin CABYS)</span>}
                         </span>
                       </div>
@@ -160,7 +168,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                         step="1"
                         value={cantidades[o.key] || 0}
                         onChange={(e) => setCantidades(prev => ({ ...prev, [o.key]: parseInt(e.target.value) || 0 }))}
-                        disabled={o.sinCabys}
+                        disabled={o.sinCabys || o.cantidadMaxima === 0}
                         className="w-16 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-center disabled:opacity-40"
                       />
                     </div>
@@ -209,18 +217,11 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                 </div>
               </div>
 
-              <label className="flex items-start gap-2 p-2.5 bg-sky-50 border border-sky-200 rounded-xl cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={modoPrueba}
-                  onChange={(e) => setModoPrueba(e.target.checked)}
-                  className="mt-0.5"
-                />
-                <span className="text-[11px] text-sky-800">
-                  <span className="font-bold block">Modo prueba (no enviar a Hacienda)</span>
-                  Se numera y guarda igual que siempre, pero no se envía a Hacienda — queda marcada como SIMULADA.
-                </span>
-              </label>
+              {/* Sin "modo prueba": la factura ya existe ante Hacienda, y una Nota simulada sobre ella
+                  dejaba al sistema y a Hacienda diciendo cosas distintas. */}
+              <p className="text-[11px] text-slate-500">
+                La nota se transmite a Hacienda. {esCredito ? 'Las existencias y el saldo por cobrar' : 'Las existencias y el saldo por cobrar (si la factura fue a crédito)'} se ajustan solo si Hacienda la recibe.
+              </p>
 
               <div className="flex gap-2 justify-end pt-1">
                 <button

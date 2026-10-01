@@ -184,6 +184,10 @@ export default function CompanySettings({
   const [haciendaMensaje, setHaciendaMensaje] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
   const [haciendaProbando, setHaciendaProbando] = useState(false);
   const [haciendaInfoCertificado, setHaciendaInfoCertificado] = useState<{ sujeto: string; emisor: string; validoHasta: string; expirado: boolean } | null>(null);
+  // Último consecutivo ya emitido por tipo, tal como está en el servidor, y lo que el
+  // Administrador escriba para corregirlo (vacío = no tocar).
+  const [haciendaConsecutivos, setHaciendaConsecutivos] = useState({ ultimoConsecutivo: 0, ultimoConsecutivoNc: 0, ultimoConsecutivoNd: 0 });
+  const [haciendaCorreccion, setHaciendaCorreccion] = useState({ ultimoConsecutivo: '', ultimoConsecutivoNc: '', ultimoConsecutivoNd: '' });
   const [smtpTieneContrasena, setSmtpTieneContrasena] = useState(false);
 
   // Sync SMTP fields when company changes
@@ -223,6 +227,7 @@ export default function CompanySettings({
     setHaciendaCertificadoNombreNuevo('');
     setHaciendaCertificadoPin('');
     setHaciendaPasswordAtv('');
+    setHaciendaCorreccion({ ultimoConsecutivo: '', ultimoConsecutivoNc: '', ultimoConsecutivoNd: '' });
     fetch(`/api/hacienda-config/${selectedCompanyId}`)
       .then(res => res.json())
       .then((data: HaciendaConfig) => {
@@ -232,6 +237,7 @@ export default function CompanySettings({
         setHaciendaTieneCertificado(data.tieneCertificado);
         setHaciendaCertificadoNombreArchivo(data.certificadoNombreArchivo);
         setHaciendaCertificadoVenceEn(data.certificadoVenceEn);
+        setHaciendaConsecutivos({ ultimoConsecutivo: data.ultimoConsecutivo || 0, ultimoConsecutivoNc: data.ultimoConsecutivoNc || 0, ultimoConsecutivoNd: data.ultimoConsecutivoNd || 0 });
       })
       .catch(err => console.error('Error cargando configuración de Hacienda:', err));
   }, [selectedCompanyId]);
@@ -281,8 +287,14 @@ export default function CompanySettings({
         usuarioAtv: haciendaUsuarioAtv,
         ...(haciendaPasswordAtv.trim() ? { passwordAtv: haciendaPasswordAtv.trim() } : {}),
         ...(haciendaCertificadoBase64 ? { certificadoP12Base64: haciendaCertificadoBase64, certificadoNombreArchivo: haciendaCertificadoNombreNuevo } : {}),
-        ...(haciendaCertificadoPin.trim() ? { certificadoPin: haciendaCertificadoPin.trim() } : {})
+        ...(haciendaCertificadoPin.trim() ? { certificadoPin: haciendaCertificadoPin.trim() } : {}),
+        ...(haciendaCorreccion.ultimoConsecutivo.trim() ? { ultimoConsecutivo: Number(haciendaCorreccion.ultimoConsecutivo) } : {}),
+        ...(haciendaCorreccion.ultimoConsecutivoNc.trim() ? { ultimoConsecutivoNc: Number(haciendaCorreccion.ultimoConsecutivoNc) } : {}),
+        ...(haciendaCorreccion.ultimoConsecutivoNd.trim() ? { ultimoConsecutivoNd: Number(haciendaCorreccion.ultimoConsecutivoNd) } : {})
       };
+      const pidioBajar = (['ultimoConsecutivo', 'ultimoConsecutivoNc', 'ultimoConsecutivoNd'] as const)
+        .some(k => haciendaCorreccion[k].trim() !== '' && Number(haciendaCorreccion[k]) < haciendaConsecutivos[k]);
+      if (pidioBajar) throw new Error('El último consecutivo solo se puede subir: bajarlo volvería a emitir números que Hacienda ya tiene.');
       const res = await fetch('/api/hacienda-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -298,6 +310,8 @@ export default function CompanySettings({
       setHaciendaCertificadoBase64('');
       setHaciendaCertificadoNombreNuevo('');
       setHaciendaCertificadoPin('');
+      setHaciendaConsecutivos({ ultimoConsecutivo: data.ultimoConsecutivo || 0, ultimoConsecutivoNc: data.ultimoConsecutivoNc || 0, ultimoConsecutivoNd: data.ultimoConsecutivoNd || 0 });
+      setHaciendaCorreccion({ ultimoConsecutivo: '', ultimoConsecutivoNc: '', ultimoConsecutivoNd: '' });
       setHaciendaMensaje({ tipo: 'ok', texto: 'Configuración de Hacienda guardada con éxito.' });
     } catch (err: any) {
       setHaciendaMensaje({ tipo: 'error', texto: err.message });
@@ -1051,6 +1065,34 @@ export default function CompanySettings({
               />
             </div>
           </div>
+
+          {currentUser.rol === 'Administrador' && (
+            <fieldset className="border border-slate-200 rounded-xl p-3 space-y-2">
+              <legend className="px-1 font-semibold text-slate-600">Corrección de numeración</legend>
+              <p className="text-[11px] text-slate-500">
+                Úselo solo si Hacienda rechaza con «el documento ya fue emitido» porque esta empresa ya facturó con otro sistema.
+                Escriba el último número que ya emitió ante Hacienda; el siguiente comprobante usará ese más uno. Solo se puede subir.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {([
+                  ['ultimoConsecutivo', 'Facturas'],
+                  ['ultimoConsecutivoNc', 'Notas de Crédito'],
+                  ['ultimoConsecutivoNd', 'Notas de Débito']
+                ] as const).map(([campo, etiqueta]) => (
+                  <div key={campo}>
+                    <label htmlFor={`companyset-consecutivo-${campo}`} className="block text-slate-600 mb-1 font-semibold">{etiqueta} — último emitido</label>
+                    <input id={`companyset-consecutivo-${campo}`}
+                      type="number" min={haciendaConsecutivos[campo]} step="1" inputMode="numeric"
+                      value={haciendaCorreccion[campo]}
+                      onChange={(e) => setHaciendaCorreccion(prev => ({ ...prev, [campo]: e.target.value }))}
+                      placeholder={String(haciendaConsecutivos[campo])}
+                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                    />
+                  </div>
+                ))}
+              </div>
+            </fieldset>
+          )}
 
           <div className="flex items-center justify-between pt-1">
             <button

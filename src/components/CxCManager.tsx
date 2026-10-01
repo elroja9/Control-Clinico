@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CuentaCobrar, Patient } from '../data/mockData';
 import { Wallet, AlertCircle, DollarSign } from 'lucide-react';
+import { fechaCR } from '../utils/fechaCR';
 
 interface CxCManagerProps {
   cxc: CuentaCobrar[];
@@ -15,8 +16,10 @@ const MEDIOS_PAGO: Record<string, string> = {
   '04': 'Cheque'
 };
 
+// Fecha de hoy en Costa Rica: con la fecha UTC, después de las 6 p.m. una cuenta que vence hoy ya
+// aparecía VENCIDA.
 function hoyISO(): string {
-  return new Date().toISOString().split('T')[0];
+  return fechaCR();
 }
 
 function estadoEfectivo(c: CuentaCobrar): 'PENDIENTE' | 'VENCIDA' | 'PAGADA' | 'ANULADA' {

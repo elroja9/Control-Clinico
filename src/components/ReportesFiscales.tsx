@@ -314,7 +314,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
                   <span className="text-sm font-bold text-slate-800">{colones(d101.ventasNetas)}</span>
                 </div>
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Compras (CxP)</span>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase block" title="El IVA de las compras no se deduce aquí: se recupera como crédito fiscal en el D-104">Compras (CxP, sin IVA)</span>
                   <span className="text-sm font-bold text-slate-800">{colones(d101.comprasCxP)}</span>
                 </div>
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
@@ -368,7 +368,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
                 </ul>
               </details>
 
-              <p className="text-[11px] text-slate-500">{d101.cantidadFacturas} factura(s) · {d101.cantidadNotasDebito} nota(s) de débito emitidas en {d101.anio}.</p>
+              <p className="text-[11px] text-slate-500">{d101.cantidadFacturas} factura(s){d101.cantidadNotasCredito != null ? ` · ${d101.cantidadNotasCredito} nota(s) de crédito` : ''} · {d101.cantidadNotasDebito} nota(s) de débito emitidas en {d101.anio}.</p>
 
               {!d101.yaCerrado && (
                 <button

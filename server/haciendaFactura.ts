@@ -12,6 +12,8 @@
 //
 // Import exclusivo del servidor.
 
+import { fechaHoraCR } from "../src/utils/fechaCR";
+
 /** Plazo de crédito (en días) usado tanto en el nodo <PlazoCredito> del XML como al calcular el
  * vencimiento de la Cuenta por Cobrar (server.ts) cuando condicionVenta = '02' — una sola fuente
  * de verdad para que ambos nunca queden desincronizados. */
@@ -245,20 +247,27 @@ export function generarConsecutivo(secuencial: number, sucursal = "001", termina
  * consecutivo(20) + situación(1) + código de seguridad(8, aleatorio).
  * Orden verificado contra el texto de la resolución oficial (el bloque de fecha va justo
  * después del código de país, antes de la cédula).
+ *
+ * El DDMMYY es el día en Costa Rica, el mismo de <FechaEmision> (ver fechaEmisionCR). Antes salía
+ * de la hora local del servidor mientras <FechaEmision> salía de UTC: de 6 p.m. a medianoche la
+ * clave y la fecha del comprobante quedaban en días distintos.
  */
 export function generarClaveNumerica(cedulaEmisor: string, consecutivo: string, fecha: Date, situacion = "1"): string {
-  const dd = fecha.getDate().toString().padStart(2, "0");
-  const mm = (fecha.getMonth() + 1).toString().padStart(2, "0");
-  const yy = (fecha.getFullYear() % 100).toString().padStart(2, "0");
+  const [yyyy, mm, dd] = fechaHoraCR(fecha).slice(0, 10).split("-");
+  const yy = yyyy.slice(-2);
   const cedula12 = limpiarIdentificacion(cedulaEmisor).padStart(12, "0").slice(-12);
   const codigoSeguridad = Math.floor(Math.random() * 1e8).toString().padStart(8, "0");
   return `506${dd}${mm}${yy}${cedula12}${consecutivo}${situacion}${codigoSeguridad}`;
 }
 
-/** Costa Rica no observa horario de verano: UTC-06:00 todo el año. */
+/** Costa Rica no observa horario de verano: UTC-06:00 todo el año.
+ *
+ * Antes tomaba la hora UTC y le pegaba "-06:00" sin restarle las 6 horas, así que toda
+ * <FechaEmision> salía 6 horas en el futuro. Hacienda rechaza eso con el error -53 ("la hora
+ * indicada en la emisión del archivo XML no coincide con la hora oficial", visto en producción en
+ * el POS), y el D-104 metía en el mes siguiente lo facturado después de las 6 p.m. del último día. */
 export function fechaEmisionCR(fecha: Date): string {
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  return `${fecha.getUTCFullYear()}-${pad(fecha.getUTCMonth() + 1)}-${pad(fecha.getUTCDate())}T${pad(fecha.getUTCHours())}:${pad(fecha.getUTCMinutes())}:${pad(fecha.getUTCSeconds())}-06:00`;
+  return fechaHoraCR(fecha);
 }
 
 const NAMESPACE_FACTURA = "https://cdn.comprobanteselectronicos.go.cr/xml-schemas/v4.4/facturaElectronica";
@@ -287,7 +296,11 @@ export interface DatosFacturaXml {
 
 /** Cuerpo común a Factura Electrónica y Nota de Crédito Electrónica (idéntico de <Clave> a
  * </ResumenFactura> — solo cambia la etiqueta raíz y, en la Nota de Crédito, el bloque
- * <InformacionReferencia> que se agrega después). Evita duplicar esta plantilla dos veces. */
+ * <InformacionReferencia> que se agrega después). Evita duplicar esta plantilla dos veces.
+ *
+ * <MedioPago> (minOccurs=0 en el XSD v4.4) se omite en ventas a crédito: todavía no se ha pagado
+ * nada, así que declarar "01 Efectivo" por el total sería falso. Mismo criterio que el POS, que
+ * factura a crédito así en producción. */
 function construirCuerpoComprobante(datos: DatosFacturaXml): string {
   const { clave, consecutivo, fechaEmision, emisor, receptor, condicionVenta, medioPago, lineas, resumen } = datos;
 
@@ -371,11 +384,11 @@ function construirCuerpoComprobante(datos: DatosFacturaXml): string {
     </TotalDesgloseImpuesto>`).join("\n    ")}` : ""}
     <TotalImpuesto>${fmtDinero(resumen.totalImpuesto)}</TotalImpuesto>
     <TotalImpAsumEmisorFabrica>${fmtDinero(resumen.totalImpAsumEmisorFabrica)}</TotalImpAsumEmisorFabrica>
-    <TotalIVADevuelto>${fmtDinero(resumen.totalIVADevuelto)}</TotalIVADevuelto>
+    <TotalIVADevuelto>${fmtDinero(resumen.totalIVADevuelto)}</TotalIVADevuelto>${condicionVenta === "02" ? "" : `
     <MedioPago>
       <TipoMedioPago>${medioPago}</TipoMedioPago>
       <TotalMedioPago>${fmtDinero(resumen.totalComprobante)}</TotalMedioPago>
-    </MedioPago>
+    </MedioPago>`}
     <TotalComprobante>${fmtDinero(resumen.totalComprobante)}</TotalComprobante>
   </ResumenFactura>`;
 }
@@ -393,7 +406,10 @@ const NAMESPACE_NOTA_CREDITO = "https://cdn.comprobanteselectronicos.go.cr/xml-s
 export interface InformacionReferenciaFactura {
   tipoDocumento: string; // catálogo "Tipo de documento de referencia" — '01' = Factura Electrónica
   numero: string; // clave de 50 dígitos del documento que se referencia
-  fechaEmision: Date; // fecha de emisión del documento referenciado
+  // Fecha de emisión del documento referenciado. Lo normal es pasar el <FechaEmision> tal cual se
+  // guardó (string): así coincide al carácter con el que lleva ese comprobante, aunque se haya
+  // emitido con el formato viejo (ver fechaEmisionCR).
+  fechaEmision: string | Date;
   codigo: string; // catálogo "Código de referencia" — '01' = Anula documento de referencia
   razon: string; // texto libre explicando el motivo
 }
@@ -413,7 +429,7 @@ function construirInformacionReferencia(referencia: InformacionReferenciaFactura
   return `  <InformacionReferencia>
     <TipoDocIR>${referencia.tipoDocumento}</TipoDocIR>
     <Numero>${referencia.numero}</Numero>
-    <FechaEmisionIR>${fechaEmisionCR(referencia.fechaEmision)}</FechaEmisionIR>
+    <FechaEmisionIR>${typeof referencia.fechaEmision === "string" ? escapeXml(referencia.fechaEmision) : fechaEmisionCR(referencia.fechaEmision)}</FechaEmisionIR>
     <Codigo>${referencia.codigo}</Codigo>
     <Razon>${escapeXml(referencia.razon)}</Razon>
   </InformacionReferencia>`;

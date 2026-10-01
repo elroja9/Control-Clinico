@@ -33,7 +33,8 @@ import {
   construirXmlNotaDebito,
   PLAZO_CREDITO_DIAS_DEFECTO
 } from "./server/haciendaFactura";
-import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda } from "./server/haciendaApi";
+import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda, esperarResolucionHacienda } from "./server/haciendaApi";
+import { fechaCR, sumarDiasCR } from "./src/utils/fechaCR";
 import { serviciosDefectoParaPerfil } from "./server/serviciosDefecto";
 import { parsearFacturaProveedorXML } from "./server/xmlProveedorParser";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
@@ -1028,13 +1029,12 @@ function calcularImpuestoRenta(utilidad: number, tipo: "fisica" | "juridica"): {
   return { total: Math.round(total * 100) / 100, tramos };
 }
 
-function construirReporteD101(anio: number, company: Company, facturasAnio: any[], notasDebitoAnio: any[], comprasCxPAnio: number, gastosManuales: GastosManualesAnuales, yaCerrado: boolean, fechaCierre: string | null): ReporteD101 {
-  // Una Nota de Débito ACEPTADA es un ingreso real adicional sobre una factura ya aceptada — se
-  // suma igual que una factura (no hay neteo aquí, a diferencia de D-104: ver comentario en
-  // obtenerDatosD101 sobre por qué D-101 no requiere ese ajuste).
-  const todas = [...facturasAnio, ...notasDebitoAnio];
-  const ventasNetas = todas.reduce((s, f) => s + (Number(f.subtotal) || 0), 0);
-  const ivaAnual = todas.reduce((s, f) => s + (Number(f.totalIva) || 0), 0);
+function construirReporteD101(anio: number, company: Company, facturasAnio: any[], notasCreditoAnio: any[], notasDebitoAnio: any[], comprasCxPAnio: number, gastosManuales: GastosManualesAnuales, yaCerrado: boolean, fechaCierre: string | null): ReporteD101 {
+  // Una Nota de Débito ACEPTADA es un ingreso adicional y una Nota de Crédito ACEPTADA (parcial o
+  // de anulación) lo rebaja — igual que en el D-104, cada una en el año en que se emitió.
+  const sumar = (docs: any[], campo: string) => docs.reduce((s, f) => s + (Number(f[campo]) || 0), 0);
+  const ventasNetas = sumar(facturasAnio, "subtotal") + sumar(notasDebitoAnio, "subtotal") - sumar(notasCreditoAnio, "subtotal");
+  const ivaAnual = sumar(facturasAnio, "totalIva") + sumar(notasDebitoAnio, "totalIva") - sumar(notasCreditoAnio, "totalIva");
   const totalGastosDeducibles = comprasCxPAnio + gastosManuales.alquileres + gastosManuales.servicios + gastosManuales.planilla + gastosManuales.otros;
   const utilidadNeta = Math.max(0, ventasNetas - totalGastosDeducibles);
   const tipoContribuyente: "fisica" | "juridica" = company.tipoIdentificacion === "01" ? "fisica" : "juridica";
@@ -1054,6 +1054,7 @@ function construirReporteD101(anio: number, company: Company, facturasAnio: any[
     impuestoRenta,
     tramos,
     cantidadFacturas: facturasAnio.length,
+    cantidadNotasCredito: notasCreditoAnio.length,
     cantidadNotasDebito: notasDebitoAnio.length,
     yaCerrado,
     fechaCierre
@@ -2428,7 +2429,10 @@ async function startServer() {
           tienePasswordAtv: !!row.password_atv_enc,
           tieneCertificado: !!row.certificado_p12_enc,
           certificadoNombreArchivo: row.certificado_nombre_archivo,
-          certificadoVenceEn: row.certificado_vence_en ? new Date(row.certificado_vence_en).toISOString().split('T')[0] : null
+          certificadoVenceEn: row.certificado_vence_en ? new Date(row.certificado_vence_en).toISOString().split('T')[0] : null,
+          ultimoConsecutivo: row.ultimo_consecutivo || 0,
+          ultimoConsecutivoNc: row.ultimo_consecutivo_nc || 0,
+          ultimoConsecutivoNd: row.ultimo_consecutivo_nd || 0
         });
       } else {
         const row = localHaciendaConfigs.find(c => c.idCompania === idCompania);
@@ -2445,7 +2449,10 @@ async function startServer() {
           tienePasswordAtv: !!row.passwordAtvCifrado,
           tieneCertificado: !!row.certificadoP12Cifrado,
           certificadoNombreArchivo: row.certificadoNombreArchivo,
-          certificadoVenceEn: row.certificadoVenceEn
+          certificadoVenceEn: row.certificadoVenceEn,
+          ultimoConsecutivo: row.ultimoConsecutivo,
+          ultimoConsecutivoNc: row.ultimoConsecutivoNc,
+          ultimoConsecutivoNd: row.ultimoConsecutivoNd
         });
       }
     } catch (err: any) {
@@ -2457,8 +2464,26 @@ async function startServer() {
     try {
       const b = req.body;
       const idCompania = parseInt(b.idCompania);
-      if (!canAccessCompany(sessionOf(req), idCompania)) {
+      const session = sessionOf(req);
+      if (!canAccessCompany(session, idCompania)) {
         return res.status(403).json({ error: "No autorizado." });
+      }
+
+      // Corrección manual de numeración (del POS): fijar el último consecutivo YA emitido ante
+      // Hacienda cuando esta empresa facturó antes con otro sistema bajo la misma sucursal/terminal
+      // y Hacienda rechaza con "el documento ya fue emitido". Solo puede SUBIR: bajarlo volvería a
+      // emitir números que Hacienda ya tiene. Solo un Administrador.
+      const correccionConsecutivos: Array<{ columna: string; campo: "ultimoConsecutivo" | "ultimoConsecutivoNc" | "ultimoConsecutivoNd"; valor: number }> = [];
+      for (const [campo, columna] of [["ultimoConsecutivo", "ultimo_consecutivo"], ["ultimoConsecutivoNc", "ultimo_consecutivo_nc"], ["ultimoConsecutivoNd", "ultimo_consecutivo_nd"]] as const) {
+        if (b[campo] == null || String(b[campo]).trim() === "") continue;
+        const valor = Number(b[campo]);
+        if (!Number.isInteger(valor) || valor < 0 || valor > 9999999999) {
+          return res.status(400).json({ error: "El último consecutivo debe ser un número entero entre 0 y 9999999999." });
+        }
+        correccionConsecutivos.push({ columna, campo, valor });
+      }
+      if (correccionConsecutivos.length > 0 && session.rol !== "Administrador" && !isSaasAdmin(session)) {
+        return res.status(403).json({ error: "Solo un usuario Administrador puede corregir la numeración." });
       }
 
       let existing: { passwordAtvCifrado: string; certificadoP12Cifrado: string; certificadoPinCifrado: string; certificadoNombreArchivo: string | null } | undefined;
@@ -2542,6 +2567,20 @@ async function startServer() {
         }
       }
 
+      let consecutivos = { ultimoConsecutivo: 0, ultimoConsecutivoNc: 0, ultimoConsecutivoNd: 0 };
+      if (dbConnected && pool) {
+        for (const c of correccionConsecutivos) {
+          await pool.query(`UPDATE compania_hacienda_config SET ${c.columna} = GREATEST(${c.columna}, ?) WHERE id_compania = ?`, [c.valor, idCompania]);
+        }
+        const [rows] = await pool.query("SELECT ultimo_consecutivo, ultimo_consecutivo_nc, ultimo_consecutivo_nd FROM compania_hacienda_config WHERE id_compania = ?", [idCompania]);
+        const row = (rows as any[])[0];
+        if (row) consecutivos = { ultimoConsecutivo: row.ultimo_consecutivo || 0, ultimoConsecutivoNc: row.ultimo_consecutivo_nc || 0, ultimoConsecutivoNd: row.ultimo_consecutivo_nd || 0 };
+      } else {
+        const cfg = configLocalHacienda(idCompania);
+        for (const c of correccionConsecutivos) cfg[c.campo] = Math.max(cfg[c.campo], c.valor);
+        consecutivos = { ultimoConsecutivo: cfg.ultimoConsecutivo, ultimoConsecutivoNc: cfg.ultimoConsecutivoNc, ultimoConsecutivoNd: cfg.ultimoConsecutivoNd };
+      }
+
       res.json({
         idCompania,
         ambiente: b.ambiente,
@@ -2549,7 +2588,8 @@ async function startServer() {
         tienePasswordAtv: !!passwordAtvCifrado,
         tieneCertificado: !!certificadoP12Cifrado,
         certificadoNombreArchivo,
-        certificadoVenceEn
+        certificadoVenceEn,
+        ...consecutivos
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2630,6 +2670,112 @@ async function startServer() {
     }
   }
 
+  // Modo sin BD: la configuración de Hacienda solo existía si alguien la guardó, y los contadores
+  // de consecutivo viven en ella — sin esto, facturar sin haberla guardado reventaba con un
+  // "cannot read properties of undefined".
+  function configLocalHacienda(idCompania: number): LocalHaciendaConfig {
+    let cfg = localHaciendaConfigs.find(c => c.idCompania === idCompania);
+    if (!cfg) {
+      cfg = {
+        idCompania, ambiente: "PRUEBAS_LOCAL", usuarioAtv: "", passwordAtvCifrado: "", certificadoP12Cifrado: "", certificadoPinCifrado: "",
+        certificadoNombreArchivo: null, certificadoVenceEn: null, ultimoConsecutivo: 0, ultimoConsecutivoNc: 0, ultimoConsecutivoNd: 0
+      };
+      localHaciendaConfigs.push(cfg);
+    }
+    return cfg;
+  }
+
+  // Reserva el siguiente consecutivo de Nota de Crédito ('03') o de Débito ('02') en una
+  // transacción corta con FOR UPDATE (upsert: sin fila de configuración el UPDATE no hacía nada y
+  // todas las notas repetían el 1). Va ANTES de transmitir porque la clave lleva el consecutivo.
+  async function reservarConsecutivoNota(idCompania: number, tipoDocumento: "02" | "03"): Promise<number> {
+    const columna = tipoDocumento === "03" ? "ultimo_consecutivo_nc" : "ultimo_consecutivo_nd";
+    if (dbConnected && pool) {
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        const [rows] = await connection.query(`SELECT ${columna} AS ultimo FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE`, [idCompania]);
+        const siguiente = ((rows as any[])[0]?.ultimo || 0) + 1;
+        await connection.query(
+          `INSERT INTO compania_hacienda_config (id_compania, ${columna}) VALUES (?, ?) ON DUPLICATE KEY UPDATE ${columna} = VALUES(${columna})`,
+          [idCompania, siguiente]
+        );
+        await connection.commit();
+        return siguiente;
+      } catch (err) {
+        await connection.rollback();
+        throw err;
+      } finally {
+        connection.release();
+      }
+    }
+    const cfg = configLocalHacienda(idCompania);
+    if (tipoDocumento === "03") return ++cfg.ultimoConsecutivoNc;
+    return ++cfg.ultimoConsecutivoNd;
+  }
+
+  interface ResultadoTransmision {
+    estado: "ENVIADA" | "ACEPTADA" | "RECHAZADA" | "ERROR";
+    mensajeError: string | null;
+    xmlFirmado: string | null;
+    respuestaHacienda: string | null;
+  }
+
+  // Firma, envía y sondea unos segundos un comprobante ya armado (factura o nota) — el mismo
+  // ciclo que hace el POS. Nunca lanza: cualquier falla queda como ERROR con su mensaje, para que
+  // quien llama guarde el comprobante igual (la numeración ya está reservada).
+  //
+  // ENVIADA = Hacienda lo recibió pero no resolvió durante el sondeo. Desde ahí lo único válido es
+  // volver a CONSULTAR (POST /api/facturas/:id/estado), nunca reenviarlo: Hacienda rechaza el
+  // reenvío de una clave que ya tiene, y el POS llegó a reintentar así durante 7 horas una factura
+  // que Hacienda había aceptado desde el primer envío.
+  async function transmitirComprobante(params: {
+    xmlSinFirmar: string;
+    clave: string;
+    fechaEmision: string;
+    cert: { p12Base64: string; pin: string };
+    credenciales: { ambiente: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL'; usuarioAtv: string; passwordAtv: string };
+    company: Company;
+    receptor: { tipoIdentificacion: string; identificacion: string };
+  }): Promise<ResultadoTransmision> {
+    const { xmlSinFirmar, clave, fechaEmision, cert, credenciales, company, receptor } = params;
+    const resultado: ResultadoTransmision = { estado: "ERROR", mensajeError: null, xmlFirmado: null, respuestaHacienda: null };
+    try {
+      // El XML firmado se conserva siempre: es el comprobante que el paciente tiene derecho a
+      // recibir y el respaldo ante Hacienda.
+      resultado.xmlFirmado = await firmarXadesEpes(xmlSinFirmar, cert.p12Base64, cert.pin);
+      const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
+      const envio = await enviarFacturaHacienda({
+        ambiente: credenciales.ambiente,
+        token,
+        clave,
+        fechaEmisionIso: fechaEmision,
+        tipoIdentificacionEmisor: company.tipoIdentificacion,
+        cedulaEmisor: limpiarIdentificacion(company.identificacion),
+        tipoIdentificacionReceptor: receptor.tipoIdentificacion,
+        cedulaReceptor: limpiarIdentificacion(receptor.identificacion),
+        xmlFirmado: resultado.xmlFirmado
+      });
+      if (!envio.aceptadoParaProcesar) {
+        resultado.mensajeError = envio.mensaje;
+        return resultado;
+      }
+      resultado.estado = "ENVIADA";
+      const consulta = await esperarResolucionHacienda(credenciales.ambiente, token, clave);
+      resultado.respuestaHacienda = consulta.respuestaXmlBase64;
+      if (consulta.estado === "aceptado") {
+        resultado.estado = "ACEPTADA";
+      } else if (consulta.estado === "rechazado") {
+        resultado.estado = "RECHAZADA";
+        resultado.mensajeError = consulta.detalleMensaje || "Hacienda rechazó el comprobante.";
+      }
+    } catch (err: any) {
+      resultado.mensajeError = err.message || String(err);
+      console.error(`[Hacienda] Error transmitiendo el comprobante ${clave}:`, resultado.mensajeError);
+    }
+    return resultado;
+  }
+
   // Proxy al catálogo oficial CABYS de Hacienda (evita CORS desde el navegador).
   app.get("/api/cabys", requireAuth, async (req, res) => {
     try {
@@ -2638,7 +2784,8 @@ async function startServer() {
       const url = /^\d{13}$/.test(q.trim())
         ? `https://api.hacienda.go.cr/fe/cabys?codigo=${encodeURIComponent(q.trim())}`
         : `https://api.hacienda.go.cr/fe/cabys?q=${encodeURIComponent(q.trim())}`;
-      const resp = await fetch(url);
+      // Con límite: sin él, una API de Hacienda que no responde dejaba colgado el buscador.
+      const resp = await fetch(url, { signal: AbortSignal.timeout(20000) });
       if (!resp.ok) return res.json([]);
       const data = await resp.json();
       res.json(data);
@@ -2812,9 +2959,16 @@ async function startServer() {
           connection.release();
         }
       } else {
-        const cfg = localHaciendaConfigs.find(c => c.idCompania === idCompania)!;
+        const cfg = configLocalHacienda(idCompania);
         siguienteSecuencial = cfg.ultimoConsecutivo + 1;
         cfg.ultimoConsecutivo = siguienteSecuencial;
+        // Igual que en la BD: sin esto el modo memoria nunca descontaba existencias al facturar,
+        // y anular o acreditar las "reponía" de más.
+        for (const l of lineasCalculadas) {
+          if (l.tipo !== 'ARTICULO' || !l.idServicio) continue;
+          const servicio = localServicios.find(s => s.id === l.idServicio);
+          if (servicio) servicio.stock = (servicio.stock || 0) - l.cantidad;
+        }
       }
 
       const consecutivo = generarConsecutivo(siguienteSecuencial);
@@ -2888,33 +3042,16 @@ async function startServer() {
       } else {
         // Envío a Hacienda — best-effort: si la firma o Hacienda fallan, la factura queda
         // guardada como ERROR (en vez de perderse junto con la numeración/stock ya
-        // reservados arriba) y se puede reintentar el envío después. cert/credenciales ya se
-        // validaron no-nulos arriba (omitirEnvioHacienda es false en este branch).
-        try {
-          const xmlFirmado = await firmarXadesEpes(xml, cert!.p12Base64, cert!.pin);
-          // El XML firmado se conserva: es el comprobante que el paciente tiene derecho a recibir
-          // y el respaldo ante Hacienda. Antes se descartaba al salir de este bloque, por eso
-          // facturas.xml_firmado estaba siempre en NULL.
-          nuevaFactura.xmlFirmado = xmlFirmado;
-          const token = await obtenerTokenHacienda(credenciales!.ambiente, credenciales!.usuarioAtv, credenciales!.passwordAtv);
-          const envio = await enviarFacturaHacienda({
-            ambiente: credenciales!.ambiente,
-            token,
-            clave,
-            fechaEmisionIso: fechaEmisionCR(fechaEmision),
-            tipoIdentificacionEmisor: company.tipoIdentificacion,
-            cedulaEmisor: limpiarIdentificacion(company.identificacion),
-            tipoIdentificacionReceptor: tipoIdReceptor,
-            cedulaReceptor: limpiarIdentificacion(paciente.identificacion),
-            xmlFirmado
-          });
-          nuevaFactura.estado = envio.aceptadoParaProcesar ? "ENVIADA" : "ERROR";
-          nuevaFactura.mensajeError = envio.mensaje;
-        } catch (err: any) {
-          nuevaFactura.estado = "ERROR";
-          nuevaFactura.mensajeError = err.message;
-          console.error("[Hacienda] Error enviando factura:", err.message || err);
-        }
+        // reservados arriba). cert/credenciales ya se validaron no-nulos arriba
+        // (omitirEnvioHacienda es false en este branch).
+        const transmision = await transmitirComprobante({
+          xmlSinFirmar: xml, clave, fechaEmision: nuevaFactura.fechaEmision, cert: cert!, credenciales: credenciales!, company,
+          receptor: { tipoIdentificacion: tipoIdReceptor, identificacion: paciente.identificacion }
+        });
+        nuevaFactura.estado = transmision.estado;
+        nuevaFactura.mensajeError = transmision.mensajeError;
+        nuevaFactura.xmlFirmado = transmision.xmlFirmado;
+        nuevaFactura.respuestaHacienda = transmision.respuestaHacienda;
       }
 
       if (dbConnected && pool) {
@@ -2922,8 +3059,8 @@ async function startServer() {
         try {
           await connection.beginTransaction();
           const [result] = await connection.query(
-            "INSERT INTO facturas (idCompania, idCita, id_consulta, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido, xml_firmado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idConsulta, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion, nuevaFactura.medioPago, nuevaFactura.montoRecibido, nuevaFactura.xmlFirmado || null]
+            "INSERT INTO facturas (idCompania, idCita, id_consulta, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido, xml_firmado, respuesta_hacienda) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idConsulta, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion, nuevaFactura.medioPago, nuevaFactura.montoRecibido, nuevaFactura.xmlFirmado || null, nuevaFactura.respuestaHacienda || null]
           );
           nuevaFactura.id = (result as any).insertId;
           await guardarLineasFactura(connection, nuevaFactura.id, nuevaFactura.lineas);
@@ -2949,9 +3086,7 @@ async function startServer() {
       // del paciente es un hecho de negocio, no algo condicionado al trámite fiscal.
       if (condicionVenta === "02") {
         const fechaEmisionSolo = nuevaFactura.fechaEmision.split("T")[0];
-        const vencimiento = new Date(fechaEmision);
-        vencimiento.setDate(vencimiento.getDate() + PLAZO_CREDITO_DIAS_DEFECTO);
-        const fechaVencimiento = vencimiento.toISOString().split("T")[0];
+        const fechaVencimiento = sumarDiasCR(fechaEmisionSolo, PLAZO_CREDITO_DIAS_DEFECTO);
 
         if (dbConnected && pool) {
           await pool.query(
@@ -2983,296 +3118,301 @@ async function startServer() {
     }
   });
 
-  // Anula una Factura Electrónica ya emitida emitiendo y firmando una Nota de Crédito
-  // Electrónica que la referencia (único motivo soportado: anulación total, código '01').
+  async function cargarFacturaPorId(id: number): Promise<any | undefined> {
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT * FROM facturas WHERE id_factura = ?", [id]);
+      return (rows as any[]).map(row => normalizeRow(row, 'id_factura'))[0];
+    }
+    return localFacturas.find(f => f.id === id);
+  }
+
+  async function lineasDeFactura(factura: any): Promise<any[]> {
+    if (dbConnected && pool) return (await fetchLineasPorFactura([factura.id])).get(factura.id) || [];
+    return typeof factura.lineas === "string" ? JSON.parse(factura.lineas) : (factura.lineas || []);
+  }
+
+  async function cargarEmpresaYPaciente(idCompania: number, idPaciente: number): Promise<{ company?: Company; paciente?: Patient }> {
+    if (dbConnected && pool) {
+      const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
+      const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ?", [idPaciente]);
+      return {
+        company: (companyRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0],
+        paciente: (pacienteRows as any[]).map(row => normalizeRow(row, 'id_paciente'))[0]
+      };
+    }
+    return { company: localCompanies.find(c => c.id === idCompania), paciente: localPatients.find(p => p.id === idPaciente) };
+  }
+
+  // Cuánto se acreditó ya de cada servicio en Notas de Crédito previas sobre esta factura. Las que
+  // Hacienda nunca recibió (ERROR) o rechazó no acreditaron nada — y tampoco aplicaron efectos
+  // locales (ver emitirYGuardarNota) —, así que no cuentan.
+  async function cantidadesAcreditadas(idFactura: number): Promise<Map<number, number>> {
+    let notas: any[];
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT * FROM facturas WHERE idFacturaReferencia = ? AND tipoDocumento = '03' AND estado NOT IN ('ERROR', 'RECHAZADA')", [idFactura]);
+      notas = (rows as any[]).map(row => normalizeRow(row, 'id_factura'));
+    } else {
+      notas = localFacturas.filter(f => f.idFacturaReferencia === idFactura && f.tipoDocumento === "03" && f.estado !== "ERROR" && f.estado !== "RECHAZADA");
+    }
+    const lineas = dbConnected && pool
+      ? Array.from((await fetchLineasPorFactura(notas.map(n => n.id))).values()).flat()
+      : notas.flatMap(n => (typeof n.lineas === "string" ? JSON.parse(n.lineas) : n.lineas));
+    const acreditado = new Map<number, number>();
+    for (const l of lineas) {
+      if (l.idServicio == null) continue;
+      acreditado.set(l.idServicio, (acreditado.get(l.idServicio) || 0) + Number(l.cantidad));
+    }
+    return acreditado;
+  }
+
+  // Cert + credenciales reales para transmitir una Nota. Se valida ANTES de reservar el consecutivo
+  // para no quemar numeración por un problema de configuración.
+  async function exigirConfigHacienda(idCompania: number): Promise<{ cert: { p12Base64: string; pin: string }; credenciales: { ambiente: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL'; usuarioAtv: string; passwordAtv: string } }> {
+    const credenciales = await cargarCredencialesAtv(idCompania);
+    const cert = await cargarCertificadoEmpresa(idCompania);
+    if (!cert) throw Object.assign(new Error("Configure primero la Firma Digital de Hacienda (certificado .p12) en Configuración de Empresa."), { status: 400 });
+    if (!credenciales) throw Object.assign(new Error("Configure primero el usuario y contraseña ATV de Hacienda en Configuración de Empresa."), { status: 400 });
+    if (credenciales.ambiente === "PRUEBAS_LOCAL") {
+      throw Object.assign(new Error("La empresa está en ambiente de pruebas locales: no se puede transmitir una Nota sobre una factura que Hacienda aceptó."), { status: 400 });
+    }
+    return { cert, credenciales };
+  }
+
+  // Efectos locales de anular: reponer existencias, anular la CxC pendiente, marcar la factura y
+  // soltar su consulta para que se pueda volver a facturar bien (id_consulta es UNIQUE: mientras la
+  // factura anulada la conservara, esa consulta quedaba imposible de facturar de nuevo).
+  async function aplicarAnulacion(connection: any | null, factura: any, lineasARestituir: any[], motivo: string): Promise<void> {
+    const referencia = `Anulación factura ${factura.consecutivo}`;
+    if (connection) {
+      for (const l of lineasARestituir) {
+        if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
+        const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE id_servicio = ? FOR UPDATE", [l.idServicio]);
+        const stockResultante = ((servicioRows as any[])[0]?.stock || 0) + Number(l.cantidad);
+        await connection.query("UPDATE servicios SET stock = ? WHERE id_servicio = ?", [stockResultante, l.idServicio]);
+        await connection.query(
+          "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'DEVOLUCION_VENTA', ?, ?, ?, ?, ?, ?)",
+          [factura.idCompania, l.idServicio, Number(l.cantidad), stockResultante, referencia, motivo, null, new Date().toISOString()]
+        );
+      }
+      await connection.query("UPDATE facturas SET estado = 'ANULADA', motivoAnulacion = ?, id_consulta = NULL WHERE id_factura = ?", [motivo, factura.id]);
+      // Si ya estaba PAGADA se deja intacta: el cobro ya ocurrió, es un hecho histórico.
+      await connection.query("UPDATE cuentas_cobrar SET estado = 'ANULADA' WHERE idFactura = ? AND estado = 'PENDIENTE'", [factura.id]);
+      return;
+    }
+    for (const l of lineasARestituir) {
+      if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
+      const servicio = localServicios.find(s => s.id === l.idServicio);
+      if (servicio) servicio.stock = (servicio.stock || 0) + Number(l.cantidad);
+    }
+    const original = localFacturas.find(f => f.id === factura.id);
+    if (original) {
+      original.estado = "ANULADA";
+      original.motivoAnulacion = motivo;
+      original.idConsulta = null;
+    }
+    const cxc = localCuentasCobrar.find(c => c.idFactura === factura.id && c.estado === "PENDIENTE");
+    if (cxc) cxc.estado = "ANULADA";
+  }
+
+  // Anula una Factura Electrónica. Son tres efectos independientes (mismo criterio que el POS):
+  // reponer existencias y anular la CxC pendiente siempre —ocurrieron localmente al facturar, sin
+  // importar qué supo Hacienda—, y emitir la Nota de Crédito (código '01') SOLO si Hacienda ACEPTÓ
+  // la factura. La condición es positiva a propósito: una NC sobre un comprobante que Hacienda
+  // nunca aceptó (SIMULADA, RECHAZADA, ERROR) la haría rechazar también. Antes solo se podían anular
+  // las ENVIADAS/ACEPTADAS, así que una factura rechazada o de prueba no tenía forma de reversarse
+  // y su consulta quedaba bloqueada para siempre.
   app.post("/api/facturas/:id/anular", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const session = sessionOf(req);
-      const motivo = String(req.body.motivo || "").trim();
+      // El POS exige autorización de administrador para anular: es irreversible ante Hacienda.
+      if (session.rol !== "Administrador" && !isSaasAdmin(session)) {
+        return res.status(403).json({ error: "Solo un usuario Administrador puede anular facturas." });
+      }
+      const motivo = String(req.body.motivo || "").trim().slice(0, 255);
       if (!motivo) {
         return res.status(400).json({ error: "Indique el motivo de la anulación." });
       }
 
-      let factura: any;
-      if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM facturas WHERE id_factura = ?", [id]);
-        factura = (rows as any[]).map(row => normalizeRow(row, 'id_factura'))[0];
-      } else {
-        factura = localFacturas.find(f => f.id === id);
-      }
+      const factura = await cargarFacturaPorId(id);
       if (!factura) return res.status(404).json({ error: "Factura no encontrada." });
       if (!canAccessCompany(session, factura.idCompania)) {
         return res.status(403).json({ error: "No autorizado." });
       }
       if (factura.tipoDocumento && factura.tipoDocumento !== "01") {
-        return res.status(400).json({ error: "Solo se pueden anular Facturas Electrónicas (no Notas de Crédito)." });
+        return res.status(400).json({ error: "Solo se pueden anular Facturas Electrónicas (no Notas de Crédito/Débito)." });
       }
       if (factura.estado === "ANULADA") {
         return res.status(400).json({ error: "Esta factura ya fue anulada." });
       }
-      if (factura.estado !== "ENVIADA" && factura.estado !== "ACEPTADA") {
-        return res.status(400).json({ error: "Solo se pueden anular facturas que fueron enviadas a Hacienda (estado ENVIADA o ACEPTADA)." });
+      // ENVIADA: Hacienda la recibió y todavía no resuelve. Anularla sin NC dejaría viva ante
+      // Hacienda una factura que luego acepte; emitir NC sobre algo no aceptado la haría rechazar.
+      if (factura.estado === "ENVIADA") {
+        return res.status(409).json({ error: "Hacienda todavía está procesando esta factura. Use «Verificar estado» y anúlela cuando quede aceptada o rechazada." });
       }
 
       const idCompania = factura.idCompania;
-      let company: Company | undefined;
-      let paciente: Patient | undefined;
-      if (dbConnected && pool) {
-        const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
-        company = (companyRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
-        const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ?", [factura.idPaciente]);
-        paciente = (pacienteRows as any[]).map(row => normalizeRow(row, 'id_paciente'))[0];
-      } else {
-        company = localCompanies.find(c => c.id === idCompania);
-        paciente = localPatients.find(p => p.id === factura.idPaciente);
+      const credenciales = await cargarCredencialesAtv(idCompania);
+
+      // ERROR puede ser "nunca le llegó a Hacienda" (falló la firma, el token o la recepción) o "sí
+      // le llegó y se cortó la respuesta". Antes de anularla sin Nota de Crédito se le pregunta: la
+      // misma lección del POS de distinguir "nunca se envió" de "ya se envió".
+      if (factura.estado === "ERROR" && credenciales && credenciales.ambiente !== "PRUEBAS_LOCAL") {
+        let consulta;
+        try {
+          const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
+          consulta = await consultarEstadoHacienda(credenciales.ambiente, token, factura.clave);
+        } catch (err: any) {
+          return res.status(503).json({ error: `No se pudo confirmar con Hacienda si recibió esta factura (${err.message}). Intente de nuevo en unos minutos.` });
+        }
+        if (consulta.estado === "error") {
+          return res.status(503).json({ error: "No se pudo confirmar con Hacienda si recibió esta factura. Intente de nuevo en unos minutos." });
+        }
+        if (consulta.estado === "aceptado" || consulta.estado === "rechazado") {
+          factura.estado = consulta.estado === "aceptado" ? "ACEPTADA" : "RECHAZADA";
+          if (dbConnected && pool) {
+            await pool.query("UPDATE facturas SET estado = ?, respuesta_hacienda = COALESCE(?, respuesta_hacienda) WHERE id_factura = ?", [factura.estado, consulta.respuestaXmlBase64, factura.id]);
+          } else {
+            const local = localFacturas.find(f => f.id === factura.id);
+            if (local) local.estado = factura.estado;
+          }
+        } else if (consulta.estado !== "no_encontrado") {
+          return res.status(409).json({ error: "Hacienda sí recibió esta factura y todavía la está procesando. Use «Verificar estado» y anúlela cuando quede aceptada o rechazada." });
+        }
       }
+
+      const { company, paciente } = await cargarEmpresaYPaciente(idCompania, factura.idPaciente);
       if (!company) return res.status(404).json({ error: "Empresa no encontrada." });
       if (!paciente) return res.status(404).json({ error: "Paciente no encontrado." });
 
-      // Igual que POST /api/facturas: en ambiente PRUEBAS_LOCAL no se exige cert/credenciales ni
-      // se firma/envía nada — antes esto se exigía sin importar el ambiente, así que anular una
-      // factura de prueba fallaba con un error de configuración en vez de simular la anulación.
-      const credenciales = await cargarCredencialesAtv(idCompania);
-      const omitirEnvioHacienda = credenciales?.ambiente === "PRUEBAS_LOCAL";
-      let cert: { p12Base64: string; pin: string } | null = null;
-      if (!omitirEnvioHacienda) {
-        cert = await cargarCertificadoEmpresa(idCompania);
-        if (!cert) return res.status(400).json({ error: "Configure primero la Firma Digital de Hacienda (certificado .p12) en Configuración de Empresa." });
-        if (!credenciales) return res.status(400).json({ error: "Configure primero el usuario y contraseña ATV de Hacienda en Configuración de Empresa." });
+      // Lo que falta por acreditar de cada línea. Si ya hubo Notas de Crédito parciales, la de
+      // anulación cubre solo el resto: acreditar la factura completa otra vez superaría el
+      // comprobante original ante Hacienda y repondría dos veces las mismas existencias.
+      const lineasOriginales = await lineasDeFactura(factura);
+      const pendientePorServicio = factura.estado === "ACEPTADA" ? await cantidadesAcreditadas(factura.id) : new Map<number, number>();
+      const lineasPorAcreditar: any[] = [];
+      for (const l of lineasOriginales) {
+        const yaAcreditada = l.idServicio != null ? Math.min(Number(l.cantidad), pendientePorServicio.get(l.idServicio) || 0) : 0;
+        if (l.idServicio != null) pendientePorServicio.set(l.idServicio, (pendientePorServicio.get(l.idServicio) || 0) - yaAcreditada);
+        const cantidad = Math.round((Number(l.cantidad) - yaAcreditada) * 1000) / 1000;
+        if (cantidad > 0) lineasPorAcreditar.push({ ...l, cantidad });
       }
 
-      const lineasOriginales = dbConnected && pool
-        ? (await fetchLineasPorFactura([factura.id])).get(factura.id) || []
-        : (typeof factura.lineas === "string" ? JSON.parse(factura.lineas) : factura.lineas);
-      const resumen = calcularResumen(lineasOriginales);
+      const facturaAnulada = { ...factura, estado: "ANULADA", motivoAnulacion: motivo, idConsulta: null };
+      const emiteNotaCredito = factura.estado === "ACEPTADA" && lineasPorAcreditar.length > 0;
 
-      // Numeración de la Nota de Crédito (contador independiente de la Factura) + reversa de
-      // stock de artículos — misma transacción con FOR UPDATE que en POST /api/facturas, y por
-      // la misma razón: no repetir consecutivo NI desincronizar el stock si dos anulaciones
-      // concurrentes tocan el mismo artículo.
-      let siguienteSecuencialNc: number;
-      if (dbConnected && pool) {
-        const connection = await pool.getConnection();
-        try {
-          await connection.beginTransaction();
-          // Upsert por la misma razón que en POST /api/facturas: sin fila de configuración el
-          // UPDATE no hacía nada y todas las notas de crédito repetían el consecutivo 1.
-          const [rows] = await connection.query("SELECT ultimo_consecutivo_nc FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE", [idCompania]);
-          const actual = (rows as any[])[0]?.ultimo_consecutivo_nc || 0;
-          siguienteSecuencialNc = actual + 1;
-          await connection.query(
-            "INSERT INTO compania_hacienda_config (id_compania, ultimo_consecutivo_nc) VALUES (?, ?) ON DUPLICATE KEY UPDATE ultimo_consecutivo_nc = VALUES(ultimo_consecutivo_nc)",
-            [idCompania, siguienteSecuencialNc]
-          );
-
-          for (const l of lineasOriginales) {
-            if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
-            const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE id_servicio = ? FOR UPDATE", [l.idServicio]);
-            const stockActual = (servicioRows as any[])[0]?.stock || 0;
-            const stockResultante = stockActual + l.cantidad;
-            await connection.query("UPDATE servicios SET stock = ? WHERE id_servicio = ?", [stockResultante, l.idServicio]);
-            await connection.query(
-              "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'DEVOLUCION_VENTA', ?, ?, ?, ?, ?, ?)",
-              [idCompania, l.idServicio, l.cantidad, stockResultante, `Anulación factura ${factura.consecutivo}`, motivo, null, new Date().toISOString()]
-            );
+      if (!emiteNotaCredito) {
+        // Sin Nota de Crédito: la factura nunca fue válida ante Hacienda (o sus Notas de Crédito
+        // parciales ya la acreditaron completa). Solo los efectos locales.
+        if (dbConnected && pool) {
+          const connection = await pool.getConnection();
+          try {
+            await connection.beginTransaction();
+            await aplicarAnulacion(connection, factura, lineasPorAcreditar, motivo);
+            await connection.commit();
+          } catch (err) {
+            await connection.rollback();
+            throw err;
+          } finally {
+            connection.release();
           }
-
-          await connection.commit();
-        } catch (err) {
-          await connection.rollback();
-          throw err;
-        } finally {
-          connection.release();
+        } else {
+          await aplicarAnulacion(null, factura, lineasPorAcreditar, motivo);
         }
-      } else {
-        const cfg = localHaciendaConfigs.find(c => c.idCompania === idCompania)!;
-        siguienteSecuencialNc = cfg.ultimoConsecutivoNc + 1;
-        cfg.ultimoConsecutivoNc = siguienteSecuencialNc;
-        for (const l of lineasOriginales) {
-          if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
-          const servicio = localServicios.find(s => s.id === l.idServicio);
-          if (servicio) servicio.stock = (servicio.stock || 0) + l.cantidad;
-        }
+        return res.json({ factura: facturaAnulada, notaCredito: null });
       }
 
+      const { cert, credenciales: credencialesReales } = await exigirConfigHacienda(idCompania);
+      const siguienteSecuencialNc = await reservarConsecutivoNota(idCompania, "03");
       const consecutivoNc = generarConsecutivo(siguienteSecuencialNc, "001", "00001", "03");
       const fechaEmisionNc = new Date();
       const claveNc = generarClaveNumerica(company.identificacion, consecutivoNc, fechaEmisionNc);
       const tipoIdReceptor = paciente.tipoIdentificacion === "EXT" ? "03" : paciente.tipoIdentificacion;
+      const lineasNc = calcularLineas(lineasPorAcreditar.map(l => ({
+        codigoCabys: l.codigoCabys, detalle: l.detalle, unidadMedida: l.unidadMedida, cantidad: l.cantidad, precioUnitario: Number(l.precioUnitario), porcentajeIva: Number(l.porcentajeIva)
+      }))).map((l, i) => ({ ...l, idServicio: lineasPorAcreditar[i].idServicio, tipo: lineasPorAcreditar[i].tipo }));
+      const resumen = calcularResumen(lineasNc);
+      const condicionVenta = factura.condicionVenta || "01";
 
       const xml = construirXmlNotaCredito({
         clave: claveNc,
         consecutivo: consecutivoNc,
         fechaEmision: fechaEmisionNc,
         emisor: {
-          nombre: company.razonSocial,
-          nombreComercial: company.nombreComercial,
-          tipoIdentificacion: company.tipoIdentificacion,
-          identificacion: company.identificacion,
-          correoElectronico: company.correoEmisor,
-          provincia: company.provincia,
-          canton: company.canton,
-          distrito: company.distrito,
-          otrasSenas: company.otrasSenas,
-          codigoActividad: limpiarCodigoActividad(company.actividadEconomica)
+          nombre: company.razonSocial, nombreComercial: company.nombreComercial,
+          tipoIdentificacion: company.tipoIdentificacion, identificacion: company.identificacion,
+          correoElectronico: company.correoEmisor, provincia: company.provincia, canton: company.canton,
+          distrito: company.distrito, otrasSenas: company.otrasSenas, codigoActividad: limpiarCodigoActividad(company.actividadEconomica)
         },
-        receptor: {
-          nombre: paciente.nombreCompleto,
-          tipoIdentificacion: tipoIdReceptor,
-          identificacion: paciente.identificacion,
-          correoElectronico: paciente.correoElectronico || undefined
-        },
-        condicionVenta: factura.condicionVenta || "01",
-        medioPago: "01",
-        lineas: lineasOriginales,
+        receptor: { nombre: paciente.nombreCompleto, tipoIdentificacion: tipoIdReceptor, identificacion: paciente.identificacion, correoElectronico: paciente.correoElectronico || undefined },
+        condicionVenta,
+        medioPago: factura.medioPago || "01",
+        lineas: lineasNc,
         resumen,
-        referencia: {
-          tipoDocumento: "01",
-          numero: factura.clave,
-          fechaEmision: new Date(factura.fechaEmision),
-          codigo: "01",
-          razon: motivo
-        }
+        referencia: { tipoDocumento: "01", numero: factura.clave, fechaEmision: factura.fechaEmision, codigo: "01", razon: motivo }
       });
 
-      const notaCredito: any = {
-        idCompania,
-        idCita: null,
-        idPaciente: factura.idPaciente,
-        clave: claveNc,
-        consecutivo: consecutivoNc,
-        fechaEmision: fechaEmisionCR(fechaEmisionNc),
-        ambiente: credenciales?.ambiente ?? "PRUEBAS_LOCAL",
-        lineas: lineasOriginales,
-        subtotal: resumen.totalVenta,
-        totalIva: resumen.totalImpuesto,
-        total: resumen.totalComprobante,
-        estado: "FIRMADA",
-        mensajeError: null,
-        creadaEn: new Date().toISOString(),
-        condicionVenta: factura.condicionVenta || "01",
-        tipoDocumento: "03",
-        idFacturaReferencia: factura.id,
-        motivoAnulacion: motivo
-      };
-
-      if (omitirEnvioHacienda) {
-        notaCredito.estado = "SIMULADA";
-        notaCredito.mensajeError = "Ambiente de pruebas locales — no se envió a Hacienda.";
-      } else {
-        // Envío a Hacienda — best-effort, igual que en POST /api/facturas: si Hacienda no
-        // responde o rechaza, la Nota de Crédito queda guardada como FIRMADA/ERROR y se puede
-        // reintentar el envío después mediante POST /api/facturas/:id/estado.
-        try {
-          const xmlFirmado = await firmarXadesEpes(xml, cert!.p12Base64, cert!.pin);
-          notaCredito.xmlFirmado = xmlFirmado;
-          const token = await obtenerTokenHacienda(credenciales!.ambiente, credenciales!.usuarioAtv, credenciales!.passwordAtv);
-          const envio = await enviarFacturaHacienda({
-            ambiente: credenciales!.ambiente,
-            token,
-            clave: claveNc,
-            fechaEmisionIso: fechaEmisionCR(fechaEmisionNc),
-            tipoIdentificacionEmisor: company.tipoIdentificacion,
-            cedulaEmisor: limpiarIdentificacion(company.identificacion),
-            tipoIdentificacionReceptor: tipoIdReceptor,
-            cedulaReceptor: limpiarIdentificacion(paciente.identificacion),
-            xmlFirmado
-          });
-          notaCredito.estado = envio.aceptadoParaProcesar ? "ENVIADA" : "ERROR";
-          notaCredito.mensajeError = envio.mensaje;
-        } catch (err: any) {
-          notaCredito.estado = "ERROR";
-          notaCredito.mensajeError = err.message;
-          console.error("[Hacienda] Error enviando nota de crédito:", err.message || err);
-        }
+      const { nota: notaCredito, exitoso } = await emitirYGuardarNota({
+        tipoDocumento: "03", factura, xmlSinFirmar: xml, clave: claveNc, consecutivo: consecutivoNc, fechaEmision: fechaEmisionNc,
+        condicionVenta, resumen, lineas: lineasNc, motivo, company, paciente, medioPago: factura.medioPago || "01",
+        cert, credenciales: credencialesReales,
+        aplicarEfectos: (connection) => aplicarAnulacion(connection, factura, lineasPorAcreditar, motivo)
+      });
+      if (!exitoso) {
+        return res.status(502).json({ error: mensajeNotaNoTransmitida("Nota de Crédito de anulación", notaCredito, "La factura NO fue anulada"), notaCredito });
       }
-
-      if (dbConnected && pool) {
-        const connection = await pool.getConnection();
-        try {
-          await connection.beginTransaction();
-          const [result] = await connection.query(
-            "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, xml_firmado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [notaCredito.idCompania, notaCredito.idCita, notaCredito.idPaciente, notaCredito.clave, notaCredito.consecutivo, notaCredito.fechaEmision, notaCredito.ambiente, notaCredito.subtotal, notaCredito.totalIva, notaCredito.total, notaCredito.estado, notaCredito.mensajeError, notaCredito.creadaEn, notaCredito.condicionVenta, notaCredito.tipoDocumento, notaCredito.idFacturaReferencia, notaCredito.motivoAnulacion, notaCredito.xmlFirmado || null]
-          );
-          notaCredito.id = (result as any).insertId;
-          await guardarLineasFactura(connection, notaCredito.id, notaCredito.lineas);
-          await connection.query("UPDATE facturas SET estado = 'ANULADA' WHERE id_factura = ?", [factura.id]);
-          await connection.commit();
-        } catch (err) {
-          await connection.rollback();
-          throw err;
-        } finally {
-          connection.release();
-        }
-        // Si esta factura había generado una CXC que aún no está pagada, se anula también — ya
-        // no hay una deuda real que cobrar sobre un comprobante que Hacienda considera anulado.
-        // Si ya estaba PAGADA se deja intacta (el cobro ya ocurrió, es un hecho histórico).
-        await pool.query("UPDATE cuentas_cobrar SET estado = 'ANULADA' WHERE idFactura = ? AND estado = 'PENDIENTE'", [factura.id]);
-      } else {
-        notaCredito.id = Math.max(0, ...localFacturas.map(f => f.id)) + 1;
-        localFacturas.push(notaCredito);
-        const idx = localFacturas.findIndex(f => f.id === factura.id);
-        if (idx !== -1) localFacturas[idx].estado = "ANULADA";
-        const cxcIdx = localCuentasCobrar.findIndex(c => c.idFactura === factura.id && c.estado === "PENDIENTE");
-        if (cxcIdx !== -1) localCuentasCobrar[cxcIdx].estado = "ANULADA";
-      }
-
-      res.json(notaCredito);
+      res.json({ factura: facturaAnulada, notaCredito });
     } catch (err: any) {
       console.error("[Hacienda] Error anulando factura:", err);
-      res.status(500).json({ error: err.message });
+      res.status(err.status || 500).json({ error: err.message });
     }
   });
+
+  function mensajeNotaNoTransmitida(nombre: string, nota: any, consecuencia: string): string {
+    const motivo = nota.estado === "RECHAZADA" ? `Hacienda rechazó la ${nombre}` : `Hacienda no recibió la ${nombre}`;
+    return `${motivo}: ${nota.mensajeError || "sin detalle"}. ${consecuencia}: no se tocó el inventario ni la cuenta por cobrar. Corrija el problema y vuelva a intentarlo.`;
+  }
 
   // Carga la factura original + empresa + paciente + líneas ya guardadas — validación y datos
   // compartidos entre /nota-credito y /nota-debito (ambos ajustan, total o parcial, una Factura
   // Electrónica ya emitida; a diferencia de /anular, ninguno cambia el estado de la factura
-  // original ni su CxC, porque un ajuste no es una anulación).
+  // original, porque un ajuste no es una anulación).
   async function cargarFacturaParaAjuste(req: any, res: any): Promise<{ factura: any; company: Company; paciente: Patient; lineasOriginales: any[] } | null> {
-    const id = parseInt(req.params.id);
-    let factura: any;
-    if (dbConnected && pool) {
-      const [rows] = await pool.query("SELECT * FROM facturas WHERE id_factura = ?", [id]);
-      factura = (rows as any[]).map(row => normalizeRow(row, 'id_factura'))[0];
-    } else {
-      factura = localFacturas.find(f => f.id === id);
-    }
+    const factura = await cargarFacturaPorId(parseInt(req.params.id));
     if (!factura) { res.status(404).json({ error: "Factura no encontrada." }); return null; }
     if (!canAccessCompany(sessionOf(req), factura.idCompania)) { res.status(403).json({ error: "No autorizado." }); return null; }
     if (factura.tipoDocumento !== "01") { res.status(400).json({ error: "Solo se pueden ajustar Facturas Electrónicas (no otras Notas de Crédito/Débito)." }); return null; }
-    if (factura.estado !== "ENVIADA" && factura.estado !== "ACEPTADA") { res.status(400).json({ error: "Solo se pueden ajustar facturas que fueron enviadas a Hacienda (estado ENVIADA o ACEPTADA)." }); return null; }
-
-    const idCompania = factura.idCompania;
-    let company: Company | undefined;
-    let paciente: Patient | undefined;
-    if (dbConnected && pool) {
-      const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
-      company = (companyRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
-      const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ?", [factura.idPaciente]);
-      paciente = (pacienteRows as any[]).map(row => normalizeRow(row, 'id_paciente'))[0];
-    } else {
-      company = localCompanies.find(c => c.id === idCompania);
-      paciente = localPatients.find(p => p.id === factura.idPaciente);
+    // Solo ACEPTADA (antes también ENVIADA): una Nota referencia la factura por su clave, y si
+    // Hacienda todavía no la aceptó —o termina rechazándola— rechaza también la Nota.
+    if (factura.estado !== "ACEPTADA") {
+      res.status(400).json({ error: factura.estado === "ENVIADA"
+        ? "Hacienda todavía está procesando esta factura. Use «Verificar estado» y emita la Nota cuando quede aceptada."
+        : "Solo se pueden ajustar facturas que Hacienda aceptó." });
+      return null;
     }
+
+    const { company, paciente } = await cargarEmpresaYPaciente(factura.idCompania, factura.idPaciente);
     if (!company) { res.status(404).json({ error: "Empresa no encontrada." }); return null; }
     if (!paciente) { res.status(404).json({ error: "Paciente no encontrado." }); return null; }
 
-    const lineasOriginales = dbConnected && pool
-      ? (await fetchLineasPorFactura([factura.id])).get(factura.id) || []
-      : (typeof factura.lineas === "string" ? JSON.parse(factura.lineas) : factura.lineas);
-
-    return { factura, company, paciente, lineasOriginales };
+    return { factura, company, paciente, lineasOriginales: await lineasDeFactura(factura) };
   }
 
-  // Firma y envía (best-effort, igual que POST /api/facturas y /anular) una Nota de Crédito/Débito
-  // ya armada, y la persiste junto con sus líneas. `tipoDocumento` es '02' (Débito) o '03'
-  // (Crédito) — separa el nodo raíz del XML y el contador de consecutivo a usar.
+  // Transmite una Nota de Crédito/Débito ya armada y la guarda. `tipoDocumento` es '02' (Débito) o
+  // '03' (Crédito).
+  //
+  // Siempre se transmite de verdad, sin "modo prueba": solo se llega aquí sobre una factura que
+  // Hacienda aceptó, y ante Hacienda esa factura sigue intacta hasta que reciba la Nota (antes una
+  // Nota simulada sobre una factura real dejaba el sistema y Hacienda diciendo cosas distintas).
+  //
+  // Los efectos locales (inventario, CxC, anular la factura) se aplican en la MISMA transacción que
+  // guarda la Nota y SOLO si Hacienda la recibió (ENVIADA/ACEPTADA). Si no le llegó o la rechazó,
+  // la Nota queda guardada como registro de ese intento (su consecutivo ya se usó) pero nada más
+  // cambia, y se puede volver a intentar. Antes los efectos se aplicaban antes de saber nada, así
+  // que una Nota fallida dejaba stock y CxC movidos sin ningún comprobante que los respaldara.
   async function emitirYGuardarNota(params: {
     tipoDocumento: "02" | "03";
-    idCompania: number;
-    idPaciente: number;
+    factura: any;
     xmlSinFirmar: string;
     clave: string;
     consecutivo: string;
@@ -3280,86 +3420,70 @@ async function startServer() {
     condicionVenta: string;
     resumen: ReturnType<typeof calcularResumen>;
     lineas: any[];
-    idFacturaReferencia: number;
     motivo: string;
     company: Company;
     paciente: Patient;
-    modoPrueba: boolean;
     medioPago: string;
-  }): Promise<any> {
-    const { tipoDocumento, idCompania, idPaciente, xmlSinFirmar, clave, consecutivo, fechaEmision, condicionVenta, resumen, lineas, idFacturaReferencia, motivo, company, paciente, modoPrueba, medioPago } = params;
-    const credenciales = await cargarCredencialesAtv(idCompania);
-    const omitirEnvioHacienda = modoPrueba || credenciales?.ambiente === "PRUEBAS_LOCAL";
+    cert: { p12Base64: string; pin: string };
+    credenciales: { ambiente: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL'; usuarioAtv: string; passwordAtv: string };
+    aplicarEfectos: (connection: any | null) => Promise<void>;
+  }): Promise<{ nota: any; exitoso: boolean }> {
+    const { tipoDocumento, factura, xmlSinFirmar, clave, consecutivo, fechaEmision, condicionVenta, resumen, lineas, motivo, company, paciente, medioPago, cert, credenciales, aplicarEfectos } = params;
+
+    const transmision = await transmitirComprobante({
+      xmlSinFirmar, clave, fechaEmision: fechaEmisionCR(fechaEmision), cert, credenciales, company,
+      receptor: { tipoIdentificacion: paciente.tipoIdentificacion === "EXT" ? "03" : paciente.tipoIdentificacion, identificacion: paciente.identificacion }
+    });
+    const exitoso = transmision.estado === "ENVIADA" || transmision.estado === "ACEPTADA";
 
     const nota: any = {
-      idCompania,
+      idCompania: factura.idCompania,
       idCita: null,
-      idPaciente,
+      idPaciente: factura.idPaciente,
       clave,
       consecutivo,
       fechaEmision: fechaEmisionCR(fechaEmision),
-      ambiente: credenciales?.ambiente ?? "PRUEBAS_LOCAL",
+      ambiente: credenciales.ambiente,
       lineas,
       subtotal: resumen.totalVenta,
       totalIva: resumen.totalImpuesto,
       total: resumen.totalComprobante,
-      estado: "FIRMADA",
-      mensajeError: null,
+      estado: transmision.estado,
+      mensajeError: transmision.mensajeError,
       creadaEn: new Date().toISOString(),
       condicionVenta,
       tipoDocumento,
-      idFacturaReferencia,
+      idFacturaReferencia: factura.id,
       motivoAnulacion: motivo,
       medioPago,
-      montoRecibido: null
+      montoRecibido: null,
+      xmlFirmado: transmision.xmlFirmado,
+      respuestaHacienda: transmision.respuestaHacienda
     };
 
-    if (omitirEnvioHacienda) {
-      nota.estado = "SIMULADA";
-      nota.mensajeError = modoPrueba && credenciales?.ambiente !== "PRUEBAS_LOCAL"
-        ? "Modo prueba activado — no se envió a Hacienda."
-        : "Ambiente de pruebas locales — no se envió a Hacienda.";
-    } else {
-      const cert = await cargarCertificadoEmpresa(idCompania);
-      if (!cert) throw Object.assign(new Error("Configure primero la Firma Digital de Hacienda (certificado .p12) en Configuración de Empresa."), { status: 400 });
-      if (!credenciales) throw Object.assign(new Error("Configure primero el usuario y contraseña ATV de Hacienda en Configuración de Empresa."), { status: 400 });
-      try {
-        const xmlFirmado = await firmarXadesEpes(xmlSinFirmar, cert.p12Base64, cert.pin);
-        nota.xmlFirmado = xmlFirmado;
-        const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
-        const envio = await enviarFacturaHacienda({
-          ambiente: credenciales.ambiente,
-          token,
-          clave,
-          fechaEmisionIso: fechaEmisionCR(fechaEmision),
-          tipoIdentificacionEmisor: company.tipoIdentificacion,
-          cedulaEmisor: limpiarIdentificacion(company.identificacion),
-          tipoIdentificacionReceptor: paciente.tipoIdentificacion === "EXT" ? "03" : paciente.tipoIdentificacion,
-          cedulaReceptor: limpiarIdentificacion(paciente.identificacion),
-          xmlFirmado
-        });
-        nota.estado = envio.aceptadoParaProcesar ? "ENVIADA" : "ERROR";
-        nota.mensajeError = envio.mensaje;
-      } catch (err: any) {
-        nota.estado = "ERROR";
-        nota.mensajeError = err.message;
-        console.error(`[Hacienda] Error enviando Nota de ${tipoDocumento === "02" ? "Débito" : "Crédito"}:`, err.message || err);
-      }
-    }
-
     if (dbConnected && pool) {
-      const connection = await pool.getConnection();
-      try {
-        await connection.beginTransaction();
+      const insertarNota = async (connection: any) => {
         const [result] = await connection.query(
-          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido, xml_firmado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [nota.idCompania, nota.idCita, nota.idPaciente, nota.clave, nota.consecutivo, nota.fechaEmision, nota.ambiente, nota.subtotal, nota.totalIva, nota.total, nota.estado, nota.mensajeError, nota.creadaEn, nota.condicionVenta, nota.tipoDocumento, nota.idFacturaReferencia, nota.motivoAnulacion, nota.medioPago, nota.montoRecibido, nota.xmlFirmado || null]
+          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido, xml_firmado, respuesta_hacienda) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [nota.idCompania, nota.idCita, nota.idPaciente, nota.clave, nota.consecutivo, nota.fechaEmision, nota.ambiente, nota.subtotal, nota.totalIva, nota.total, nota.estado, nota.mensajeError, nota.creadaEn, nota.condicionVenta, nota.tipoDocumento, nota.idFacturaReferencia, nota.motivoAnulacion, nota.medioPago, nota.montoRecibido, nota.xmlFirmado || null, nota.respuestaHacienda || null]
         );
         nota.id = (result as any).insertId;
         await guardarLineasFactura(connection, nota.id, nota.lineas);
+      };
+      const connection = await pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        await insertarNota(connection);
+        if (exitoso) await aplicarEfectos(connection);
         await connection.commit();
-      } catch (err) {
+      } catch (err: any) {
         await connection.rollback();
+        // Hacienda ya tiene esta Nota: perder su registro local (clave, XML firmado) sería peor que
+        // quedarse sin sus efectos. Se guarda sola, marcada, y el error sigue hacia el usuario.
+        if (exitoso) {
+          nota.mensajeError = `Hacienda recibió esta nota, pero no se pudo aplicar su efecto en inventario/cuenta por cobrar (${err.message}): ajústelo a mano.`;
+          await insertarNota(connection).catch(e => console.error("[Hacienda] No se pudo guardar la nota ya transmitida:", nota.clave, e));
+        }
         throw err;
       } finally {
         connection.release();
@@ -3367,20 +3491,100 @@ async function startServer() {
     } else {
       nota.id = Math.max(0, ...localFacturas.map(f => f.id)) + 1;
       localFacturas.push(nota);
+      if (exitoso) await aplicarEfectos(null);
     }
 
-    return nota;
+    return { nota, exitoso };
+  }
+
+  // Ajuste de la CxC de una factura a crédito por una Nota (montos en colones, `delta` > 0 aumenta).
+  // - Nota de Débito: suma al total y al saldo; una cuenta ya PAGADA vuelve a PENDIENTE (el
+  //   paciente vuelve a deber), y si la factura nunca tuvo CxC se le crea una.
+  // - Nota de Crédito parcial: resta (sin bajar de 0); si el saldo llega a 0 queda PAGADA. Solo
+  //   sobre una cuenta PENDIENTE: si ya estaba pagada, lo acreditado es una devolución de dinero que
+  //   se hace fuera del sistema.
+  async function ajustarCxcPorNota(connection: any | null, factura: any, delta: number): Promise<void> {
+    const redondear = (n: number) => Math.round(n * 100000) / 100000;
+    if (connection) {
+      const [rows] = await connection.query("SELECT * FROM cuentas_cobrar WHERE idFactura = ? FOR UPDATE", [factura.id]);
+      const cuenta = (rows as any[])[0];
+      if (!cuenta) {
+        if (delta <= 0) return;
+        const fechaEmision = fechaCR();
+        await connection.query(
+          "INSERT INTO cuentas_cobrar (idCompania, idFactura, facturaConsecutivo, idPaciente, fechaEmision, fechaVencimiento, plazoDias, montoTotal, saldoPendiente, estado, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?)",
+          [factura.idCompania, factura.id, factura.consecutivo, factura.idPaciente, fechaEmision, sumarDiasCR(fechaEmision, PLAZO_CREDITO_DIAS_DEFECTO), PLAZO_CREDITO_DIAS_DEFECTO, redondear(delta), redondear(delta), new Date().toISOString()]
+        );
+        return;
+      }
+      if (cuenta.estado === "ANULADA") return;
+      if (delta > 0) {
+        await connection.query(
+          "UPDATE cuentas_cobrar SET montoTotal = ?, saldoPendiente = ?, estado = 'PENDIENTE' WHERE id = ?",
+          [redondear(Number(cuenta.montoTotal) + delta), redondear(Number(cuenta.saldoPendiente) + delta), cuenta.id]
+        );
+      } else if (cuenta.estado === "PENDIENTE") {
+        const saldo = Math.max(0, redondear(Number(cuenta.saldoPendiente) + delta));
+        await connection.query(
+          "UPDATE cuentas_cobrar SET montoTotal = ?, saldoPendiente = ?, estado = ? WHERE id = ?",
+          [Math.max(0, redondear(Number(cuenta.montoTotal) + delta)), saldo, saldo <= 0 ? "PAGADA" : "PENDIENTE", cuenta.id]
+        );
+      }
+      return;
+    }
+    const cuenta = localCuentasCobrar.find(c => c.idFactura === factura.id);
+    if (!cuenta) {
+      if (delta <= 0) return;
+      const fechaEmision = fechaCR();
+      localCuentasCobrar.push({
+        id: Math.max(0, ...localCuentasCobrar.map(c => c.id), 0) + 1, idCompania: factura.idCompania, idFactura: factura.id,
+        facturaConsecutivo: factura.consecutivo, idPaciente: factura.idPaciente, fechaEmision,
+        fechaVencimiento: sumarDiasCR(fechaEmision, PLAZO_CREDITO_DIAS_DEFECTO), plazoDias: PLAZO_CREDITO_DIAS_DEFECTO,
+        montoTotal: redondear(delta), saldoPendiente: redondear(delta), estado: "PENDIENTE", creadaEn: new Date().toISOString()
+      });
+      return;
+    }
+    if (cuenta.estado === "ANULADA") return;
+    if (delta > 0) {
+      cuenta.montoTotal = redondear(cuenta.montoTotal + delta);
+      cuenta.saldoPendiente = redondear(cuenta.saldoPendiente + delta);
+      cuenta.estado = "PENDIENTE";
+    } else if (cuenta.estado === "PENDIENTE") {
+      cuenta.montoTotal = Math.max(0, redondear(cuenta.montoTotal + delta));
+      cuenta.saldoPendiente = Math.max(0, redondear(cuenta.saldoPendiente + delta));
+      if (cuenta.saldoPendiente <= 0) cuenta.estado = "PAGADA";
+    }
+  }
+
+  // Mueve existencias de las líneas ARTICULO de una Nota: `signo` +1 repone (Nota de Crédito), −1
+  // descuenta (Nota de Débito, que es una entrega adicional). Nunca deja el stock negativo.
+  async function moverStockPorNota(connection: any | null, idCompania: number, lineas: any[], signo: 1 | -1, referencia: string, motivo: string): Promise<void> {
+    for (const l of lineas) {
+      if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
+      if (connection) {
+        const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE id_servicio = ? FOR UPDATE", [l.idServicio]);
+        const stockResultante = Math.max(0, ((servicioRows as any[])[0]?.stock || 0) + signo * Number(l.cantidad));
+        await connection.query("UPDATE servicios SET stock = ? WHERE id_servicio = ?", [stockResultante, l.idServicio]);
+        await connection.query(
+          `INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, '${signo > 0 ? "DEVOLUCION_VENTA" : "VENTA"}', ?, ?, ?, ?, ?, ?)`,
+          [idCompania, l.idServicio, signo * Number(l.cantidad), stockResultante, referencia, motivo, null, new Date().toISOString()]
+        );
+      } else {
+        const servicio = localServicios.find(s => s.id === l.idServicio);
+        if (servicio) servicio.stock = Math.max(0, (servicio.stock || 0) + signo * Number(l.cantidad));
+      }
+    }
   }
 
   // Nota de Crédito PARCIAL (o total sin marcar la factura como ANULADA): corrige el monto de una
   // factura ya emitida acreditando cantidades específicas de sus líneas originales — a diferencia
-  // de POST /api/facturas/:id/anular (que además marca la factura ANULADA, repone TODO el stock y
-  // cancela la CxC), este endpoint es para correcciones (se cobró de más, una devolución parcial)
-  // donde la factura original sigue vigente. Código de referencia '02' ("Corrige monto", Nota 9 de
+  // de POST /api/facturas/:id/anular (que además marca la factura ANULADA y libera su consulta),
+  // este endpoint es para correcciones (se cobró de más, una devolución parcial) donde la factura
+  // original sigue vigente. Código de referencia '02' ("Corrige monto", Nota 9 de
   // ANEXOS_Y_ESTRUCTURAS_V4.4.pdf) — nunca '01' (reservado a anulación total vía /anular).
   app.post("/api/facturas/:id/nota-credito", requireAuth, async (req, res) => {
     try {
-      const motivo = String(req.body.motivo || "").trim();
+      const motivo = String(req.body.motivo || "").trim().slice(0, 255);
       if (!motivo) return res.status(400).json({ error: "Indique el motivo de la Nota de Crédito." });
       const lineasBody: Array<{ idServicio: number; cantidad: number }> = req.body.lineas || [];
       if (lineasBody.length === 0) return res.status(400).json({ error: "Seleccione al menos una línea a acreditar." });
@@ -3388,45 +3592,33 @@ async function startServer() {
       const datos = await cargarFacturaParaAjuste(req, res);
       if (!datos) return;
       const { factura, company, paciente, lineasOriginales } = datos;
+      const idCompania = factura.idCompania;
+      const { cert, credenciales } = await exigirConfigHacienda(idCompania);
 
-      // Cuánto ya se acreditó de cada línea (por idServicio) en Notas de Crédito previas sobre
-      // esta misma factura — Hacienda exige que la suma de ajustes nunca supere el comprobante
-      // original (Anexos V4.4, sección "Información de referencia").
-      let notasPrevias: any[];
-      if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM facturas WHERE idFacturaReferencia = ? AND tipoDocumento = '03'", [factura.id]);
-        notasPrevias = (rows as any[]).map(row => normalizeRow(row, 'id_factura'));
-      } else {
-        notasPrevias = localFacturas.filter(f => f.idFacturaReferencia === factura.id && f.tipoDocumento === "03");
-      }
-      const lineasPrevias = dbConnected && pool
-        ? Array.from((await fetchLineasPorFactura(notasPrevias.map(n => n.id))).values()).flat()
-        : notasPrevias.flatMap(n => (typeof n.lineas === "string" ? JSON.parse(n.lineas) : n.lineas));
-      const acreditadoPorServicio = new Map<number, number>();
-      for (const l of lineasPrevias) {
-        if (l.idServicio == null) continue;
-        acreditadoPorServicio.set(l.idServicio, (acreditadoPorServicio.get(l.idServicio) || 0) + Number(l.cantidad));
-      }
-
+      // Hacienda exige que la suma de ajustes nunca supere el comprobante original (Anexos V4.4,
+      // sección "Información de referencia").
+      const acreditadoPorServicio = await cantidadesAcreditadas(factura.id);
       const lineasInput = [];
       for (const pedida of lineasBody) {
         const idServicio = parseInt(pedida.idServicio as any);
         const cantidad = parseFloat(pedida.cantidad as any);
         if (!cantidad || cantidad <= 0) return res.status(400).json({ error: "Cada línea a acreditar debe tener una cantidad mayor a 0." });
-        const original = lineasOriginales.find((l: any) => l.idServicio === idServicio);
-        if (!original) return res.status(400).json({ error: `La factura original no tiene una línea con el servicio ${idServicio}.` });
+        const originales = lineasOriginales.filter((l: any) => l.idServicio === idServicio);
+        if (originales.length === 0) return res.status(400).json({ error: `La factura original no tiene una línea con el servicio ${idServicio}.` });
+        const original = originales[0];
+        const vendido = originales.reduce((s: number, l: any) => s + Number(l.cantidad), 0);
         const yaAcreditado = acreditadoPorServicio.get(idServicio) || 0;
-        const disponible = Number(original.cantidad) - yaAcreditado;
+        const disponible = vendido - yaAcreditado;
         if (cantidad > disponible + 1e-9) {
-          return res.status(400).json({ error: `"${original.detalle}": solo quedan ${disponible} unidad(es) por acreditar (ya se acreditaron ${yaAcreditado} de ${original.cantidad}).` });
+          return res.status(400).json({ error: `"${original.detalle}": solo quedan ${disponible} unidad(es) por acreditar (ya se acreditaron ${yaAcreditado} de ${vendido}).` });
         }
         lineasInput.push({
           codigoCabys: original.codigoCabys,
           detalle: original.detalle,
           unidadMedida: original.unidadMedida,
           cantidad,
-          precioUnitario: original.precioUnitario,
-          porcentajeIva: original.porcentajeIva,
+          precioUnitario: Number(original.precioUnitario),
+          porcentajeIva: Number(original.porcentajeIva),
           idServicio,
           tipo: original.tipo
         });
@@ -3434,52 +3626,8 @@ async function startServer() {
 
       const lineasCalculadas = calcularLineas(lineasInput).map((l, i) => ({ ...l, idServicio: lineasInput[i].idServicio, tipo: lineasInput[i].tipo }));
       const resumen = calcularResumen(lineasCalculadas);
-      const idCompania = factura.idCompania;
 
-      // Reversa de stock por las cantidades efectivamente acreditadas (no todo el stock de la
-      // factura, como sí hace /anular) — misma transacción con FOR UPDATE que el resto del módulo.
-      let siguienteSecuencialNc: number;
-      if (dbConnected && pool) {
-        const connection = await pool.getConnection();
-        try {
-          await connection.beginTransaction();
-          const [rows] = await connection.query("SELECT ultimo_consecutivo_nc FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE", [idCompania]);
-          const actual = (rows as any[])[0]?.ultimo_consecutivo_nc || 0;
-          siguienteSecuencialNc = actual + 1;
-          await connection.query(
-            "INSERT INTO compania_hacienda_config (id_compania, ultimo_consecutivo_nc) VALUES (?, ?) ON DUPLICATE KEY UPDATE ultimo_consecutivo_nc = VALUES(ultimo_consecutivo_nc)",
-            [idCompania, siguienteSecuencialNc]
-          );
-          for (const l of lineasCalculadas) {
-            if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
-            const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE id_servicio = ? FOR UPDATE", [l.idServicio]);
-            const stockActual = (servicioRows as any[])[0]?.stock || 0;
-            const stockResultante = stockActual + l.cantidad;
-            await connection.query("UPDATE servicios SET stock = ? WHERE id_servicio = ?", [stockResultante, l.idServicio]);
-            await connection.query(
-              "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'DEVOLUCION_VENTA', ?, ?, ?, ?, ?, ?)",
-              [idCompania, l.idServicio, l.cantidad, stockResultante, `Nota de Crédito parcial sobre factura ${factura.consecutivo}`, motivo, null, new Date().toISOString()]
-            );
-          }
-          await connection.commit();
-        } catch (err) {
-          await connection.rollback();
-          throw err;
-        } finally {
-          connection.release();
-        }
-      } else {
-        const cfg = localHaciendaConfigs.find(c => c.idCompania === idCompania)!;
-        siguienteSecuencialNc = cfg.ultimoConsecutivoNc + 1;
-        cfg.ultimoConsecutivoNc = siguienteSecuencialNc;
-        for (const l of lineasCalculadas) {
-          if (l.tipo !== "ARTICULO" || !l.idServicio) continue;
-          const servicio = localServicios.find(s => s.id === l.idServicio);
-          if (servicio) servicio.stock = (servicio.stock || 0) + l.cantidad;
-        }
-      }
-
-      const consecutivo = generarConsecutivo(siguienteSecuencialNc, "001", "00001", "03");
+      const consecutivo = generarConsecutivo(await reservarConsecutivoNota(idCompania, "03"), "001", "00001", "03");
       const fechaEmision = new Date();
       const clave = generarClaveNumerica(company.identificacion, consecutivo, fechaEmision);
       const tipoIdReceptor = paciente.tipoIdentificacion === "EXT" ? "03" : paciente.tipoIdentificacion;
@@ -3497,17 +3645,26 @@ async function startServer() {
         },
         receptor: { nombre: paciente.nombreCompleto, tipoIdentificacion: tipoIdReceptor, identificacion: paciente.identificacion, correoElectronico: paciente.correoElectronico || undefined },
         condicionVenta,
-        medioPago: "01",
+        medioPago: factura.medioPago || "01",
         lineas: lineasCalculadas,
         resumen,
-        referencia: { tipoDocumento: "01", numero: factura.clave, fechaEmision: new Date(factura.fechaEmision), codigo: "02", razon: motivo }
+        referencia: { tipoDocumento: "01", numero: factura.clave, fechaEmision: factura.fechaEmision, codigo: "02", razon: motivo }
       });
 
-      const notaCredito = await emitirYGuardarNota({
-        tipoDocumento: "03", idCompania, idPaciente: factura.idPaciente, xmlSinFirmar: xml, clave, consecutivo,
-        fechaEmision, condicionVenta, resumen, lineas: lineasCalculadas, idFacturaReferencia: factura.id,
-        motivo, company, paciente, modoPrueba: req.body.modoPrueba === true, medioPago: "01"
+      const { nota: notaCredito, exitoso } = await emitirYGuardarNota({
+        tipoDocumento: "03", factura, xmlSinFirmar: xml, clave, consecutivo, fechaEmision, condicionVenta, resumen,
+        lineas: lineasCalculadas, motivo, company, paciente, medioPago: factura.medioPago || "01", cert, credenciales,
+        aplicarEfectos: async (connection) => {
+          // Repone las existencias acreditadas (no todo el stock de la factura, como /anular) y
+          // rebaja lo que el paciente todavía debe. Antes la CxC no se tocaba: la nota reducía la
+          // deuda ante Hacienda pero el saldo por cobrar seguía igual.
+          await moverStockPorNota(connection, idCompania, lineasCalculadas, 1, `Nota de Crédito ${consecutivo} sobre factura ${factura.consecutivo}`, motivo);
+          await ajustarCxcPorNota(connection, factura, -resumen.totalComprobante);
+        }
       });
+      if (!exitoso) {
+        return res.status(502).json({ error: mensajeNotaNoTransmitida("Nota de Crédito", notaCredito, "No se acreditó nada"), notaCredito });
+      }
       res.json(notaCredito);
     } catch (err: any) {
       console.error("[Hacienda] Error emitiendo Nota de Crédito parcial:", err);
@@ -3520,7 +3677,7 @@ async function startServer() {
   // catálogo VIGENTE de servicios, igual que POST /api/facturas, no de la factura original.
   app.post("/api/facturas/:id/nota-debito", requireAuth, async (req, res) => {
     try {
-      const motivo = String(req.body.motivo || "").trim();
+      const motivo = String(req.body.motivo || "").trim().slice(0, 255);
       if (!motivo) return res.status(400).json({ error: "Indique el motivo de la Nota de Débito." });
       const lineasBody: Array<{ idServicio: number; cantidad: number }> = req.body.lineas || [];
       if (lineasBody.length === 0) return res.status(400).json({ error: "Agregue al menos un servicio a debitar." });
@@ -3530,6 +3687,7 @@ async function startServer() {
       if (!datos) return;
       const { factura, company, paciente } = datos;
       const idCompania = factura.idCompania;
+      const { cert, credenciales } = await exigirConfigHacienda(idCompania);
 
       let serviciosDisponibles: Servicio[];
       if (dbConnected && pool) {
@@ -3559,64 +3717,7 @@ async function startServer() {
       const lineasCalculadas = calcularLineas(lineasInput).map((l, i) => ({ ...l, idServicio: lineasInput[i].idServicio, tipo: lineasInput[i].tipo }));
       const resumen = calcularResumen(lineasCalculadas);
 
-      let siguienteSecuencialNd: number;
-      if (dbConnected && pool) {
-        const connection = await pool.getConnection();
-        try {
-          await connection.beginTransaction();
-          const [rows] = await connection.query("SELECT ultimo_consecutivo_nd FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE", [idCompania]);
-          const actual = (rows as any[])[0]?.ultimo_consecutivo_nd || 0;
-          siguienteSecuencialNd = actual + 1;
-          await connection.query(
-            "INSERT INTO compania_hacienda_config (id_compania, ultimo_consecutivo_nd) VALUES (?, ?) ON DUPLICATE KEY UPDATE ultimo_consecutivo_nd = VALUES(ultimo_consecutivo_nd)",
-            [idCompania, siguienteSecuencialNd]
-          );
-          for (const l of lineasCalculadas) {
-            if (l.tipo !== 'ARTICULO' || !l.idServicio) continue;
-            const [servicioRows] = await connection.query("SELECT stock FROM servicios WHERE id_servicio = ? FOR UPDATE", [l.idServicio]);
-            const stockActual = (servicioRows as any[])[0]?.stock || 0;
-            if (stockActual < l.cantidad) {
-              await connection.rollback();
-              return res.status(409).json({ error: `Existencias insuficientes de "${l.detalle}" (disponible: ${stockActual}, solicitado: ${l.cantidad}).` });
-            }
-            const stockResultante = stockActual - l.cantidad;
-            await connection.query("UPDATE servicios SET stock = ? WHERE id_servicio = ?", [stockResultante, l.idServicio]);
-            await connection.query(
-              "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'VENTA', ?, ?, ?, ?, ?, ?)",
-              [idCompania, l.idServicio, -l.cantidad, stockResultante, `Nota de Débito sobre factura ${factura.consecutivo}`, motivo, null, new Date().toISOString()]
-            );
-          }
-          // Mantiene la CxC exacta: un cargo adicional sobre una venta a crédito aún pendiente de
-          // cobro incrementa lo que el paciente debe. Si ya estaba PAGADA se deja intacta (ese
-          // cobro ya es un hecho histórico) — igual criterio que /anular con la CxC.
-          await connection.query(
-            "UPDATE cuentas_cobrar SET montoTotal = montoTotal + ?, saldoPendiente = saldoPendiente + ? WHERE idFactura = ? AND estado = 'PENDIENTE'",
-            [resumen.totalComprobante, resumen.totalComprobante, factura.id]
-          );
-          await connection.commit();
-        } catch (err) {
-          await connection.rollback();
-          throw err;
-        } finally {
-          connection.release();
-        }
-      } else {
-        const cfg = localHaciendaConfigs.find(c => c.idCompania === idCompania)!;
-        siguienteSecuencialNd = cfg.ultimoConsecutivoNd + 1;
-        cfg.ultimoConsecutivoNd = siguienteSecuencialNd;
-        for (const l of lineasCalculadas) {
-          if (l.tipo !== 'ARTICULO' || !l.idServicio) continue;
-          const servicio = localServicios.find(s => s.id === l.idServicio);
-          if (servicio) servicio.stock = (servicio.stock || 0) - l.cantidad;
-        }
-        const cxc = localCuentasCobrar.find(c => c.idFactura === factura.id && c.estado === 'PENDIENTE');
-        if (cxc) {
-          cxc.montoTotal += resumen.totalComprobante;
-          cxc.saldoPendiente += resumen.totalComprobante;
-        }
-      }
-
-      const consecutivo = generarConsecutivo(siguienteSecuencialNd, "001", "00001", "02");
+      const consecutivo = generarConsecutivo(await reservarConsecutivoNota(idCompania, "02"), "001", "00001", "02");
       const fechaEmision = new Date();
       const clave = generarClaveNumerica(company.identificacion, consecutivo, fechaEmision);
       const tipoIdReceptor = paciente.tipoIdentificacion === "EXT" ? "03" : paciente.tipoIdentificacion;
@@ -3637,14 +3738,22 @@ async function startServer() {
         medioPago,
         lineas: lineasCalculadas,
         resumen,
-        referencia: { tipoDocumento: "01", numero: factura.clave, fechaEmision: new Date(factura.fechaEmision), codigo: "02", razon: motivo }
+        referencia: { tipoDocumento: "01", numero: factura.clave, fechaEmision: factura.fechaEmision, codigo: "02", razon: motivo }
       });
 
-      const notaDebito = await emitirYGuardarNota({
-        tipoDocumento: "02", idCompania, idPaciente: factura.idPaciente, xmlSinFirmar: xml, clave, consecutivo,
-        fechaEmision, condicionVenta, resumen, lineas: lineasCalculadas, idFacturaReferencia: factura.id,
-        motivo, company, paciente, modoPrueba: req.body.modoPrueba === true, medioPago
+      const { nota: notaDebito, exitoso } = await emitirYGuardarNota({
+        tipoDocumento: "02", factura, xmlSinFirmar: xml, clave, consecutivo, fechaEmision, condicionVenta, resumen,
+        lineas: lineasCalculadas, motivo, company, paciente, medioPago, cert, credenciales,
+        aplicarEfectos: async (connection) => {
+          await moverStockPorNota(connection, idCompania, lineasCalculadas, -1, `Nota de Débito ${consecutivo} sobre factura ${factura.consecutivo}`, motivo);
+          // Venta a crédito: el cargo adicional se suma a lo que el paciente debe. Antes solo se
+          // sumaba si la CxC seguía PENDIENTE, así que una ND sobre una cuenta ya pagada se perdía.
+          if (condicionVenta === "02") await ajustarCxcPorNota(connection, factura, resumen.totalComprobante);
+        }
       });
+      if (!exitoso) {
+        return res.status(502).json({ error: mensajeNotaNoTransmitida("Nota de Débito", notaDebito, "No se cargó nada"), notaDebito });
+      }
       res.json(notaDebito);
     } catch (err: any) {
       console.error("[Hacienda] Error emitiendo Nota de Débito:", err);
@@ -3652,43 +3761,80 @@ async function startServer() {
     }
   });
 
+  // Vuelve a CONSULTAR a Hacienda el estado de un comprobante ya transmitido. Nunca lo reenvía
+  // (ver transmitirComprobante). Sirve tanto para una factura ENVIADA que no resolvió durante el
+  // sondeo, como para una en ERROR que quizás sí le llegó a Hacienda (se cortó la respuesta).
   app.post("/api/facturas/:id/estado", requireAuth, async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      let factura: any;
-      if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM facturas WHERE id_factura = ?", [id]);
-        factura = (rows as any[]).map(row => normalizeRow(row, 'id_factura'))[0];
-      } else {
-        factura = localFacturas.find(f => f.id === id);
-      }
+      const factura = await cargarFacturaPorId(id);
       if (!factura) return res.status(404).json({ error: "Factura no encontrada." });
       if (!canAccessCompany(sessionOf(req), factura.idCompania)) {
         return res.status(403).json({ error: "No autorizado." });
       }
+      if (factura.estado === "SIMULADA") {
+        return res.status(400).json({ error: "Este comprobante es de prueba: nunca se envió a Hacienda." });
+      }
 
       const credenciales = await cargarCredencialesAtv(factura.idCompania);
       if (!credenciales) return res.status(400).json({ error: "No hay credenciales ATV configuradas para esta empresa." });
-
-      const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
-      const estadoHacienda = await consultarEstadoHacienda(credenciales.ambiente, token, factura.clave);
-
-      const mapaEstado: Record<string, string> = { aceptado: "ACEPTADA", rechazado: "RECHAZADA" };
-      const nuevoEstado = mapaEstado[estadoHacienda.estado] || factura.estado;
-
-      if (dbConnected && pool) {
-        // respuestaXmlBase64 es el XML de aceptacion/rechazo de Hacienda. La consulta siempre
-        // lo devolvia, pero se descartaba: es el tercer documento que el paciente debe recibir.
-        await pool.query(
-          "UPDATE facturas SET estado = ?, respuesta_hacienda = COALESCE(?, respuesta_hacienda) WHERE id_factura = ?",
-          [nuevoEstado, estadoHacienda.respuestaXmlBase64 || null, id]
-        );
-      } else {
-        const idx = localFacturas.findIndex(f => f.id === id);
-        if (idx !== -1) localFacturas[idx].estado = nuevoEstado as any;
+      if (credenciales.ambiente === "PRUEBAS_LOCAL") {
+        return res.status(400).json({ error: "La empresa está en ambiente de pruebas locales: no hay nada que consultar en Hacienda." });
       }
 
-      res.json({ id, estado: nuevoEstado, estadoHacienda: estadoHacienda.estado });
+      const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
+      const consulta = await consultarEstadoHacienda(credenciales.ambiente, token, factura.clave);
+      if (consulta.estado === "error") {
+        return res.status(502).json({ error: "No se pudo consultar a Hacienda en este momento. Intente de nuevo en unos minutos." });
+      }
+
+      let nuevoEstado: string = factura.estado;
+      let mensajeError: string | null = factura.mensajeError ?? null;
+      if (consulta.estado === "aceptado") {
+        nuevoEstado = "ACEPTADA";
+        mensajeError = null;
+      } else if (consulta.estado === "rechazado") {
+        nuevoEstado = "RECHAZADA";
+        mensajeError = consulta.detalleMensaje || "Hacienda rechazó el comprobante.";
+      } else if (consulta.estado === "no_encontrado") {
+        if (factura.estado === "ERROR") {
+          mensajeError = factura.tipoDocumento === "01"
+            ? "Hacienda no tiene registro de esta factura: nunca le llegó. Anúlela (no requiere Nota de Crédito) y vuelva a facturar."
+            : "Hacienda no tiene registro de esta nota: nunca le llegó, y por eso no se aplicó. Vuelva a emitirla.";
+        }
+      } else if (factura.estado === "ERROR") {
+        // recibido/procesando: sí le llegó, aunque el envío se reportó como fallido.
+        nuevoEstado = "ENVIADA";
+        mensajeError = null;
+      }
+      // Una Nota que se dio por fallida al emitirla nunca aplicó sus efectos (ver emitirYGuardarNota).
+      // Si resulta que Hacienda sí la tiene, hay que avisarlo en vez de dejar el ajuste a medias.
+      if (factura.tipoDocumento !== "01" && factura.estado === "ERROR" && (nuevoEstado === "ACEPTADA" || nuevoEstado === "ENVIADA")) {
+        mensajeError = "Hacienda sí recibió esta nota, pero al emitirla se dio por fallida y su efecto en inventario y cuenta por cobrar no se aplicó: ajústelo a mano.";
+      }
+      // ANULADA se conserva: la anulación ya ocurrió y Hacienda solo informa del comprobante
+      // original. Antes esta consulta la devolvía a ACEPTADA.
+      if (factura.estado === "ANULADA") {
+        nuevoEstado = "ANULADA";
+        mensajeError = factura.mensajeError ?? null;
+      }
+
+      if (dbConnected && pool) {
+        // respuestaXmlBase64 es el XML de aceptación/rechazo de Hacienda: el tercer documento que
+        // el paciente debe recibir.
+        await pool.query(
+          "UPDATE facturas SET estado = ?, mensajeError = ?, respuesta_hacienda = COALESCE(?, respuesta_hacienda) WHERE id_factura = ?",
+          [nuevoEstado, mensajeError, consulta.respuestaXmlBase64 || null, id]
+        );
+      } else {
+        const local = localFacturas.find(f => f.id === id);
+        if (local) {
+          local.estado = nuevoEstado as any;
+          local.mensajeError = mensajeError;
+        }
+      }
+
+      res.json({ id, estado: nuevoEstado, mensajeError, estadoHacienda: consulta.estado });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -3862,7 +4008,7 @@ async function startServer() {
 
           const nuevoSaldo = Math.round((parseFloat(cuenta.saldoPendiente) - monto) * 100000) / 100000;
           const nuevoEstado = nuevoSaldo <= 0 ? "PAGADA" : "PENDIENTE";
-          const fecha = new Date().toISOString().split("T")[0];
+          const fecha = fechaCR();
 
           await connection.query("UPDATE cuentas_cobrar SET saldoPendiente = ?, estado = ? WHERE id = ?", [nuevoSaldo, nuevoEstado, idCuentaCobrar]);
           const [result] = await connection.query(
@@ -3889,7 +4035,7 @@ async function startServer() {
         }
         cuenta.saldoPendiente = Math.round((cuenta.saldoPendiente - monto) * 100000) / 100000;
         cuenta.estado = cuenta.saldoPendiente <= 0 ? "PAGADA" : "PENDIENTE";
-        const fecha = new Date().toISOString().split("T")[0];
+        const fecha = fechaCR();
         const pago: PagoCuentaCobrar = {
           id: Math.max(0, ...localCxcPagos.map(p => p.id)) + 1,
           idCompania: session.idCompania,
@@ -4024,10 +4170,8 @@ async function startServer() {
       }
       if (!proveedor) return res.status(404).json({ error: "Proveedor no encontrado." });
 
-      const fechaRegistro = new Date().toISOString().split("T")[0];
-      const vencimiento = new Date();
-      vencimiento.setDate(vencimiento.getDate() + plazoDias);
-      const fechaVencimiento = vencimiento.toISOString().split("T")[0];
+      const fechaRegistro = fechaCR();
+      const fechaVencimiento = sumarDiasCR(fechaRegistro, plazoDias);
 
       let lineasFinal: Array<{ idServicio: number; nombre: string; cantidad: number; costoUnitario: number }> = [];
       let montoTotal: number;
@@ -4037,6 +4181,9 @@ async function startServer() {
         montoTotal = parseFloat(body.montoTotal);
         if (!Number.isFinite(montoTotal) || montoTotal <= 0) {
           return res.status(400).json({ error: "Indique un monto total válido." });
+        }
+        if (ivaAcreditable > montoTotal) {
+          return res.status(400).json({ error: "El IVA acreditable no puede ser mayor que el monto total de la factura." });
         }
       } else {
         lineasBody = body.lineas || [];
@@ -4052,7 +4199,10 @@ async function startServer() {
           }
           montoTotal += cantidad * costoUnitario;
         }
-        montoTotal = Math.round(montoTotal * 100000) / 100000;
+        // Lo que se le debe al proveedor es el costo (sin IVA) MÁS el IVA de su factura — igual que
+        // una compra importada desde XML, cuyo total es el TotalComprobante. Antes la deuda quedaba
+        // sin el IVA, y el D-101 (que deduce montoTotal − ivaAcreditable) no podía cuadrar.
+        montoTotal = Math.round((montoTotal + ivaAcreditable) * 100000) / 100000;
 
         if (!dbConnected || !pool) {
           for (const l of lineasBody) {
@@ -4170,7 +4320,7 @@ async function startServer() {
 
           const nuevoSaldo = Math.round((parseFloat(cuenta.saldoPendiente) - monto) * 100000) / 100000;
           const nuevoEstado = nuevoSaldo <= 0 ? "PAGADA" : "PENDIENTE";
-          const fecha = new Date().toISOString().split("T")[0];
+          const fecha = fechaCR();
 
           await connection.query("UPDATE cuentas_pagar SET saldoPendiente = ?, estado = ? WHERE id = ?", [nuevoSaldo, nuevoEstado, idCuentaPagar]);
           const [result] = await connection.query(
@@ -4197,7 +4347,7 @@ async function startServer() {
         }
         cuenta.saldoPendiente = Math.round((cuenta.saldoPendiente - monto) * 100000) / 100000;
         cuenta.estado = cuenta.saldoPendiente <= 0 ? "PAGADA" : "PENDIENTE";
-        const fecha = new Date().toISOString().split("T")[0];
+        const fecha = fechaCR();
         const pago: PagoCuentaPagar = {
           id: Math.max(0, ...localCxpPagos.map(p => p.id), 0) + 1,
           idCompania: session.idCompania,
@@ -4219,11 +4369,13 @@ async function startServer() {
 
   // Importa una compra directamente desde el XML de Factura/Tiquete Electrónico que entrega el
   // proveedor: matchea/crea el proveedor por identificación, y — si `alimentaInventario` — crea o
-  // actualiza artículos por CABYS incrementando stock (misma transacción atómica que el resto de
-  // rutas de inventario), o si no, la registra como compra de servicios sin tocar inventario. El
-  // IVA de la propia factura del proveedor se usa para completar `ivaAcreditable` automáticamente
-  // (crédito fiscal del D-104) en vez de pedírselo al usuario a mano. Cada línea también alimenta
-  // el catálogo CABYS compartido, se use o no para inventario.
+  // actualiza artículos incrementando stock, o si no, la registra como compra de servicios sin
+  // tocar inventario. El IVA real de la factura (ver server/xmlProveedorParser.ts) completa
+  // `ivaAcreditable` (crédito fiscal del D-104) en vez de pedírselo al usuario a mano.
+  //
+  // Todo —proveedor nuevo, inventario, cuenta por pagar y pago de contado— va en UNA transacción.
+  // Antes el inventario se confirmaba aparte, y un fallo al guardar la CxP dejaba el stock sumado
+  // sin ninguna cuenta que lo respaldara.
   app.post("/api/cxp/importar-xml", requireAuth, async (req, res) => {
     try {
       const idCompania = sessionOf(req).idCompania;
@@ -4238,130 +4390,115 @@ async function startServer() {
         return res.status(400).json({ error: err.message || "No se pudo leer el archivo XML." });
       }
 
-      // 1. Encontrar o crear el proveedor por identificación (dentro de esta empresa)
-      let proveedor: Proveedor | undefined;
-      if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM proveedores WHERE idCompania = ?", [idCompania]);
-        proveedor = (rows as Proveedor[]).find(p => p.identificacion.replace(/[^0-9]/g, "") === parsed.proveedor.identificacion);
-        if (!proveedor) {
-          const [result] = await pool.query(
-            "INSERT INTO proveedores (idCompania, tipoIdentificacion, identificacion, nombre, correo, telefono, direccion, activo, creadoEn) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
-            [idCompania, parsed.proveedor.tipoIdentificacion, parsed.proveedor.identificacion, parsed.proveedor.nombre, parsed.proveedor.correo, parsed.proveedor.telefono, parsed.proveedor.direccion, new Date().toISOString()]
-          );
-          proveedor = { id: (result as any).insertId, idCompania, tipoIdentificacion: parsed.proveedor.tipoIdentificacion, identificacion: parsed.proveedor.identificacion, nombre: parsed.proveedor.nombre, correo: parsed.proveedor.correo, telefono: parsed.proveedor.telefono, direccion: parsed.proveedor.direccion, activo: true, creadoEn: new Date().toISOString() };
-        }
-      } else {
-        proveedor = localProveedores.find(p => p.idCompania === idCompania && p.identificacion.replace(/[^0-9]/g, "") === parsed.proveedor.identificacion);
-        if (!proveedor) {
-          proveedor = {
-            id: Math.max(0, ...localProveedores.map(p => p.id), 0) + 1, idCompania,
-            tipoIdentificacion: parsed.proveedor.tipoIdentificacion, identificacion: parsed.proveedor.identificacion, nombre: parsed.proveedor.nombre,
-            correo: parsed.proveedor.correo, telefono: parsed.proveedor.telefono, direccion: parsed.proveedor.direccion, activo: true, creadoEn: new Date().toISOString()
-          };
-          localProveedores.push(proveedor);
-        }
-      }
-
-      const fechaRegistro = (parsed.fechaEmision ? parsed.fechaEmision.slice(0, 10) : new Date().toISOString().slice(0, 10));
-      const plazoDias = parsed.condicionVenta === "02" ? Math.max(1, parsed.plazoDias || 30) : 0;
-      const vencimiento = new Date(fechaRegistro);
-      vencimiento.setDate(vencimiento.getDate() + plazoDias);
-      const fechaVencimiento = vencimiento.toISOString().slice(0, 10);
-      const montoTotal = Math.round(parsed.montoTotal * 100000) / 100000;
-      const ivaAcreditable = Math.round(parsed.lineas.reduce((sum, l) => sum + l.montoIva, 0) * 100000) / 100000;
-
-      const lineasFinal: Array<{ idServicio: number; nombre: string; cantidad: number; costoUnitario: number }> = [];
+      const redondear = (n: number) => Math.round(n * 100000) / 100000;
+      const numeroFacturaProveedor = (parsed.numeroFacturaProv || "").slice(0, 100) || null;
+      const fechaRegistro = parsed.fechaEmision ? parsed.fechaEmision.slice(0, 10) : fechaCR();
+      const esContado = parsed.condicionVenta === "01";
+      const plazoDias = esContado ? 0 : Math.max(1, parsed.plazoDias || 30);
+      const fechaVencimiento = sumarDiasCR(fechaRegistro, plazoDias);
+      const montoTotal = redondear(parsed.montoTotal);
+      const ivaAcreditable = redondear(parsed.lineas.reduce((sum, l) => sum + l.montoIva, 0));
+      const notas = parsed.moneda !== "CRC" ? `Importada desde XML (${parsed.moneda}, tipo de cambio ${parsed.tipoCambio})` : "Importada desde XML";
+      const creadaEn = new Date().toISOString();
       const UNIDADES_VALIDAS = new Set(["Sp", "Spe", "St", "Os", "h", "Unid"]);
+      const esDelProveedor = (p: Proveedor) => p.identificacion.replace(/[^0-9]/g, "") === parsed.proveedor.identificacion;
+      // Costo efectivo: la base después del descuento entre la cantidad (no el precio de lista).
+      const costoDe = (linea: typeof parsed.lineas[number]) => redondear(linea.subtotal / linea.cantidad);
+      const normalizarNombre = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 
-      // 2. Si alimenta inventario: crear/actualizar artículos por CABYS e incrementar stock,
-      // dentro de una transacción atómica (misma lógica de bloqueo que POST /api/cxp).
-      if (alimentaInventario) {
-        if (dbConnected && pool) {
-          const connection = await pool.getConnection();
-          try {
-            await connection.beginTransaction();
+      // El artículo que corresponde a una línea del XML. Por código de barras (CodigoComercial)
+      // primero; sin él, por CABYS + misma descripción. Antes era solo por CABYS, que es la categoría
+      // tributaria y NO es único por producto: dos artículos distintos con el mismo CABYS (dos
+      // medicamentos, dos tipos de guante) terminaban fusionados en uno solo con el stock de ambos.
+      const buscarArticulo = (articulos: any[], linea: typeof parsed.lineas[number]) => {
+        if (linea.codigoComercial) {
+          const porCodigo = articulos.find(a => a.codigoBarras && a.codigoBarras === linea.codigoComercial);
+          if (porCodigo) return porCodigo;
+        }
+        return articulos.find(a => a.codigoCabys === linea.codigoCabys && normalizarNombre(a.nombre || "") === normalizarNombre(linea.nombre.slice(0, 150)));
+      };
+      const mensajeDuplicada = (proveedorNombre: string, total: number) =>
+        `La factura ${numeroFacturaProveedor} de ${proveedorNombre} ya está registrada como cuenta por pagar (₡${Number(total).toLocaleString("es-CR")}). No se importó de nuevo para no duplicar el inventario ni la deuda.`;
+
+      let proveedor: Proveedor | undefined;
+      const lineasFinal: Array<{ idServicio: number; nombre: string; cantidad: number; costoUnitario: number }> = [];
+      let cxpCreada: CuentaPagar;
+
+      if (dbConnected && pool) {
+        const connection = await pool.getConnection();
+        try {
+          await connection.beginTransaction();
+
+          // 1. Proveedor por identificación (dentro de esta empresa). Se bloquea su fila para que dos
+          // importaciones simultáneas del mismo XML no pasen las dos el chequeo de duplicado.
+          const [provRows] = await connection.query("SELECT * FROM proveedores WHERE idCompania = ?", [idCompania]);
+          proveedor = (provRows as Proveedor[]).find(esDelProveedor);
+          if (proveedor) {
+            await connection.query("SELECT id FROM proveedores WHERE id = ? FOR UPDATE", [proveedor.id]);
+            // 2. ¿Ya está registrada? La misma factura puede llegar dos veces o haberse tecleado a
+            // mano antes; importarla otra vez sumaría el stock, la deuda y el IVA acreditable de nuevo.
+            if (numeroFacturaProveedor) {
+              const [dup] = await connection.query(
+                "SELECT montoTotal FROM cuentas_pagar WHERE idCompania = ? AND idProveedor = ? AND numeroFacturaProveedor = ? AND estado != 'ANULADA' LIMIT 1",
+                [idCompania, proveedor.id, numeroFacturaProveedor]
+              );
+              if ((dup as any[]).length > 0) {
+                await connection.rollback();
+                return res.status(409).json({ error: mensajeDuplicada(proveedor.nombre, (dup as any[])[0].montoTotal) });
+              }
+            }
+          } else {
+            const [result] = await connection.query(
+              "INSERT INTO proveedores (idCompania, tipoIdentificacion, identificacion, nombre, correo, telefono, direccion, activo, creadoEn) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)",
+              [idCompania, parsed.proveedor.tipoIdentificacion, parsed.proveedor.identificacion, parsed.proveedor.nombre, parsed.proveedor.correo, parsed.proveedor.telefono, parsed.proveedor.direccion, creadaEn]
+            );
+            proveedor = { id: (result as any).insertId, idCompania, tipoIdentificacion: parsed.proveedor.tipoIdentificacion, identificacion: parsed.proveedor.identificacion, nombre: parsed.proveedor.nombre, correo: parsed.proveedor.correo, telefono: parsed.proveedor.telefono, direccion: parsed.proveedor.direccion, activo: true, creadoEn: creadaEn };
+          }
+
+          // 3. Inventario: crear/actualizar artículos e incrementar stock.
+          if (alimentaInventario) {
+            const [servRows] = await connection.query("SELECT * FROM servicios WHERE idCompania = ? AND tipo = 'ARTICULO' FOR UPDATE", [idCompania]);
+            const articulos = (servRows as any[]).map(row => normalizeRow(row, 'id_servicio'));
             for (const linea of parsed.lineas) {
-              const [rows] = await connection.query("SELECT * FROM servicios WHERE codigoCabys = ? AND idCompania = ? FOR UPDATE", [linea.codigoCabys, idCompania]);
-              const existente = (rows as any[]).map(row => normalizeRow(row, 'id_servicio'))[0];
+              const costo = costoDe(linea);
+              const existente = buscarArticulo(articulos, linea);
               let idServicio: number;
               let stockResultante: number;
               if (existente) {
                 idServicio = existente.id;
-                stockResultante = (existente.stock || 0) + linea.cantidad;
-                await connection.query("UPDATE servicios SET stock = ?, costoUnitario = ? WHERE id_servicio = ?", [stockResultante, linea.precioUnitario, idServicio]);
+                stockResultante = (Number(existente.stock) || 0) + linea.cantidad;
+                existente.stock = stockResultante;
+                await connection.query("UPDATE servicios SET stock = ?, costoUnitario = ? WHERE id_servicio = ?", [stockResultante, costo, idServicio]);
               } else {
                 const unidadMedida = UNIDADES_VALIDAS.has(linea.unidadMedida) ? linea.unidadMedida : "Unid";
+                const codigoBarras = linea.codigoComercial ? linea.codigoComercial.slice(0, 50) : null;
                 const [result] = await connection.query(
                   "INSERT INTO servicios (idCompania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo, tipo, stock, stockMinimo, costoUnitario, codigoBarras) VALUES (?, ?, ?, ?, 0, ?, ?, 1, 'ARTICULO', ?, 0, ?, ?)",
-                  [idCompania, linea.nombre, linea.precioUnitario, linea.porcentajeIva, linea.codigoCabys, unidadMedida, linea.cantidad, linea.precioUnitario, linea.codigoComercial]
+                  [idCompania, linea.nombre.slice(0, 150), costo, linea.porcentajeIva, linea.codigoCabys, unidadMedida, linea.cantidad, costo, codigoBarras]
                 );
                 idServicio = (result as any).insertId;
                 stockResultante = linea.cantidad;
+                // Una segunda línea del mismo artículo en este mismo XML lo encuentra en vez de duplicarlo.
+                articulos.push({ id: idServicio, nombre: linea.nombre.slice(0, 150), codigoCabys: linea.codigoCabys, codigoBarras, stock: stockResultante });
               }
               await connection.query(
                 "INSERT INTO movimientos_inventario (idCompania, idServicio, tipo, cantidad, stockResultante, referencia, notas, creadoPor, creadoEn) VALUES (?, ?, 'COMPRA', ?, ?, ?, ?, ?, ?)",
-                [idCompania, idServicio, linea.cantidad, stockResultante, `Importado de XML — Factura proveedor ${parsed.numeroFacturaProv || ""}`, null, null, new Date().toISOString()]
+                [idCompania, idServicio, linea.cantidad, stockResultante, `Importado de XML — Factura proveedor ${numeroFacturaProveedor || ""}`, null, null, creadaEn]
               );
-              lineasFinal.push({ idServicio, nombre: linea.nombre, cantidad: linea.cantidad, costoUnitario: linea.precioUnitario });
-            }
-            await connection.commit();
-          } catch (err) {
-            await connection.rollback();
-            throw err;
-          } finally {
-            connection.release();
-          }
-        } else {
-          for (const linea of parsed.lineas) {
-            const servicio = localServicios.find(s => s.idCompania === idCompania && s.codigoCabys === linea.codigoCabys);
-            if (servicio) {
-              servicio.stock = (servicio.stock || 0) + linea.cantidad;
-              servicio.costoUnitario = linea.precioUnitario;
-              lineasFinal.push({ idServicio: servicio.id, nombre: linea.nombre, cantidad: linea.cantidad, costoUnitario: linea.precioUnitario });
-            } else {
-              const nuevo: any = {
-                id: Math.max(0, ...localServicios.map(s => s.id), 0) + 1, idCompania, nombre: linea.nombre, precio: linea.precioUnitario,
-                porcentajeIva: linea.porcentajeIva, duracionMinutos: 0, codigoCabys: linea.codigoCabys,
-                unidadMedida: UNIDADES_VALIDAS.has(linea.unidadMedida) ? linea.unidadMedida : "Unid",
-                activo: true, tipo: "ARTICULO", stock: linea.cantidad, stockMinimo: 0, costoUnitario: linea.precioUnitario, codigoBarras: linea.codigoComercial
-              };
-              localServicios.push(nuevo);
-              lineasFinal.push({ idServicio: nuevo.id, nombre: linea.nombre, cantidad: linea.cantidad, costoUnitario: linea.precioUnitario });
+              lineasFinal.push({ idServicio, nombre: linea.nombre.slice(0, 150), cantidad: linea.cantidad, costoUnitario: costo });
             }
           }
-        }
-      }
-      // Nota: cuando la compra es de servicios (no alimenta inventario) no queda nada que hacer
-      // en este paso. Antes se poblaba una tabla `cabys_catalogo` con las descripciones que
-      // venían en el XML, pero nadie la leía nunca: la búsqueda de códigos CABYS de la app va
-      // contra la API oficial de Hacienda (ver GET /api/cabys). La tabla se eliminó en la Fase 1
-      // de la limpieza de BD por ser peso muerto, pero estas escrituras quedaron — dejando la
-      // importación de XML rota con ER_NO_SUCH_TABLE hasta que se quitaron aquí.
 
-      // 3. Registrar la cuenta por pagar — ya Pagada si la venta fue de contado (para no perder
-      // el historial de compras), Pendiente con el plazo indicado si fue a crédito.
-      const numeroFacturaProveedor = parsed.numeroFacturaProv || null;
-      const esContado = parsed.condicionVenta === "01";
-      let cxpCreada: CuentaPagar;
-
-      if (dbConnected && pool) {
-        // La cuenta por pagar, sus renglones y el pago de contado van en una sola transacción.
-        // (El movimiento de inventario del paso 2 sigue confirmándose por separado — brecha
-        // preexistente en esta ruta, anotada en el spec de Fase 4; no se reestructura aquí
-        // porque no hay forma de probar la importación XML de punta a punta en este entorno.)
-        const creadaEn = new Date().toISOString();
-        const connection = await pool.getConnection();
-        const pagos: PagoCuentaPagar[] = [];
-        let idCuentaPagar: number;
-        try {
-          await connection.beginTransaction();
+          // 4. La cuenta por pagar — ya Pagada si la venta fue de contado (para no perder el
+          // historial de compras), Pendiente con el plazo indicado si fue a crédito.
           const [result] = await connection.query(
             "INSERT INTO cuentas_pagar (idCompania, idProveedor, numeroFacturaProveedor, esServicio, fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente, estado, ivaAcreditable, notas, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [idCompania, proveedor.id, numeroFacturaProveedor, alimentaInventario ? 0 : 1, fechaRegistro, fechaVencimiento, plazoDias, montoTotal, esContado ? 0 : montoTotal, esContado ? "PAGADA" : "PENDIENTE", ivaAcreditable, "Importada desde XML", creadaEn]
+            [idCompania, proveedor.id, numeroFacturaProveedor, alimentaInventario ? 0 : 1, fechaRegistro, fechaVencimiento, plazoDias, montoTotal, esContado ? 0 : montoTotal, esContado ? "PAGADA" : "PENDIENTE", ivaAcreditable, notas, creadaEn]
           );
-          idCuentaPagar = (result as any).insertId;
+          const idCuentaPagar = (result as any).insertId;
           await guardarLineasCuentaPagar(connection, idCuentaPagar, lineasFinal);
 
+          const pagos: PagoCuentaPagar[] = [];
           if (esContado) {
             const [pagoResult] = await connection.query(
               "INSERT INTO cxp_pagos (idCompania, idCuentaPagar, fecha, monto, medioPago, referencia, registradoPor, creadoEn) VALUES (?, ?, ?, ?, '01', NULL, NULL, ?)",
@@ -4370,27 +4507,66 @@ async function startServer() {
             pagos.push({ id: (pagoResult as any).insertId, idCompania, idCuentaPagar, fecha: fechaRegistro, monto: montoTotal, medioPago: "01", referencia: null, registradoPor: null, creadoEn: creadaEn });
           }
           await connection.commit();
-        } catch (err) {
+
+          cxpCreada = {
+            id: idCuentaPagar, idCompania, idProveedor: proveedor.id, numeroFacturaProveedor, esServicio: !alimentaInventario, lineas: lineasFinal,
+            fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente: esContado ? 0 : montoTotal, estado: esContado ? "PAGADA" : "PENDIENTE",
+            ivaAcreditable, notas, creadaEn, pagos
+          };
+        } catch (err: any) {
           await connection.rollback();
+          if (err.code === "ER_DUP_ENTRY") {
+            return res.status(409).json({ error: "Otro usuario registró este proveedor al mismo tiempo. Vuelva a importar el archivo." });
+          }
           throw err;
         } finally {
           connection.release();
         }
-        cxpCreada = {
-          id: idCuentaPagar, idCompania, idProveedor: proveedor.id, numeroFacturaProveedor, esServicio: !alimentaInventario, lineas: lineasFinal,
-          fechaRegistro, fechaVencimiento, plazoDias, montoTotal, saldoPendiente: esContado ? 0 : montoTotal, estado: esContado ? "PAGADA" : "PENDIENTE",
-          ivaAcreditable, notas: "Importada desde XML", creadaEn, pagos
-        };
       } else {
+        proveedor = localProveedores.find(p => p.idCompania === idCompania && esDelProveedor(p));
+        if (proveedor && numeroFacturaProveedor) {
+          const dup = localCuentasPagar.find(c => c.idCompania === idCompania && c.idProveedor === proveedor!.id && c.numeroFacturaProveedor === numeroFacturaProveedor && c.estado !== "ANULADA");
+          if (dup) return res.status(409).json({ error: mensajeDuplicada(proveedor.nombre, dup.montoTotal) });
+        }
+        if (!proveedor) {
+          proveedor = {
+            id: Math.max(0, ...localProveedores.map(p => p.id), 0) + 1, idCompania,
+            tipoIdentificacion: parsed.proveedor.tipoIdentificacion, identificacion: parsed.proveedor.identificacion, nombre: parsed.proveedor.nombre,
+            correo: parsed.proveedor.correo, telefono: parsed.proveedor.telefono, direccion: parsed.proveedor.direccion, activo: true, creadoEn: creadaEn
+          };
+          localProveedores.push(proveedor);
+        }
+        if (alimentaInventario) {
+          const articulos = localServicios.filter(s => s.idCompania === idCompania && s.tipo === "ARTICULO");
+          for (const linea of parsed.lineas) {
+            const costo = costoDe(linea);
+            const existente: any = buscarArticulo(articulos, linea);
+            if (existente) {
+              existente.stock = (existente.stock || 0) + linea.cantidad;
+              existente.costoUnitario = costo;
+              lineasFinal.push({ idServicio: existente.id, nombre: linea.nombre.slice(0, 150), cantidad: linea.cantidad, costoUnitario: costo });
+            } else {
+              const nuevo: any = {
+                id: Math.max(0, ...localServicios.map(s => s.id), 0) + 1, idCompania, nombre: linea.nombre.slice(0, 150), precio: costo,
+                porcentajeIva: linea.porcentajeIva, duracionMinutos: 0, codigoCabys: linea.codigoCabys,
+                unidadMedida: UNIDADES_VALIDAS.has(linea.unidadMedida) ? linea.unidadMedida : "Unid",
+                activo: true, tipo: "ARTICULO", stock: linea.cantidad, stockMinimo: 0, costoUnitario: costo, codigoBarras: linea.codigoComercial
+              };
+              localServicios.push(nuevo);
+              articulos.push(nuevo);
+              lineasFinal.push({ idServicio: nuevo.id, nombre: nuevo.nombre, cantidad: linea.cantidad, costoUnitario: costo });
+            }
+          }
+        }
         const nueva: any = {
           id: Math.max(0, ...localCuentasPagar.map(c => c.id), 0) + 1, idCompania, idProveedor: proveedor.id, numeroFacturaProveedor,
           esServicio: !alimentaInventario, lineas: lineasFinal, fechaRegistro, fechaVencimiento, plazoDias, montoTotal,
-          saldoPendiente: esContado ? 0 : montoTotal, estado: esContado ? "PAGADA" : "PENDIENTE", ivaAcreditable, notas: "Importada desde XML", creadaEn: new Date().toISOString()
+          saldoPendiente: esContado ? 0 : montoTotal, estado: esContado ? "PAGADA" : "PENDIENTE", ivaAcreditable, notas, creadaEn
         };
         localCuentasPagar.push(nueva);
         const pagos: PagoCuentaPagar[] = [];
         if (esContado) {
-          const pago: PagoCuentaPagar = { id: Math.max(0, ...localCxpPagos.map(p => p.id), 0) + 1, idCompania, idCuentaPagar: nueva.id, fecha: fechaRegistro, monto: montoTotal, medioPago: "01", referencia: null, registradoPor: null, creadoEn: new Date().toISOString() };
+          const pago: PagoCuentaPagar = { id: Math.max(0, ...localCxpPagos.map(p => p.id), 0) + 1, idCompania, idCuentaPagar: nueva.id, fecha: fechaRegistro, monto: montoTotal, medioPago: "01", referencia: null, registradoPor: null, creadoEn: creadaEn };
           localCxpPagos.push(pago);
           pagos.push(pago);
         }
@@ -4405,6 +4581,15 @@ async function startServer() {
 
   // 5b. Reportes Fiscales D-104 (IVA mensual) / D-101 (Renta anual)
 
+  // Qué facturas existen ante Hacienda: las ACEPTADAS, y las ANULADAS que Hacienda sí había aceptado
+  // — esas cuentan como venta y su Nota de Crédito la resta por separado en su propio período. Una
+  // factura ANULADA sin ninguna Nota de Crédito que la referencie se anuló localmente porque Hacienda
+  // nunca la aceptó (ver POST /api/facturas/:id/anular): declararla sería declarar una venta que
+  // fiscalmente no existe, sin nada que la compense.
+  const SQL_FACTURA_DECLARABLE = "(f.estado = 'ACEPTADA' OR (f.estado = 'ANULADA' AND EXISTS (SELECT 1 FROM facturas nc WHERE nc.idFacturaReferencia = f.id_factura AND nc.tipoDocumento = '03')))";
+  const esFacturaDeclarableLocal = (f: Factura) =>
+    f.estado === "ACEPTADA" || (f.estado === "ANULADA" && localFacturas.some(nc => nc.idFacturaReferencia === f.id && nc.tipoDocumento === "03"));
+
   async function obtenerDatosD104(idCompania: number, periodo: string) {
     if (dbConnected && pool) {
       const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
@@ -4412,7 +4597,7 @@ async function startServer() {
       if (!company) return null;
 
       const [facturaRows] = await pool.query(
-        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '01' AND fechaEmision LIKE ? AND estado IN ('ACEPTADA','ANULADA')",
+        `SELECT f.* FROM facturas f WHERE f.idCompania = ? AND f.tipoDocumento = '01' AND f.fechaEmision LIKE ? AND ${SQL_FACTURA_DECLARABLE}`,
         [idCompania, `${periodo}%`]
       );
       const [ncRows] = await pool.query(
@@ -4445,7 +4630,7 @@ async function startServer() {
     } else {
       const company = localCompanies.find(c => c.id === idCompania);
       if (!company) return null;
-      const facturasMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(periodo) && (f.estado === "ACEPTADA" || f.estado === "ANULADA"));
+      const facturasMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(periodo) && esFacturaDeclarableLocal(f));
       const notasCreditoMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "03" && f.fechaEmision.startsWith(periodo) && f.estado === "ACEPTADA");
       const notasDebitoMes = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "02" && f.fechaEmision.startsWith(periodo) && f.estado === "ACEPTADA");
       const creditoFiscal = localCuentasPagar.filter(c => c.idCompania === idCompania && c.fechaRegistro.startsWith(periodo) && c.estado !== "ANULADA").reduce((s, c) => s + (c.ivaAcreditable || 0), 0);
@@ -4538,11 +4723,21 @@ async function startServer() {
       const company: Company | undefined = (companyRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
       if (!company) return null;
 
+      // Mismo criterio que el D-104: la venta cuenta en el año en que se facturó y su Nota de
+      // Crédito resta en el año en que se emitió. Antes el D-101 solo sumaba las facturas que
+      // seguían ACEPTADAS e ignoraba las Notas de Crédito, así que una NC parcial nunca rebajaba el
+      // ingreso, y anular en enero una factura de diciembre la sacaba del año ya cerrado.
       const [facturaRows] = await pool.query(
-        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '01' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
+        `SELECT f.* FROM facturas f WHERE f.idCompania = ? AND f.tipoDocumento = '01' AND f.fechaEmision LIKE ? AND ${SQL_FACTURA_DECLARABLE}`,
         [idCompania, `${anioStr}%`]
       );
       const facturasAnio = facturaRows as any[];
+
+      const [ncRows] = await pool.query(
+        "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '03' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
+        [idCompania, `${anioStr}%`]
+      );
+      const notasCreditoAnio = ncRows as any[];
 
       const [ndRows] = await pool.query(
         "SELECT * FROM facturas WHERE idCompania = ? AND tipoDocumento = '02' AND fechaEmision LIKE ? AND estado = 'ACEPTADA'",
@@ -4550,8 +4745,11 @@ async function startServer() {
       );
       const notasDebitoAnio = ndRows as any[];
 
+      // Lo deducible de una compra es su costo SIN IVA: el IVA acreditable ya se recupera como
+      // crédito fiscal en el D-104, y deducirlo también aquí lo contaba dos veces (corrección del
+      // POS, src/d104Compras.ts). Lo que el proveedor cobra sin IVA propio sí queda deducible.
       const [cxpRows] = await pool.query(
-        "SELECT COALESCE(SUM(montoTotal), 0) AS total FROM cuentas_pagar WHERE idCompania = ? AND fechaRegistro LIKE ? AND estado != 'ANULADA'",
+        "SELECT COALESCE(SUM(montoTotal - ivaAcreditable), 0) AS total FROM cuentas_pagar WHERE idCompania = ? AND fechaRegistro LIKE ? AND estado != 'ANULADA'",
         [idCompania, `${anioStr}%`]
       );
       const comprasCxPAnio = Number((cxpRows as any[])[0]?.total) || 0;
@@ -4565,19 +4763,20 @@ async function startServer() {
       const [cierreRows] = await pool.query("SELECT * FROM cierres_fiscales WHERE idCompania = ? AND tipo = 'D101' AND periodo = ?", [idCompania, anioStr]);
       const cierre = (cierreRows as any[])[0];
 
-      return { company, facturasAnio, notasDebitoAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
+      return { company, facturasAnio, notasCreditoAnio, notasDebitoAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
     } else {
       const company = localCompanies.find(c => c.id === idCompania);
       if (!company) return null;
-      const facturasAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(anioStr) && f.estado === "ACEPTADA");
+      const facturasAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "01" && f.fechaEmision.startsWith(anioStr) && esFacturaDeclarableLocal(f));
+      const notasCreditoAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "03" && f.fechaEmision.startsWith(anioStr) && f.estado === "ACEPTADA");
       const notasDebitoAnio = localFacturas.filter(f => f.idCompania === idCompania && f.tipoDocumento === "02" && f.fechaEmision.startsWith(anioStr) && f.estado === "ACEPTADA");
-      const comprasCxPAnio = localCuentasPagar.filter(c => c.idCompania === idCompania && c.fechaRegistro.startsWith(anioStr) && c.estado !== "ANULADA").reduce((s, c) => s + c.montoTotal, 0);
+      const comprasCxPAnio = localCuentasPagar.filter(c => c.idCompania === idCompania && c.fechaRegistro.startsWith(anioStr) && c.estado !== "ANULADA").reduce((s, c) => s + c.montoTotal - (c.ivaAcreditable || 0), 0);
       const gm = localGastosManuales.find(g => g.idCompania === idCompania && g.anio === anio);
       const gastosManuales: GastosManualesAnuales = gm
         ? { alquileres: gm.alquileres, servicios: gm.servicios, planilla: gm.planilla, otros: gm.otros }
         : { alquileres: 0, servicios: 0, planilla: 0, otros: 0 };
       const cierre = localCierresFiscales.find(c => c.idCompania === idCompania && c.tipo === "D101" && c.periodo === anioStr);
-      return { company, facturasAnio, notasDebitoAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
+      return { company, facturasAnio, notasCreditoAnio, notasDebitoAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
     }
   }
 
@@ -4588,7 +4787,7 @@ async function startServer() {
       if (!Number.isFinite(anio) || anio < 2000 || anio > 2100) return res.status(400).json({ error: "Año inválido." });
       const datos = await obtenerDatosD101(idCompania, anio);
       if (!datos) return res.status(404).json({ error: "Empresa no encontrada." });
-      res.json(construirReporteD101(anio, datos.company, datos.facturasAnio, datos.notasDebitoAnio, datos.comprasCxPAnio, datos.gastosManuales, datos.yaCerrado, datos.fechaCierre));
+      res.json(construirReporteD101(anio, datos.company, datos.facturasAnio, datos.notasCreditoAnio, datos.notasDebitoAnio, datos.comprasCxPAnio, datos.gastosManuales, datos.yaCerrado, datos.fechaCierre));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -4638,7 +4837,7 @@ async function startServer() {
       if (datos.yaCerrado) return res.status(409).json({ error: `Ya existe una liquidación de Renta para el año ${anio}.` });
 
       const creadoEn = new Date().toISOString();
-      const reporte = construirReporteD101(anio, datos.company, datos.facturasAnio, datos.notasDebitoAnio, datos.comprasCxPAnio, datos.gastosManuales, true, creadoEn);
+      const reporte = construirReporteD101(anio, datos.company, datos.facturasAnio, datos.notasCreditoAnio, datos.notasDebitoAnio, datos.comprasCxPAnio, datos.gastosManuales, true, creadoEn);
 
       if (dbConnected && pool) {
         try {

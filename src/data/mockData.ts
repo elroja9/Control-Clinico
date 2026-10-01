@@ -697,6 +697,10 @@ export interface HaciendaConfig {
   tieneCertificado: boolean;
   certificadoNombreArchivo: string | null;
   certificadoVenceEn: string | null; // YYYY-MM-DD
+  // Último consecutivo emitido de Factura / Nota de Crédito / Nota de Débito (el siguiente es +1).
+  ultimoConsecutivo: number;
+  ultimoConsecutivoNc: number;
+  ultimoConsecutivoNd: number;
 }
 
 export type HaciendaConfigInput = {
@@ -707,6 +711,10 @@ export type HaciendaConfigInput = {
   certificadoP12Base64?: string; // solo cuando el usuario sube un nuevo archivo .p12
   certificadoNombreArchivo?: string; // nombre del archivo nuevo, acompaña a certificadoP12Base64
   certificadoPin?: string; // solo cuando el usuario escribe un nuevo PIN
+  // Corrección de numeración (solo Administrador, solo puede subir): ver POST /api/hacienda-config.
+  ultimoConsecutivo?: number;
+  ultimoConsecutivoNc?: number;
+  ultimoConsecutivoNd?: number;
 };
 
 export interface CompanyPayment {
@@ -805,7 +813,7 @@ export interface Factura {
   condicionVenta: string; // '01' contado, '02' crédito, etc. — catálogo de Hacienda
   tipoDocumento: TipoDocumentoFactura;
   idFacturaReferencia: number | null; // solo en NC/ND: id de la Factura que referencian
-  motivoAnulacion: string | null; // solo en NC/ND: motivo de la anulación o el ajuste
+  motivoAnulacion: string | null; // en NC/ND: motivo del ajuste; en una Factura ANULADA: motivo de la anulación
   medioPago: string; // '01' Efectivo, '02' Tarjeta, '06' SINPE Móvil — catálogo de Hacienda
   montoRecibido: number | null; // solo informativo, para trazabilidad del vuelto entregado
 }
@@ -942,13 +950,14 @@ export interface ReporteD101 {
   tipoContribuyente: 'fisica' | 'juridica';
   ventasNetas: number;
   ivaAnual: number;
-  comprasCxP: number; // derivado automáticamente de Cuentas por Pagar del año
+  comprasCxP: number; // derivado de Cuentas por Pagar del año, sin el IVA acreditable (va al D-104)
   gastosManuales: GastosManualesAnuales;
   totalGastosDeducibles: number;
   utilidadNeta: number;
   impuestoRenta: number;
   tramos: string[];
   cantidadFacturas: number;
+  cantidadNotasCredito?: number; // opcional: los cierres guardados antes de este campo no lo traen
   cantidadNotasDebito: number;
   yaCerrado: boolean;
   fechaCierre: string | null;

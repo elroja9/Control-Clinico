@@ -772,6 +772,20 @@ export default function App() {
     return data;
   };
 
+  // Anular y las Notas mueven a la vez facturas, existencias y CxC, y el servidor decide cuáles
+  // (p. ej. una Nota que Hacienda no recibió no aplica nada). En vez de imitar esas reglas aquí, se
+  // recarga lo que pudo cambiar — también cuando la operación falla, porque la Nota fallida igual
+  // queda registrada.
+  const recargarFacturacion = async () => {
+    const [resFacturas, resCxc, resServicios] = await Promise.all([fetch('/api/facturas'), fetch('/api/cxc'), fetch('/api/servicios')]);
+    if (resFacturas.ok) setFacturas(await resFacturas.json());
+    if (resCxc.ok) setCxc(await resCxc.json());
+    if (resServicios.ok) {
+      const data = await resServicios.json();
+      if (data && data.length > 0) setServicios(data);
+    }
+  };
+
   const handleAnularFactura = async (idFactura: number, motivo: string): Promise<Factura> => {
     const res = await fetch(`/api/facturas/${idFactura}/anular`, {
       method: 'POST',
@@ -779,33 +793,32 @@ export default function App() {
       body: JSON.stringify({ motivo })
     });
     const data = await res.json();
+    await recargarFacturacion().catch(() => {});
     if (!res.ok) throw new Error(data.error || 'No se pudo anular la factura.');
-    setFacturas(prev => [...prev.map(f => f.id === idFactura ? { ...f, estado: 'ANULADA' as const } : f), data]);
-    setCxc(prev => prev.map(c => c.idFactura === idFactura && c.estado === 'PENDIENTE' ? { ...c, estado: 'ANULADA' as const } : c));
-    return data;
+    return data.factura;
   };
 
-  const handleEmitirNotaCredito = async (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }>; modoPrueba: boolean }): Promise<Factura> => {
+  const handleEmitirNotaCredito = async (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }> }): Promise<Factura> => {
     const res = await fetch(`/api/facturas/${idFactura}/nota-credito`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
     const data = await res.json();
+    await recargarFacturacion().catch(() => {});
     if (!res.ok) throw new Error(data.error || 'No se pudo emitir la Nota de Crédito.');
-    setFacturas(prev => [...prev, data]);
     return data;
   };
 
-  const handleEmitirNotaDebito = async (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }>; medioPago?: string; modoPrueba: boolean }): Promise<Factura> => {
+  const handleEmitirNotaDebito = async (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }>; medioPago?: string }): Promise<Factura> => {
     const res = await fetch(`/api/facturas/${idFactura}/nota-debito`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
     const data = await res.json();
+    await recargarFacturacion().catch(() => {});
     if (!res.ok) throw new Error(data.error || 'No se pudo emitir la Nota de Débito.');
-    setFacturas(prev => [...prev, data]);
     return data;
   };
 
@@ -816,7 +829,7 @@ export default function App() {
     let facturaActualizada: Factura | undefined;
     setFacturas(prev => prev.map(f => {
       if (f.id !== idFactura) return f;
-      facturaActualizada = { ...f, estado: data.estado };
+      facturaActualizada = { ...f, estado: data.estado, mensajeError: data.mensajeError ?? null };
       return facturaActualizada;
     }));
     if (!facturaActualizada) throw new Error('Factura no encontrada en el estado local.');
@@ -1970,6 +1983,7 @@ export default function App() {
                   patients={filteredPatientsByCompany}
                   company={activeCompany}
                   servicios={servicios}
+                  puedeAnular={currentUser.rol === 'Administrador'}
                   onAnularFactura={handleAnularFactura}
                   onEmitirNotaCredito={handleEmitirNotaCredito}
                   onEmitirNotaDebito={handleEmitirNotaDebito}
