@@ -37,7 +37,7 @@ const SERVICIOS_NUTRICION: ServicioDefecto[] = [
 /**
  * Servicios por defecto según el perfil de la empresa. Devuelve [] para 'Spa' (y cualquier
  * perfil que no sea Fisioterapia/Nutrición/Ambas) — a propósito, por instrucción explícita de
- * limitar esto a los colegios de fisioterapia y nutrición únicamente.
+ * limitar esto a los colegios de fisioterapia y nutrición únicamente (Spa y Legal → ninguno).
  */
 export function serviciosDefectoParaPerfil(perfilCompania: string): ServicioDefecto[] {
   if (perfilCompania === "Fisioterapia") return SERVICIOS_FISIOTERAPIA;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import PlantillaDietaManager from './PlantillaDietaManager';
-import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION, Servicio, PorcentajeDieta, PlantillaDieta } from '../data/mockData';
+import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION, Servicio, PorcentajeDieta, PlantillaDieta, PerfilCompania } from '../data/mockData';
 import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X } from 'lucide-react';
 import { notify, confirmar } from './ui/Feedback';
@@ -138,7 +138,7 @@ export default function CompanySettings({
   const [editColorSide, setEditColorSide] = useState(currentCompany.colorSidebar);
   const [editLogo, setEditLogo] = useState(currentCompany.logoUrl);
   const [logoError, setLogoError] = useState('');
-  const [editPerfil, setEditPerfil] = useState<'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa'>(currentCompany.perfilCompania || 'Ambas');
+  const [editPerfil, setEditPerfil] = useState<PerfilCompania>(currentCompany.perfilCompania || 'Ambas');
   const [editRequiereConfirmacion, setEditRequiereConfirmacion] = useState(currentCompany.requiereConfirmacionCitas || false);
   const [editRegimenSimplificado, setEditRegimenSimplificado] = useState(currentCompany.regimenSimplificado || false);
   const [editProvincia, setEditProvincia] = useState(currentCompany.provincia || '');
@@ -1283,7 +1283,7 @@ export default function CompanySettings({
             </div>
             {!isServicioFormOpen && (
               <div className="flex items-center gap-2">
-                {currentCompany.perfilCompania !== 'Spa' && (
+                {currentCompany.perfilCompania !== 'Spa' && currentCompany.perfilCompania !== 'Legal' && (
                   <button
                     onClick={handleCargarServiciosDefecto}
                     disabled={cargandoServiciosDefecto}
@@ -1771,13 +1771,14 @@ export default function CompanySettings({
               <label htmlFor="companyset-perfil-de-la-clinica" className="block text-slate-600 mb-1">Perfil de la Clínica / Empresa</label>
               <select id="companyset-perfil-de-la-clinica"
                 value={editPerfil}
-                onChange={(e) => setEditPerfil(e.target.value as 'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa')}
+                onChange={(e) => setEditPerfil(e.target.value as PerfilCompania)}
                 className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
               >
                 <option value="Ambas">Ambas (Fisioterapia y Nutrición)</option>
                 <option value="Fisioterapia">Sólo Fisioterapia</option>
                 <option value="Nutrición">Sólo Nutrición</option>
                 <option value="Spa">Spa / Bienestar (Sauna, Cold Plunge, Masajes...)</option>
+                <option value="Legal">Despacho de Abogados</option>
               </select>
             </div>
             <div>

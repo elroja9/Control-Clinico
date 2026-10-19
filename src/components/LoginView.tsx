@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Company, User, DEFAULT_HORARIO_ATENCION } from '../data/mockData';
+import { Company, User, DEFAULT_HORARIO_ATENCION, PerfilCompania } from '../data/mockData';
 import { Building, Key, User as UserIcon, Shield, Sparkles, AlertCircle, ArrowRight, ArrowLeft, Clipboard, CheckCircle2, Eye, EyeOff, Loader2 } from 'lucide-react';
 
 interface LoginViewProps {
@@ -31,7 +31,7 @@ export default function LoginView({
   const [compRazon, setCompRazon] = useState('');
   const [compIdent, setCompIdent] = useState('');
   const [compCorreo, setCompCorreo] = useState('');
-  const [compPerfil, setCompPerfil] = useState<'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa'>('Ambas');
+  const [compPerfil, setCompPerfil] = useState<PerfilCompania>('Ambas');
   const [compColor, setCompColor] = useState('#0f766e');
 
   // Register Admin states
@@ -118,7 +118,7 @@ export default function LoginView({
           : compPerfil === 'Spa'
           ? 'https://images.unsplash.com/photo-1544161515-4ab6ce6db874?w=120'
           : 'https://images.unsplash.com/photo-1505751172876-fa1923c5c528?w=120',
-        actividadEconomica: compPerfil === 'Fisioterapia' ? '869001 (Fisioterapia)' : compPerfil === 'Nutrición' ? '851201 (Nutrición)' : compPerfil === 'Spa' ? 'Por definir (Spa/Bienestar)' : '869001 (Fisioterapia y Nutrición)',
+        actividadEconomica: compPerfil === 'Fisioterapia' ? '869001 (Fisioterapia)' : compPerfil === 'Nutrición' ? '851201 (Nutrición)' : compPerfil === 'Spa' ? 'Por definir (Spa/Bienestar)' : compPerfil === 'Legal' ? 'Por definir (Servicios jurídicos)' : '869001 (Fisioterapia y Nutrición)',
         perfilCompania: compPerfil,
         estadoSaas: 'PENDIENTE',
         maxUsuarios: 5,
@@ -449,13 +449,14 @@ export default function LoginView({
                   <select
                     id="reg-perfil"
                     value={compPerfil}
-                    onChange={(e) => setCompPerfil(e.target.value as 'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa')}
+                    onChange={(e) => setCompPerfil(e.target.value as PerfilCompania)}
                     className={`${inputBase} px-3`}
                   >
                     <option value="Ambas">Fisioterapia y nutrición</option>
                     <option value="Fisioterapia">Solo fisioterapia</option>
                     <option value="Nutrición">Solo nutrición</option>
                     <option value="Spa">Spa / bienestar (sauna, cold plunge, masajes…)</option>
+                    <option value="Legal">Despacho de abogados</option>
                   </select>
                 </div>
                 <div>

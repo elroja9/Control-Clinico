@@ -26,6 +26,8 @@ export const DEFAULT_HORARIO_ATENCION: HorarioAtencion = {
   domingo: { abre: null, cierra: null }
 };
 
+export type PerfilCompania = 'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa' | 'Legal';
+
 export interface Company {
   id: number;
   nombreComercial: string;
@@ -38,7 +40,7 @@ export interface Company {
   colorSidebar: string;
   logoUrl: string;
   actividadEconomica: string;
-  perfilCompania: 'Fisioterapia' | 'Nutrición' | 'Ambas' | 'Spa';
+  perfilCompania: PerfilCompania;
   estadoSaas: 'PENDIENTE' | 'ACTIVA' | 'SUSPENDIDA';
   maxUsuarios: number;
   montoMensual: number | null;
@@ -145,11 +147,40 @@ export interface NotificationLog {
   idCompania: number;
   idCita?: number | null;
   idConsulta?: number | null;
-  tipo: 'CONFIRMACION' | 'MODIFICACION' | 'RECORDATORIO' | 'CANCELACION' | 'CONSULTA' | 'FACTURA';
+  tipo: 'CONFIRMACION' | 'MODIFICACION' | 'RECORDATORIO' | 'CANCELACION' | 'CONSULTA' | 'FACTURA' | 'DOCUMENTOS';
   destinatario: string;
   asunto: string;
   cuerpo: string;
   enviadoEn: string;
+}
+
+// Perfil Legal: el cliente es una fila de `pacientes` (idPaciente). Las fechas viajan como texto,
+// igual que en el resto de la BD: días 'YYYY-MM-DD', instantes ISO.
+export interface DocumentoCaso {
+  id: number;
+  idCaso: number;
+  nombre: string;
+  estado: 'PENDIENTE' | 'RECIBIDO';
+  folio: string; // dónde está dentro de la carpeta física del caso, ej. "f. 12-15"
+  fechaLimite: string | null;
+  fechaRecibido: string | null;
+  notas: string;
+}
+
+export interface CasoLegal {
+  id: number;
+  idCompania: number;
+  idPaciente: number;
+  numeroExpediente: string;
+  titulo: string;
+  materia: string;
+  estado: 'ABIERTO' | 'CERRADO';
+  ubicacionFisica: string; // archivador / gaveta / cajón donde está la carpeta física
+  recordatorioCadaDias: number; // 0 = sin recordatorio automático
+  ultimoRecordatorioEn: string | null;
+  notas: string;
+  creadoEn: string;
+  documentos: DocumentoCaso[];
 }
 
 export interface Consultation {
