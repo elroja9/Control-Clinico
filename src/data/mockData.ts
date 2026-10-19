@@ -122,6 +122,40 @@ export interface Cita {
   tiempoTrasladoMinutos?: number | null;
 }
 
+// Buzón de correo entrante donde los proveedores envían sus facturas electrónicas (CxP). La
+// contraseña nunca viaja al navegador: solo `tieneContrasena`.
+export interface CompaniaImapConfig {
+  imapHost: string;
+  imapPort: number;
+  imapSeguro: boolean; // true = TLS directo (993); false = STARTTLS (143)
+  imapUsuario: string;
+  imapCarpeta: string; // varias separadas por coma, ej. "INBOX, Facturas"
+  activo: boolean;
+  verificadaEn: string | null;
+  tieneContrasena: boolean;
+}
+
+export interface FacturaCorreo {
+  id: number;
+  tipoDocumento: '01' | '04';
+  clave: string;
+  numeroConsecutivo: string;
+  fechaEmision: string;
+  emisorNombre: string;
+  emisorIdentificacion: string;
+  montoTotal: number; // siempre en colones
+  moneda: string;
+  tipoCambio: number;
+  remitente: string;
+  asunto: string;
+  fechaCorreo: string;
+  nombreArchivo: string;
+  estado: 'PENDIENTE' | 'IMPORTADA' | 'DESCARTADA';
+  idCuentaPagar: number | null;
+  motivoDescarte: string | null;
+  procesadoEn: string | null;
+}
+
 export interface CompaniaSmtpConfig {
   id: number;
   idCompania: number;
