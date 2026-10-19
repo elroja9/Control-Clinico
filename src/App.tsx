@@ -1524,7 +1524,8 @@ export default function App() {
                 {/* Dashboard Widgets */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
                   {[
-                    { label: 'Citas de hoy', value: citasHoy, color: 'text-slate-900', tab: 'agenda' as TabId, show: true },
+                    // En Legal ya el saludo dice las citas de hoy; así caben los 4 indicadores del despacho en una fila
+                    { label: 'Citas de hoy', value: citasHoy, color: 'text-slate-900', tab: 'agenda' as TabId, show: !esLegal },
                     { label: esLegal ? 'Clientes' : 'Expedientes', value: filteredPatientsByCompany.length, color: 'text-slate-900', tab: 'patients' as TabId, show: true },
                     { label: 'Casos abiertos', value: casosDeLaCompania.filter(c => c.estado === 'ABIERTO').length, color: 'text-slate-900', tab: 'casos' as TabId, show: esLegal },
                     { label: 'Documentos pendientes', value: docsPendientes.length, color: 'text-amber-700', tab: 'casos' as TabId, show: esLegal },
