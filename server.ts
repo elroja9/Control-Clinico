@@ -44,9 +44,10 @@ import { sendMail } from "./server/mailer";
 import type { AdjuntoEmail } from "./server/mailer";
 import { generarPdfDesdeHtml } from "./server/pdf";
 import { renderFacturaPdf, renderConsultaPacientePdf } from "./server/pdfTemplates";
-import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderFacturaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail } from "./server/emailTemplates";
+import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderFacturaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail, renderRecordatorioDocumentosEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
-import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales, PorcentajeDieta, PlantillaDieta } from "./src/data/mockData";
+import { tocaRecordatorio } from "./server/recordatoriosCasos";
+import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales, PorcentajeDieta, PlantillaDieta, CasoLegal, DocumentoCaso, NotificationLog } from "./src/data/mockData";
 import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
@@ -96,6 +97,8 @@ interface LocalGastosManuales extends GastosManualesAnuales { idCompania: number
 let localGastosManuales: LocalGastosManuales[] = [];
 interface LocalCierreFiscal { id: number; idCompania: number; tipo: "D104" | "D101"; periodo: string; datos: ReporteD104 | ReporteD101; creadoPor: string | null; creadoEn: string; }
 let localCierresFiscales: LocalCierreFiscal[] = [];
+let localCasos: Omit<CasoLegal, "documentos">[] = [];
+let localDocumentosCaso: DocumentoCaso[] = [];
 
 interface LocalHaciendaConfig {
   idCompania: number;
@@ -2121,6 +2124,278 @@ async function startServer() {
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- Perfil Legal: casos y documentos (spec 2026-10-19-perfil-legal-casos-documentos) ---
+  // El cliente es una fila de `pacientes`; de cada documento solo se guarda dónde está físicamente.
+
+  const formatearCaso = (row: any, documentos: DocumentoCaso[]): CasoLegal => ({
+    ...row,
+    recordatorioCadaDias: Number(row.recordatorioCadaDias) || 0,
+    notas: row.notas || '',
+    documentos: documentos.filter(d => d.idCaso === row.id).map(d => ({ ...d, notas: d.notas || '' }))
+  });
+
+  async function fetchCasos(filtro: { idCompania?: number; idCaso?: number; soloAbiertos?: boolean }): Promise<CasoLegal[]> {
+    if (dbConnected && pool) {
+      const condiciones: string[] = [];
+      const params: any[] = [];
+      if (filtro.idCompania != null) { condiciones.push("idCompania = ?"); params.push(filtro.idCompania); }
+      if (filtro.idCaso != null) { condiciones.push("id = ?"); params.push(filtro.idCaso); }
+      if (filtro.soloAbiertos) condiciones.push("estado = 'ABIERTO'");
+      const where = condiciones.length ? ` WHERE ${condiciones.join(" AND ")}` : "";
+      const [rows] = await pool.query(`SELECT * FROM casos_legales${where} ORDER BY id DESC`, params);
+      const casos = rows as any[];
+      if (casos.length === 0) return [];
+      const [docRows] = await pool.query("SELECT * FROM documentos_caso WHERE idCaso IN (?) ORDER BY id", [casos.map(c => c.id)]);
+      return casos.map(c => formatearCaso(c, docRows as DocumentoCaso[]));
+    }
+    return localCasos
+      .filter(c => (filtro.idCompania == null || c.idCompania === filtro.idCompania)
+        && (filtro.idCaso == null || c.id === filtro.idCaso)
+        && (!filtro.soloAbiertos || c.estado === 'ABIERTO'))
+      .sort((a, b) => b.id - a.id)
+      .map(c => formatearCaso(c, localDocumentosCaso));
+  }
+
+  // Motivos por los que un recordatorio no puede salir (sin correo, sin SMTP...): el envío manual
+  // los devuelve como 400 y el proceso automático simplemente salta ese caso.
+  class RecordatorioNoEnviable extends Error {}
+
+  async function enviarRecordatorioCaso(caso: CasoLegal): Promise<NotificationLog> {
+    const pendientes = caso.documentos.filter(d => d.estado === 'PENDIENTE');
+    if (pendientes.length === 0) throw new RecordatorioNoEnviable("El caso no tiene documentos pendientes.");
+    const company = await fetchCompanyById(caso.idCompania);
+    if (!company) throw new RecordatorioNoEnviable("Empresa no encontrada.");
+    let cliente: Patient | undefined;
+    let smtpConfig: CompaniaSmtpConfig | undefined;
+    if (dbConnected && pool) {
+      const [pacienteRows] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ? AND idCompania = ?", [caso.idPaciente, caso.idCompania]);
+      cliente = (pacienteRows as any[]).map(row => normalizeRow(row, 'id_paciente'))[0];
+      const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [caso.idCompania]);
+      const smtpRow = (smtpRows as any[])[0];
+      smtpConfig = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
+    } else {
+      cliente = localPatients.find(p => p.id === caso.idPaciente && p.idCompania === caso.idCompania);
+      smtpConfig = localSmtpConfigs.find(s => s.idCompania === caso.idCompania);
+    }
+    if (!cliente) throw new RecordatorioNoEnviable("Cliente no encontrado.");
+    if (!cliente.correoElectronico) throw new RecordatorioNoEnviable("El cliente no tiene un correo electrónico registrado.");
+    if (!smtpConfig || !smtpConfig.activo) throw new RecordatorioNoEnviable("Las notificaciones SMTP no están activas para esta empresa.");
+
+    const rendered = renderRecordatorioDocumentosEmail({ company, patient: cliente, caso, pendientes });
+    await sendMail(smtpConfig, { to: cliente.correoElectronico, subject: rendered.subject, html: rendered.html, text: rendered.text });
+
+    const enviadoEn = new Date().toISOString();
+    const log: NotificationLog = {
+      id: 0,
+      idCompania: caso.idCompania,
+      idCita: null,
+      idConsulta: null,
+      tipo: "DOCUMENTOS",
+      destinatario: cliente.correoElectronico,
+      asunto: rendered.subject,
+      cuerpo: rendered.text,
+      enviadoEn
+    };
+    if (dbConnected && pool) {
+      await pool.query("UPDATE casos_legales SET ultimoRecordatorioEn = ? WHERE id = ?", [enviadoEn, caso.id]);
+      const [result] = await pool.query(
+        "INSERT INTO notification_logs (idCompania, idCita, idConsulta, tipo, destinatario, asunto, cuerpo, enviadoEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [log.idCompania, null, null, log.tipo, log.destinatario, log.asunto, log.cuerpo, log.enviadoEn]
+      );
+      log.id = (result as any).insertId;
+    } else {
+      localCasos = localCasos.map(c => c.id === caso.id ? { ...c, ultimoRecordatorioEn: enviadoEn } : c);
+      log.id = Math.max(0, ...localLogs.map((item: any) => item.id)) + 1;
+      localLogs.push(log as any);
+    }
+    return log;
+  }
+
+  let procesandoRecordatorios = false;
+  async function procesarRecordatoriosCasos() {
+    if (!dbConnected || !pool || procesandoRecordatorios) return;
+    procesandoRecordatorios = true;
+    try {
+      const ahora = new Date();
+      for (const caso of await fetchCasos({ soloAbiertos: true })) {
+        const pendientes = caso.documentos.filter(d => d.estado === 'PENDIENTE').length;
+        if (!tocaRecordatorio(caso, pendientes, ahora)) continue;
+        try {
+          await enviarRecordatorioCaso(caso);
+        } catch (err) {
+          // Un fallo no marca ultimoRecordatorioEn: se reintenta en la pasada siguiente.
+          if (!(err instanceof RecordatorioNoEnviable)) console.error(`[Recordatorios] Falló el caso ${caso.id}:`, err);
+        }
+      }
+    } catch (err) {
+      console.error("[Recordatorios] No se pudo procesar la pasada:", err);
+    } finally {
+      procesandoRecordatorios = false;
+    }
+  }
+
+  app.get("/api/casos", requireAuth, async (req, res) => {
+    try {
+      res.json(await fetchCasos({ idCompania: sessionOf(req).idCompania }));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/casos", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      const b = req.body || {};
+      const titulo = String(b.titulo || '').trim().slice(0, 150);
+      const idPaciente = parseInt(b.idPaciente);
+      const estado: CasoLegal['estado'] = b.estado === 'CERRADO' ? 'CERRADO' : 'ABIERTO';
+      const recordatorioCadaDias = Number(b.recordatorioCadaDias);
+      if (!titulo) return res.status(400).json({ error: "El título del caso es obligatorio." });
+      if (!Number.isInteger(recordatorioCadaDias) || recordatorioCadaDias < 0 || recordatorioCadaDias > 365) {
+        return res.status(400).json({ error: "El recordatorio debe ser un número de días entre 0 y 365 (0 = sin recordatorio)." });
+      }
+      const clienteValido = dbConnected && pool
+        ? ((await pool.query("SELECT id_paciente FROM pacientes WHERE id_paciente = ? AND idCompania = ? AND activo = 1", [idPaciente, idCompania]))[0] as any[]).length > 0
+        : localPatients.some(p => p.id === idPaciente && p.idCompania === idCompania && p.activo !== false);
+      if (!clienteValido) return res.status(400).json({ error: "Seleccione un cliente válido de la empresa." });
+
+      const datos = {
+        idPaciente,
+        numeroExpediente: String(b.numeroExpediente || '').trim().slice(0, 60),
+        titulo,
+        materia: String(b.materia || '').trim().slice(0, 100),
+        estado,
+        ubicacionFisica: String(b.ubicacionFisica || '').trim().slice(0, 150),
+        recordatorioCadaDias,
+        notas: String(b.notas || '')
+      };
+      const id = parseInt(b.id);
+      const existente = Number.isInteger(id) ? (await fetchCasos({ idCompania, idCaso: id }))[0] : undefined;
+      let idCaso: number;
+      if (dbConnected && pool) {
+        if (existente) {
+          await pool.query(
+            "UPDATE casos_legales SET idPaciente = ?, numeroExpediente = ?, titulo = ?, materia = ?, estado = ?, ubicacionFisica = ?, recordatorioCadaDias = ?, notas = ? WHERE id = ? AND idCompania = ?",
+            [datos.idPaciente, datos.numeroExpediente, datos.titulo, datos.materia, datos.estado, datos.ubicacionFisica, datos.recordatorioCadaDias, datos.notas, existente.id, idCompania]
+          );
+          idCaso = existente.id;
+        } else {
+          const [result] = await pool.query(
+            "INSERT INTO casos_legales (idCompania, idPaciente, numeroExpediente, titulo, materia, estado, ubicacionFisica, recordatorioCadaDias, notas, creadoEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [idCompania, datos.idPaciente, datos.numeroExpediente, datos.titulo, datos.materia, datos.estado, datos.ubicacionFisica, datos.recordatorioCadaDias, datos.notas, new Date().toISOString()]
+          );
+          idCaso = (result as any).insertId;
+        }
+      } else if (existente) {
+        localCasos = localCasos.map(c => c.id === existente.id ? { ...c, ...datos } : c);
+        idCaso = existente.id;
+      } else {
+        idCaso = Math.max(0, ...localCasos.map(c => c.id)) + 1;
+        localCasos.push({ id: idCaso, idCompania, ...datos, ultimoRecordatorioEn: null, creadoEn: new Date().toISOString() });
+      }
+      res.json((await fetchCasos({ idCompania, idCaso }))[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/casos/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const idCompania = sessionOf(req).idCompania;
+      if (dbConnected && pool) {
+        // documentos_caso se borran en cascada (FK)
+        await pool.query("DELETE FROM casos_legales WHERE id = ? AND idCompania = ?", [id, idCompania]);
+      } else if (localCasos.some(c => c.id === id && c.idCompania === idCompania)) {
+        localCasos = localCasos.filter(c => c.id !== id);
+        localDocumentosCaso = localDocumentosCaso.filter(d => d.idCaso !== id);
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/casos/:id/documentos", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      const idCaso = parseInt(req.params.id);
+      const caso = (await fetchCasos({ idCompania, idCaso }))[0];
+      if (!caso) return res.status(404).json({ error: "Caso no encontrado." });
+      const b = req.body || {};
+      const nombre = String(b.nombre || '').trim().slice(0, 150);
+      if (!nombre) return res.status(400).json({ error: "El nombre del documento es obligatorio." });
+      const esFecha = (v: any) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+      if (b.fechaLimite && !esFecha(b.fechaLimite)) return res.status(400).json({ error: "La fecha límite no es válida." });
+      const estado: DocumentoCaso['estado'] = b.estado === 'RECIBIDO' ? 'RECIBIDO' : 'PENDIENTE';
+      const datos = {
+        nombre,
+        estado,
+        folio: String(b.folio || '').trim().slice(0, 60),
+        fechaLimite: esFecha(b.fechaLimite) ? b.fechaLimite as string : null,
+        fechaRecibido: estado === 'RECIBIDO' ? (esFecha(b.fechaRecibido) ? b.fechaRecibido as string : fechaCR()) : null,
+        notas: String(b.notas || '')
+      };
+      const existente = caso.documentos.find(d => d.id === parseInt(b.id));
+      if (dbConnected && pool) {
+        if (existente) {
+          await pool.query(
+            "UPDATE documentos_caso SET nombre = ?, estado = ?, folio = ?, fechaLimite = ?, fechaRecibido = ?, notas = ? WHERE id = ? AND idCaso = ?",
+            [datos.nombre, datos.estado, datos.folio, datos.fechaLimite, datos.fechaRecibido, datos.notas, existente.id, idCaso]
+          );
+        } else {
+          await pool.query(
+            "INSERT INTO documentos_caso (idCaso, nombre, estado, folio, fechaLimite, fechaRecibido, notas) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [idCaso, datos.nombre, datos.estado, datos.folio, datos.fechaLimite, datos.fechaRecibido, datos.notas]
+          );
+        }
+      } else if (existente) {
+        localDocumentosCaso = localDocumentosCaso.map(d => d.id === existente.id ? { ...d, ...datos } : d);
+      } else {
+        localDocumentosCaso.push({ id: Math.max(0, ...localDocumentosCaso.map(d => d.id)) + 1, idCaso, ...datos });
+      }
+      res.json((await fetchCasos({ idCompania, idCaso }))[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/documentos-caso/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const idCompania = sessionOf(req).idCompania;
+      if (dbConnected && pool) {
+        await pool.query(
+          "DELETE d FROM documentos_caso d JOIN casos_legales c ON c.id = d.idCaso WHERE d.id = ? AND c.idCompania = ?",
+          [id, idCompania]
+        );
+      } else {
+        const doc = localDocumentosCaso.find(d => d.id === id);
+        if (doc && localCasos.some(c => c.id === doc.idCaso && c.idCompania === idCompania)) {
+          localDocumentosCaso = localDocumentosCaso.filter(d => d.id !== id);
+        }
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/casos/:id/recordatorio", requireAuth, async (req, res) => {
+    try {
+      const idCompania = sessionOf(req).idCompania;
+      const idCaso = parseInt(req.params.id);
+      const caso = (await fetchCasos({ idCompania, idCaso }))[0];
+      if (!caso) return res.status(404).json({ error: "Caso no encontrado." });
+      const log = await enviarRecordatorioCaso(caso);
+      res.json({ log, caso: (await fetchCasos({ idCompania, idCaso }))[0] });
+    } catch (err: any) {
+      if (err instanceof RecordatorioNoEnviable) return res.status(400).json({ error: err.message });
+      console.error("Error enviando recordatorio de documentos:", err);
+      res.status(500).json({ error: err.message || "No se pudo enviar el recordatorio." });
     }
   });
 
@@ -5989,6 +6264,13 @@ async function startServer() {
   https.createServer({ cert, key }, app).listen(PORT, "0.0.0.0", () => {
     console.log(`Servidor HTTPS corriendo en el puerto ${PORT}`);
   });
+
+  // Recordatorios de documentos pendientes (perfil Legal). Solo en producción: el .env de
+  // desarrollo apunta a la misma BD, y un `npm run dev` junto a pm2 enviaría cada correo doble.
+  if (process.env.NODE_ENV === "production") {
+    setTimeout(procesarRecordatoriosCasos, 60_000);
+    setInterval(procesarRecordatoriosCasos, 60 * 60_000);
+  }
 }
 
 startServer().catch((error) => {
