@@ -1,5 +1,6 @@
-import type { Company, Patient, Cita, Consultation, User, Factura } from "../src/data/mockData";
+import type { Company, Patient, Cita, Consultation, User, Factura, CasoLegal, DocumentoCaso } from "../src/data/mockData";
 import { textoSobre, colorMarca } from "./branding";
+import { terminoPersona } from "../src/utils/terminoPersona";
 
 export interface RenderedEmail {
   subject: string;
@@ -155,7 +156,7 @@ export function renderCitaEmailProfesional(params: {
   const subject = `${title} - ${company.nombreComercial}`;
 
   const detailsHtml =
-    infoCard("Paciente", escapeHtml(patient.nombreCompleto)) +
+    infoCard(terminoPersona(company.perfilCompania).singular, escapeHtml(patient.nombreCompleto)) +
     infoCard("Teléfono", escapeHtml(patient.telefono)) +
     infoCard("Correo", escapeHtml(patient.correoElectronico)) +
     infoCard("Fecha", escapeHtml(fecha)) +
@@ -172,7 +173,7 @@ export function renderCitaEmailProfesional(params: {
     <p style="margin-top:16px;font-weight:bold;">${escapeHtml(company.nombreComercial)}</p>
   `;
 
-  const text = `${title}\n\nPaciente: ${patient.nombreCompleto}\nTeléfono: ${patient.telefono}\nCorreo: ${patient.correoElectronico}\nFecha: ${fecha}\nHora: ${hora || ""}\nDuración: ${cita.duracionMinutos} minutos\nTipo de Visita: ${cita.tipoVisita}\n${cita.tipoVisita === "DOMICILIO" && cita.direccionDomicilio ? `Dirección: ${cita.direccionDomicilio}\n` : ""}${cita.tipoVisita === "DOMICILIO" && cita.tiempoTrasladoMinutos != null ? `Tiempo de Traslado: ${cita.tiempoTrasladoMinutos} min\n` : ""}\n${company.nombreComercial}`;
+  const text = `${title}\n\n${terminoPersona(company.perfilCompania).singular}: ${patient.nombreCompleto}\nTeléfono: ${patient.telefono}\nCorreo: ${patient.correoElectronico}\nFecha: ${fecha}\nHora: ${hora || ""}\nDuración: ${cita.duracionMinutos} minutos\nTipo de Visita: ${cita.tipoVisita}\n${cita.tipoVisita === "DOMICILIO" && cita.direccionDomicilio ? `Dirección: ${cita.direccionDomicilio}\n` : ""}${cita.tipoVisita === "DOMICILIO" && cita.tiempoTrasladoMinutos != null ? `Tiempo de Traslado: ${cita.tiempoTrasladoMinutos} min\n` : ""}\n${company.nombreComercial}`;
 
   return { subject, html: emailShell(company, title, bodyHtml), text };
 }
@@ -342,6 +343,37 @@ export function renderFacturaEmail(params: {
   `;
 
   const text = `${title} ${factura.consecutivo}\n\nEstimado(a) ${patient.nombreCompleto},\nClave: ${factura.clave}\nFecha de Emisión: ${new Date(factura.fechaEmision).toLocaleString("es-CR")}\nEstado: ${factura.estado}\nTotal: ${colones(factura.total)}\n\n${company.nombreComercial}`;
+
+  return { subject, html: emailShell(company, title, bodyHtml), text };
+}
+
+/** Perfil Legal: lista al cliente los documentos que aún debe entregar para su caso. */
+export function renderRecordatorioDocumentosEmail(params: {
+  company: Company;
+  patient: Patient;
+  caso: CasoLegal;
+  pendientes: DocumentoCaso[];
+}): RenderedEmail {
+  const { company, patient, caso, pendientes } = params;
+  const title = "Documentos pendientes";
+  const subject = `${title}: ${caso.titulo} - ${company.nombreComercial}`;
+  const limite = (d: DocumentoCaso) => (d.fechaLimite ? ` — entregar antes del ${d.fechaLimite}` : "");
+
+  const listaHtml = pendientes
+    .map(d => `<li style="margin-bottom:4px;"><strong>${escapeHtml(d.nombre)}</strong>${escapeHtml(limite(d))}</li>`)
+    .join("");
+
+  const bodyHtml = `
+    <p>Estimado(a) ${escapeHtml(patient.nombreCompleto)},</p>
+    <p>Para continuar con su caso necesitamos que nos haga llegar los siguientes documentos:</p>
+    ${infoCard("Caso", escapeHtml(caso.titulo))}
+    ${caso.numeroExpediente ? infoCard("Expediente", escapeHtml(caso.numeroExpediente)) : ""}
+    <ul style="margin:12px 0;padding-left:20px;">${listaHtml}</ul>
+    <p>Si ya los entregó, puede ignorar este mensaje. Ante cualquier duda, responda a este correo.</p>
+    <p style="margin-top:16px;font-weight:bold;">${escapeHtml(company.nombreComercial)}</p>
+  `;
+
+  const text = `${title}\n\nEstimado(a) ${patient.nombreCompleto},\nPara continuar con su caso "${caso.titulo}"${caso.numeroExpediente ? ` (expediente ${caso.numeroExpediente})` : ""} necesitamos los siguientes documentos:\n${pendientes.map(d => `- ${d.nombre}${limite(d)}`).join("\n")}\n\nSi ya los entregó, puede ignorar este mensaje.\n\n${company.nombreComercial}`;
 
   return { subject, html: emailShell(company, title, bodyHtml), text };
 }
