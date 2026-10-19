@@ -137,3 +137,11 @@ Verdadero si: `estado === 'ABIERTO'`, `recordatorioCadaDias > 0`, `pendientes > 
 
 1. Aplicar `docs/sql/2026-10-19-perfil-legal.sql` a la BD de producción.
 2. `npm run pm2:restart`.
+
+## Ajustes al planificar (2026-10-19)
+
+- **Fechas como VARCHAR**, no DATE/DATETIME: toda la BD guarda fechas como texto (`citas.fechaHora`, `cuentas_cobrar.fechaVencimiento`...). `fechaLimite`/`fechaRecibido` = `YYYY-MM-DD`; `ultimoRecordatorioEn`/`creadoEn` = ISO. El SQL definitivo está en `docs/sql/2026-10-19-perfil-legal.sql`.
+- **`tocaRecordatorio(caso, pendientes, ahora)`** sin `tieneCorreo`: el correo y el SMTP los verifica `enviarRecordatorioCaso`, que lanza `RecordatorioNoEnviable` y el proceso lo omite. Los N días se cuentan en días calendario de Costa Rica.
+- **El proceso automático solo corre con `NODE_ENV=production`**: el `.env` apunta a la BD de producción, así que un `npm run dev` junto a pm2 enviaría correos duplicados.
+- **También se ocultan en perfil Legal**: "Reportería" (cuenta consultas clínicas), la lista "Últimos pacientes atendidos" del Resumen y el botón "Iniciar consulta" de la agenda.
+- `ReportView` y el PDF de consulta no se adaptan: son exclusivos de consultas clínicas, que el perfil Legal no usa.
