@@ -47,7 +47,9 @@ import { renderFacturaPdf, renderConsultaPacientePdf } from "./server/pdfTemplat
 import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderFacturaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail, renderRecordatorioDocumentosEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
 import { tocaRecordatorio } from "./server/recordatoriosCasos";
-import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales, PorcentajeDieta, PlantillaDieta, CasoLegal, DocumentoCaso, NotificationLog } from "./src/data/mockData";
+import { recolectarComprobantes, verificarConexionImap, listarCarpetas, carpetasDe } from "./server/correoProveedores";
+import type { ConfigImap, AvanceCarpeta } from "./server/correoProveedores";
+import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales, PorcentajeDieta, PlantillaDieta, CasoLegal, DocumentoCaso, NotificationLog, CompaniaImapConfig } from "./src/data/mockData";
 import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
@@ -5508,6 +5510,321 @@ async function startServer() {
     }
   });
 
+  // --- CxP: facturas de proveedor recibidas por correo (spec 2026-10-19-cxp-lectura-correo) ---
+  // Portado del ERP-Elrotech. La bandeja no crea cuentas por pagar: Importar reutiliza
+  // POST /api/cxp/importar-xml con el XML guardado y luego marca el comprobante como IMPORTADA.
+  // Sin modo en memoria: la bandeja y el buzón viven solo en la BD.
+
+  const sinBdCorreo = (res: express.Response) =>
+    res.status(503).json({ error: "La lectura de correo necesita la base de datos conectada." });
+
+  async function cargarImapConfig(idCompania: number): Promise<any | undefined> {
+    const [rows] = await pool!.query("SELECT * FROM compania_imap_config WHERE idCompania = ?", [idCompania]);
+    return (rows as any[])[0];
+  }
+
+  const configImapDe = (row: any): ConfigImap => ({
+    imapHost: row.imapHost || "",
+    imapPort: Number(row.imapPort) || 0,
+    imapSeguro: !!row.imapSeguro,
+    imapUsuario: row.imapUsuario || "",
+    imapPassword: row.imapPasswordCifrado ? decryptSecret(row.imapPasswordCifrado) : "",
+    imapCarpeta: row.imapCarpeta || "INBOX"
+  });
+
+  // Lo único que viaja al navegador: nunca la contraseña, solo si existe.
+  const imapConfigPublica = (row: any): CompaniaImapConfig => ({
+    imapHost: row?.imapHost || "",
+    imapPort: Number(row?.imapPort) || 993,
+    imapSeguro: row ? !!row.imapSeguro : true,
+    imapUsuario: row?.imapUsuario || "",
+    imapCarpeta: row?.imapCarpeta || "INBOX",
+    activo: !!row?.activo,
+    verificadaEn: row?.verificadaEn || null,
+    tieneContrasena: !!row?.imapPasswordCifrado
+  });
+
+  app.get("/api/imap-config", requireAuth, async (req, res) => {
+    try {
+      if (!dbConnected || !pool) return sinBdCorreo(res);
+      res.json(imapConfigPublica(await cargarImapConfig(sessionOf(req).idCompania)));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/imap-config", requireAuth, async (req, res) => {
+    try {
+      if (!dbConnected || !pool) return sinBdCorreo(res);
+      const idCompania = sessionOf(req).idCompania;
+      const b = req.body || {};
+      const imapHost = String(b.imapHost || "").trim().slice(0, 255);
+      const imapUsuario = String(b.imapUsuario || "").trim().slice(0, 255);
+      const imapSeguro = b.imapSeguro !== false;
+      const imapPort = parseInt(b.imapPort) || (imapSeguro ? 993 : 143);
+      if (imapPort < 1 || imapPort > 65535) return res.status(400).json({ error: "El puerto IMAP no es válido." });
+      const imapCarpeta = carpetasDe(b.imapCarpeta).join(", ").slice(0, 500);
+      const activo = !!b.activo;
+
+      const previo = await cargarImapConfig(idCompania);
+      const passwordNueva = String(b.imapPassword || "").trim();
+      const imapPasswordCifrado = passwordNueva ? encryptSecret(passwordNueva) : (previo?.imapPasswordCifrado || null);
+      if (activo && (!imapHost || !imapUsuario || !imapPasswordCifrado)) {
+        return res.status(400).json({ error: "Para activar la lectura indique servidor, usuario y contraseña del buzón." });
+      }
+      // Otro buzón (host o usuario distinto): su avance no sirve y se relee la ventana completa.
+      // Cambiar cualquier credencial obliga a volver a probar la conexión.
+      const otroBuzon = !previo || previo.imapHost !== imapHost || previo.imapUsuario !== imapUsuario;
+      const credencialesCambiaron = otroBuzon || !!passwordNueva || Number(previo.imapPort) !== imapPort || !!previo.imapSeguro !== imapSeguro;
+
+      if (previo) {
+        await pool.query(
+          "UPDATE compania_imap_config SET imapHost = ?, imapPort = ?, imapSeguro = ?, imapUsuario = ?, imapPasswordCifrado = ?, imapCarpeta = ?, activo = ?, avance = IF(?, NULL, avance), verificadaEn = IF(?, NULL, verificadaEn) WHERE idCompania = ?",
+          [imapHost, imapPort, imapSeguro ? 1 : 0, imapUsuario, imapPasswordCifrado, imapCarpeta, activo ? 1 : 0, otroBuzon ? 1 : 0, credencialesCambiaron ? 1 : 0, idCompania]
+        );
+      } else {
+        await pool.query(
+          "INSERT INTO compania_imap_config (idCompania, imapHost, imapPort, imapSeguro, imapUsuario, imapPasswordCifrado, imapCarpeta, activo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          [idCompania, imapHost, imapPort, imapSeguro ? 1 : 0, imapUsuario, imapPasswordCifrado, imapCarpeta, activo ? 1 : 0]
+        );
+      }
+      res.json(imapConfigPublica(await cargarImapConfig(idCompania)));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/imap-config/probar", requireAuth, async (req, res) => {
+    try {
+      if (!dbConnected || !pool) return sinBdCorreo(res);
+      const idCompania = sessionOf(req).idCompania;
+      const row = await cargarImapConfig(idCompania);
+      if (!row?.imapHost || !row?.imapUsuario || !row?.imapPasswordCifrado) {
+        return res.status(400).json({ error: "Guarde primero el servidor, usuario y contraseña del buzón." });
+      }
+      try {
+        await verificarConexionImap(configImapDe(row));
+      } catch (err: any) {
+        await pool.query("UPDATE compania_imap_config SET verificadaEn = NULL WHERE idCompania = ?", [idCompania]);
+        return res.status(400).json({ error: err.message || "No se pudo conectar al buzón." });
+      }
+      const verificadaEn = new Date().toISOString();
+      await pool.query("UPDATE compania_imap_config SET verificadaEn = ? WHERE idCompania = ?", [verificadaEn, idCompania]);
+      res.json({ verificadaEn });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/imap-config/carpetas", requireAuth, async (req, res) => {
+    try {
+      if (!dbConnected || !pool) return sinBdCorreo(res);
+      const row = await cargarImapConfig(sessionOf(req).idCompania);
+      if (!row?.imapHost || !row?.imapUsuario || !row?.imapPasswordCifrado) {
+        return res.status(400).json({ error: "Guarde primero el servidor, usuario y contraseña del buzón." });
+      }
+      try {
+        res.json(await listarCarpetas(configImapDe(row)));
+      } catch (err: any) {
+        res.status(502).json({ error: err.message || "No se pudieron listar las carpetas del buzón." });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Sin la columna `xml` (LONGTEXT): solo metadatos. El XML se pide uno por uno al importar.
+  app.get("/api/facturas-correo", requireAuth, async (req, res) => {
+    try {
+      if (!dbConnected || !pool) return sinBdCorreo(res);
+      const params: any[] = [sessionOf(req).idCompania];
+      const estado = String(req.query.estado || "");
+      let filtro = "";
+      if (["PENDIENTE", "IMPORTADA", "DESCARTADA"].includes(estado)) {
+        filtro = " AND estado = ?";
+        params.push(estado);
+      }
+      const [rows] = await pool.query(
+        `SELECT id, tipoDocumento, clave, numeroConsecutivo, fechaEmision, emisorNombre, emisorIdentificacion, montoTotal,
+                moneda, tipoCambio, remitente, asunto, fechaCorreo, nombreArchivo, estado, idCuentaPagar, motivoDescarte, procesadoEn
+           FROM facturas_proveedor_correo WHERE idCompania = ?${filtro}
+          ORDER BY fechaCorreo DESC, id DESC LIMIT 300`,
+        params
+      );
+      res.json((rows as any[]).map(r => ({ ...r, montoTotal: Number(r.montoTotal), tipoCambio: Number(r.tipoCambio) })));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/facturas-correo/:id/xml", requireAuth, async (req, res) => {
+    try {
+      if (!dbConnected || !pool) return sinBdCorreo(res);
+      const [rows] = await pool.query("SELECT xml FROM facturas_proveedor_correo WHERE id = ? AND idCompania = ?", [parseInt(req.params.id), sessionOf(req).idCompania]);
+      const fila = (rows as any[])[0];
+      if (!fila) return res.status(404).json({ error: "El comprobante no existe en la bandeja." });
+      res.json({ xml: fila.xml });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Cierra el ciclo de un comprobante: IMPORTADA (con la CxP que creó el importador) o DESCARTADA.
+  app.post("/api/facturas-correo/:id/estado", requireAuth, async (req, res) => {
+    try {
+      if (!dbConnected || !pool) return sinBdCorreo(res);
+      const idCompania = sessionOf(req).idCompania;
+      const { estado, idCuentaPagar, motivoDescarte } = req.body || {};
+      if (estado !== "IMPORTADA" && estado !== "DESCARTADA") {
+        return res.status(400).json({ error: "Estado inválido: solo IMPORTADA o DESCARTADA." });
+      }
+      let idCxp: number | null = null;
+      if (estado === "IMPORTADA") {
+        idCxp = parseInt(idCuentaPagar);
+        const [cxpRows] = await pool.query("SELECT id FROM cuentas_pagar WHERE id = ? AND idCompania = ?", [idCxp, idCompania]);
+        if ((cxpRows as any[]).length === 0) return res.status(400).json({ error: "Falta la cuenta por pagar asociada al comprobante importado." });
+      }
+      // Solo avanza desde PENDIENTE: si dos pestañas lo procesan a la vez, la segunda se entera acá.
+      const [result] = await pool.query(
+        "UPDATE facturas_proveedor_correo SET estado = ?, idCuentaPagar = ?, motivoDescarte = ?, procesadoEn = ? WHERE id = ? AND idCompania = ? AND estado = 'PENDIENTE'",
+        [estado, idCxp, estado === "DESCARTADA" ? (String(motivoDescarte || "").slice(0, 500) || null) : null, new Date().toISOString(), parseInt(req.params.id), idCompania]
+      );
+      if ((result as any).affectedRows !== 1) {
+        return res.status(409).json({ error: "Ese comprobante ya había sido procesado." });
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Empresas cuyo buzón se está revisando ahora: el proceso automático y el botón "Revisar correo
+  // ahora" no deben abrir dos sesiones IMAP simultáneas (varios proveedores de correo lo rechazan).
+  const buzonesEnRevision = new Set<number>();
+
+  // ¿La compra ya está registrada (importada a mano o tecleada)? Mismo criterio que el importador
+  // usa para rechazar duplicados: consecutivo del proveedor + su cédula, sin contar anuladas.
+  async function buscarCxPExistente(idCompania: number, numeroConsecutivo: string, emisorIdentificacion: string): Promise<number | null> {
+    if (!numeroConsecutivo) return null;
+    const [rows] = await pool!.query(
+      `SELECT c.id FROM cuentas_pagar c JOIN proveedores p ON p.id = c.idProveedor
+        WHERE c.idCompania = ? AND c.numeroFacturaProveedor = ? AND c.estado != 'ANULADA'
+          AND REPLACE(REPLACE(p.identificacion, '-', ''), ' ', '') = ?
+        LIMIT 1`,
+      [idCompania, numeroConsecutivo.slice(0, 100), emisorIdentificacion]
+    );
+    return (rows as any[])[0]?.id ?? null;
+  }
+
+  async function revisarBuzonEmpresa(idCompania: number, row: any) {
+    if (buzonesEnRevision.has(idCompania)) throw new Error("Ya hay una revisión del buzón en curso para esta empresa.");
+    buzonesEnRevision.add(idCompania);
+    try {
+      const empresa = await fetchCompanyById(idCompania);
+      let avance: Record<string, AvanceCarpeta> = {};
+      try { avance = row.avance ? JSON.parse(row.avance) : {}; } catch { /* ilegible: se relee la ventana, que es recuperable */ }
+
+      const resultado = await recolectarComprobantes(configImapDe(row), { avance, identificacionEmpresa: empresa?.identificacion || "" });
+
+      let nuevos = 0;
+      let yaRegistrados = 0;
+      let falloAlgunGuardado = false;
+      for (const c of resultado.comprobantes) {
+        try {
+          // Una compra que ya está en CxP entra YA importada: queda el rastro del correo pero nadie
+          // la ve como pendiente ni puede registrarla dos veces.
+          const cxpExistente = await buscarCxPExistente(idCompania, c.meta.numeroConsecutivo, c.meta.emisorIdentificacion);
+          const ahora = new Date().toISOString();
+          const [insert] = await pool!.query(
+            `INSERT IGNORE INTO facturas_proveedor_correo
+               (idCompania, tipoDocumento, clave, numeroConsecutivo, fechaEmision, emisorNombre, emisorIdentificacion, montoTotal,
+                moneda, tipoCambio, remitente, asunto, fechaCorreo, nombreArchivo, xml, estado, idCuentaPagar, procesadoEn, creadoEn)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              idCompania, c.meta.tipoDocumento, c.meta.clave, c.meta.numeroConsecutivo.slice(0, 100), c.meta.fechaEmision.slice(0, 50),
+              (c.meta.emisorNombre || "Proveedor sin nombre").slice(0, 150), c.meta.emisorIdentificacion.slice(0, 30), c.meta.total,
+              c.meta.moneda.slice(0, 3), c.meta.tipoCambio, c.remitente.slice(0, 255), c.asunto.slice(0, 500), c.fechaCorreo.toISOString(),
+              c.nombreArchivo.slice(0, 255), c.xml, cxpExistente ? "IMPORTADA" : "PENDIENTE", cxpExistente, cxpExistente ? ahora : null, ahora
+            ]
+          );
+          // 0 = ya estaba en la bandeja (correo reenviado o buzón releído).
+          if ((insert as any).affectedRows === 1) {
+            if (cxpExistente) yaRegistrados++; else nuevos++;
+          }
+        } catch (err: any) {
+          falloAlgunGuardado = true;
+          console.error(`[CORREO PROVEEDORES] No se pudo guardar el comprobante ${c.meta.clave} de la empresa ${idCompania}:`, err.message || err);
+        }
+      }
+
+      // El avance solo se guarda si TODO el lote quedó guardado: releer un correo es gratis,
+      // saltárselo lo pierde para siempre.
+      if (!falloAlgunGuardado && Object.keys(resultado.avance).length > 0) {
+        await pool!.query("UPDATE compania_imap_config SET avance = ? WHERE idCompania = ?", [JSON.stringify(resultado.avance), idCompania]);
+      }
+      for (const f of resultado.carpetasConError) {
+        console.error(`[CORREO PROVEEDORES] Empresa ${idCompania}: no se pudo revisar la carpeta "${f.carpeta}": ${f.error}`);
+      }
+      return {
+        nuevos,
+        yaRegistrados,
+        revisados: resultado.mensajesRevisados,
+        descartados: resultado.descartados,
+        buzonAlDia: resultado.buzonAlDia,
+        carpetasConError: resultado.carpetasConError
+      };
+    } finally {
+      buzonesEnRevision.delete(idCompania);
+    }
+  }
+
+  app.post("/api/facturas-correo/revisar-ahora", requireAuth, async (req, res) => {
+    try {
+      if (!dbConnected || !pool) return sinBdCorreo(res);
+      const idCompania = sessionOf(req).idCompania;
+      const row = await cargarImapConfig(idCompania);
+      if (!row?.imapHost || !row?.imapUsuario || !row?.imapPasswordCifrado) {
+        return res.status(400).json({ error: "Esta empresa no tiene configurado el buzón de correo entrante. Configúrelo en Personalizar → Correo entrante." });
+      }
+      try {
+        res.json(await revisarBuzonEmpresa(idCompania, row));
+      } catch (err: any) {
+        console.error(`[CORREO PROVEEDORES] Revisión manual fallida para la empresa ${idCompania}:`, err.message || err);
+        res.status(502).json({ error: err.message || "No se pudo revisar el buzón de correo." });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  let revisandoCorreos = false;
+  // Empresa por empresa: un buzón que falla (credencial vencida, servidor caído) no frena a los demás.
+  async function procesarCorreosProveedores() {
+    if (!dbConnected || !pool || revisandoCorreos) return;
+    revisandoCorreos = true;
+    try {
+      const [filas] = await pool.query(
+        `SELECT i.* FROM compania_imap_config i JOIN companias c ON c.id_compania = i.idCompania
+          WHERE i.activo = 1 AND c.estadoSaas = 'ACTIVA'
+            AND i.imapHost <> '' AND i.imapUsuario <> '' AND i.imapPasswordCifrado IS NOT NULL`
+      );
+      for (const row of filas as any[]) {
+        try {
+          const r = await revisarBuzonEmpresa(row.idCompania, row);
+          if (r.nuevos > 0 || r.yaRegistrados > 0) {
+            console.log(`[CORREO PROVEEDORES] Empresa ${row.idCompania}: ${r.nuevos} comprobante(s) nuevo(s), ${r.yaRegistrados} ya registrado(s) (de ${r.revisados} correo(s)).`);
+          }
+        } catch (err: any) {
+          console.error(`[CORREO PROVEEDORES] Falla revisando el buzón de la empresa ${row.idCompania}:`, err.message || err);
+        }
+      }
+    } catch (err) {
+      console.error("[CORREO PROVEEDORES] No se pudo procesar la pasada:", err);
+    } finally {
+      revisandoCorreos = false;
+    }
+  }
+
   // 7. Notification Logs
   app.get("/api/notification-logs", requireAuth, async (req, res) => {
     try {
@@ -6270,6 +6587,10 @@ async function startServer() {
   if (process.env.NODE_ENV === "production") {
     setTimeout(procesarRecordatoriosCasos, 60_000);
     setInterval(procesarRecordatoriosCasos, 60 * 60_000);
+    // Facturas de proveedor por correo: cada 5 min; del otro lado hay un servidor IMAP ajeno y una
+    // factura que llega a la bandeja unos minutos después no le cambia el día a nadie.
+    setTimeout(procesarCorreosProveedores, 90_000);
+    setInterval(procesarCorreosProveedores, 5 * 60_000);
   }
 }
 
