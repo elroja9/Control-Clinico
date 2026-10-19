@@ -26,6 +26,7 @@ interface FacturarModalProps {
   onVerificarEstadoFactura: (idFactura: number) => Promise<Factura>;
   onClose: () => void;
   themeColor: string;
+  etiquetaPersona?: string;
 }
 
 export default function FacturarModal({
@@ -40,7 +41,8 @@ export default function FacturarModal({
   onCrearFactura,
   onVerificarEstadoFactura,
   onClose,
-  themeColor
+  themeColor,
+  etiquetaPersona = 'Paciente'
 }: FacturarModalProps) {
   const [facturaCantidades, setFacturaCantidades] = useState<Record<number, number>>(cantidadesIniciales || {});
   const [facturaMedioPago, setFacturaMedioPago] = useState('01');
@@ -161,7 +163,7 @@ export default function FacturarModal({
           ) : (
             <>
               <p className="text-xs text-slate-500">
-                Paciente: <span className="font-bold text-slate-800">{nombrePaciente}</span>
+                {etiquetaPersona}: <span className="font-bold text-slate-800">{nombrePaciente}</span>
               </p>
 
               {servicios.length === 0 ? (

@@ -3,6 +3,7 @@ import { Patient } from '../data/mockData';
 import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 import { PlusCircle, Heart, Dumbbell, MapPin, User, Save, X } from 'lucide-react';
 import { notify } from './ui/Feedback';
+import { terminoPersona } from '../utils/terminoPersona';
 
 interface PatientFormProps {
   companyId: number;
@@ -11,6 +12,7 @@ interface PatientFormProps {
   onSavePatient: (patient: Patient) => void;
   onCancel: () => void;
   themeColor: string;
+  perfilCompania?: string;
 }
 
 export default function PatientForm({
@@ -19,8 +21,12 @@ export default function PatientForm({
   editingPatient,
   onSavePatient,
   onCancel,
-  themeColor
+  themeColor,
+  perfilCompania
 }: PatientFormProps) {
+  // Perfil Legal: el mismo registro sirve de ficha del cliente, sin los datos clínicos.
+  const esLegal = perfilCompania === 'Legal';
+  const persona = terminoPersona(perfilCompania);
   // Setup fields with default or editing values
   const [nombre, setNombre] = useState('');
   const [fechaNac, setFechaNac] = useState('1995-01-01');
@@ -97,7 +103,7 @@ export default function PatientForm({
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (!nombre.trim() || !identificacion.trim()) {
-      notify.warning('Complete el nombre y la identificación del paciente.');
+      notify.warning(`Complete el nombre y la identificación del ${persona.minuscula}.`);
       return;
     }
 
@@ -170,7 +176,11 @@ export default function PatientForm({
       <div className="p-4 text-white font-bold flex justify-between items-center" style={{ backgroundColor: themeColor }}>
         <div className="flex items-center gap-2">
           <User className="w-5 h-5" aria-hidden="true" />
-          <h2>{editingPatient ? 'Modificar expediente del paciente' : 'Nuevo expediente de paciente'}</h2>
+          <h2>
+            {esLegal
+              ? (editingPatient ? 'Modificar datos del cliente' : 'Nuevo cliente')
+              : (editingPatient ? 'Modificar expediente del paciente' : 'Nuevo expediente de paciente')}
+          </h2>
         </div>
         <button type="button" onClick={onCancel} className="hover:bg-black/15 w-9 h-9 -m-1.5 flex items-center justify-center rounded-full transition-colors" aria-label="Cerrar sin guardar">
           <X className="w-5 h-5" />
@@ -185,7 +195,7 @@ export default function PatientForm({
             <User className="w-4 h-4 text-slate-500" />
             1. Datos Personales y Demográficos
           </h4>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className={`grid grid-cols-1 gap-4 ${esLegal ? '' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
             <div>
               <label htmlFor="patientfor-nombre-completo" className="block text-slate-600 font-medium mb-1">Nombre Completo *</label>
               <input id="patientfor-nombre-completo"
@@ -197,6 +207,7 @@ export default function PatientForm({
                 required
               />
             </div>
+            {!esLegal && (<>
             <div>
               <label htmlFor="patientfor-fecha-de-nacimiento" className="block text-slate-600 font-medium mb-1">Fecha de Nacimiento</label>
               <input id="patientfor-fecha-de-nacimiento"
@@ -227,6 +238,7 @@ export default function PatientForm({
                 <option value="F">Femenino</option>
               </select>
             </div>
+            </>)}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-3">
@@ -284,10 +296,11 @@ export default function PatientForm({
                 type="email"
                 value={correo}
                 onChange={(e) => setCorreo(e.target.value)}
-                placeholder="ej: paciente@correo.com"
+                placeholder={`ej: ${persona.minuscula}@correo.com`}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
               />
             </div>
+            {!esLegal && (
             <div>
               <label htmlFor="patientfor-nucleo-familiar" className="block text-slate-600 font-medium mb-1">Núcleo Familiar</label>
               <select id="patientfor-nucleo-familiar"
@@ -300,6 +313,7 @@ export default function PatientForm({
                 <option value="FAMILIAR">Con Familia Directa</option>
               </select>
             </div>
+            )}
           </div>
         </div>
 
@@ -359,6 +373,7 @@ export default function PatientForm({
           </div>
         </div>
 
+        {!esLegal && (<>
         {/* Section 3: Clinical Background (Nutrition) */}
         <div>
           <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5 border-t border-slate-100 pt-4">
@@ -464,6 +479,7 @@ export default function PatientForm({
             </div>
           </div>
         </div>
+        </>)}
       </div>
 
       {/* Actions Footer */}
@@ -481,7 +497,7 @@ export default function PatientForm({
           style={{ backgroundColor: themeColor }}
         >
           <Save className="w-4 h-4" aria-hidden="true" />
-          Guardar expediente
+          {esLegal ? 'Guardar cliente' : 'Guardar expediente'}
         </button>
       </div>
     </form>

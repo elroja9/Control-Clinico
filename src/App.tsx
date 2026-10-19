@@ -23,6 +23,7 @@ import {
   FileSpreadsheet,
   BarChart3,
   Loader2,
+  FolderOpen,
   type LucideIcon
 } from 'lucide-react';
 import { notify, confirmar } from './components/ui/Feedback';
@@ -67,8 +68,10 @@ import {
   Factura,
   CuentaCobrar,
   Proveedor,
-  CuentaPagar
+  CuentaPagar,
+  CasoLegal
 } from './data/mockData';
+import { terminoPersona } from './utils/terminoPersona';
 
 import CompanySettings from './components/CompanySettings';
 import PatientForm from './components/PatientForm';
@@ -85,10 +88,11 @@ import ProveedorManager from './components/ProveedorManager';
 import CxPManager from './components/CxPManager';
 import ReportesFiscales from './components/ReportesFiscales';
 import ReporteriaClinica from './components/ReporteriaClinica';
+import CasosLegalesManager from './components/CasosLegalesManager';
 
-type TabId = 'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales' | 'reporteria';
+type TabId = 'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales' | 'reporteria' | 'casos';
 
-const TAB_IDS: TabId[] = ['dashboard', 'patients', 'consultations', 'agenda', 'branding', 'saas-admin', 'mi-perfil', 'reservas-online', 'facturacion', 'cxp', 'reportes-fiscales', 'reporteria'];
+const TAB_IDS: TabId[] = ['dashboard', 'patients', 'consultations', 'agenda', 'branding', 'saas-admin', 'mi-perfil', 'reservas-online', 'facturacion', 'cxp', 'reportes-fiscales', 'reporteria', 'casos'];
 
 // La pestaña activa vive en el hash (#/agenda): refrescar la página no la pierde, se puede
 // enlazar directo a una sección y el botón "Atrás" del navegador vuelve a la anterior.
@@ -187,6 +191,7 @@ export default function App() {
   const [cxc, setCxc] = useState<CuentaCobrar[]>([]);
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [cxp, setCxp] = useState<CuentaPagar[]>([]);
+  const [casos, setCasos] = useState<CasoLegal[]>([]);
 
   // --- Session bootstrap: restores the login from the httpOnly session cookie, if any ---
   useEffect(() => {
@@ -296,6 +301,11 @@ export default function App() {
       .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
       .then(data => { if (data) setCxp(data); })
       .catch(err => console.log("MySQL offline, no CxP history available"));
+
+    fetch('/api/casos')
+      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+      .then(data => { if (Array.isArray(data)) setCasos(data); })
+      .catch(err => console.log("No se pudieron cargar los casos legales"));
   }, [currentUser?.id]);
 
   // Citas created externally (public online booking, src/components/PublicBooking.tsx —
@@ -508,6 +518,7 @@ export default function App() {
   // Search & Filtering Queries
   const [patientSearch, setPatientSearch] = useState('');
   const [consultationSearch, setConsultationSearch] = useState('');
+  const [casosClienteFiltro, setCasosClienteFiltro] = useState<number | null>(null);
 
   // Modals and form state
   const [isAddingPatient, setIsAddingPatient] = useState(false);
@@ -1168,6 +1179,12 @@ export default function App() {
   const citasProgramadas = citasDeLaCompania.filter(c => c.estadoCita === 'PROGRAMADA').length;
   const citasHoy = citasDeLaCompania.filter(c => c.fechaHora.startsWith(hoy) && c.estadoCita !== 'CANCELADA').length;
   const esSaasAdmin = currentUser.idCompania === 7 && currentUser.rol === 'Administrador';
+  // Perfil Legal: los "pacientes" son clientes y en lugar de consultas clínicas hay casos.
+  const esLegal = activeCompany.perfilCompania === 'Legal';
+  const persona = terminoPersona(activeCompany.perfilCompania);
+  const casosDeLaCompania = casos.filter(c => c.idCompania === selectedCompanyId);
+  const docsPendientes = casosDeLaCompania.filter(c => c.estado === 'ABIERTO').flatMap(c => c.documentos.filter(d => d.estado === 'PENDIENTE'));
+  const docsVencidos = docsPendientes.filter(d => d.fechaLimite && d.fechaLimite < hoy).length;
   const horaActual = new Date().getHours();
   const saludo = horaActual < 12 ? 'Buenos días' : horaActual < 19 ? 'Buenas tardes' : 'Buenas noches';
   // "Dr. Keneth Rojas" → "Dr. Keneth" (con título se conserva el nombre de pila)
@@ -1193,12 +1210,14 @@ export default function App() {
 
   const navGroups: { label: string; items: NavItem[] }[] = [
     {
-      label: 'Clínica',
+      label: esLegal ? 'Despacho' : 'Clínica',
       items: [
-        { id: 'dashboard', label: 'Resumen Clínico', icon: Activity },
-        { id: 'patients', label: 'Pacientes / Expedientes', icon: Users, badge: filteredPatientsByCompany.length },
+        { id: 'dashboard', label: esLegal ? 'Resumen' : 'Resumen Clínico', icon: Activity },
+        { id: 'patients', label: esLegal ? 'Clientes' : 'Pacientes / Expedientes', icon: Users, badge: filteredPatientsByCompany.length },
+        ...(esLegal ? [{ id: 'casos' as TabId, label: 'Casos y Documentos', icon: FolderOpen, badge: docsPendientes.length, badgeClass: 'bg-amber-100 text-amber-800' }] : []),
         { id: 'agenda', label: 'Agenda y Calendario', icon: Calendar, iconClass: 'text-emerald-600', badge: citasProgramadas, badgeClass: 'bg-emerald-100 text-emerald-800' },
-        { id: 'consultations', label: 'Historial de Citas', icon: ClipboardList, badge: filteredConsultationsByCompany.length }
+        // Las consultas clínicas no aplican a un despacho
+        ...(esLegal ? [] : [{ id: 'consultations' as TabId, label: 'Historial de Citas', icon: ClipboardList, badge: filteredConsultationsByCompany.length }])
       ]
     },
     {
@@ -1207,13 +1226,14 @@ export default function App() {
         { id: 'facturacion', label: 'Facturación', icon: Receipt, badge: facturas.filter(f => f.idCompania === selectedCompanyId).length },
         { id: 'cxp', label: 'Cuentas por Pagar', icon: Landmark, badge: cxp.filter(c => c.idCompania === selectedCompanyId && c.estado === 'PENDIENTE').length },
         { id: 'reportes-fiscales', label: 'Reportes Fiscales', icon: FileSpreadsheet },
-        { id: 'reporteria', label: 'Reportería', icon: BarChart3 }
+        // Reportería cuenta pacientes y sesiones clínicas
+        ...(esLegal ? [] : [{ id: 'reporteria' as TabId, label: 'Reportería', icon: BarChart3 }])
       ]
     },
     {
       label: 'Configuración',
       items: [
-        { id: 'branding', label: 'Personalizar Clínica', icon: Building2 },
+        { id: 'branding', label: esLegal ? 'Personalizar Despacho' : 'Personalizar Clínica', icon: Building2 },
         { id: 'mi-perfil', label: 'Mi Perfil', icon: UserCircle },
         { id: 'reservas-online', label: 'Reservas en Línea', icon: Share2 },
         ...(esSaasAdmin ? [{ id: 'saas-admin' as TabId, label: 'Administración SaaS', icon: Lock, iconClass: 'text-amber-600' }] : [])
@@ -1222,7 +1242,7 @@ export default function App() {
   ];
 
   const badgeLabel = (id: TabId) =>
-    id === 'agenda' ? 'citas sin confirmar' : id === 'cxp' ? 'cuentas pendientes' : id === 'facturacion' ? 'comprobantes' : 'registros';
+    id === 'agenda' ? 'citas sin confirmar' : id === 'cxp' ? 'cuentas pendientes' : id === 'facturacion' ? 'comprobantes' : id === 'casos' ? 'documentos pendientes' : 'registros';
 
   const hayFormularioAbierto = !!activeConsultationPatient || isAddingPatient || !!editingPatient;
 
@@ -1449,6 +1469,7 @@ export default function App() {
             onSavePatient={handleSavePatient}
             onCancel={() => { setIsAddingPatient(false); setEditingPatient(null); }}
             themeColor={activeCompany.colorPrimario}
+            perfilCompania={activeCompany.perfilCompania}
           />
         </div>
       ) : (
@@ -1495,7 +1516,7 @@ export default function App() {
                       style={{ backgroundColor: activeCompany.colorPrimario }}
                     >
                       <Plus className="w-4 h-4" aria-hidden="true" />
-                      Nuevo expediente
+                      {esLegal ? 'Nuevo cliente' : 'Nuevo expediente'}
                     </button>
                   </div>
                 </div>
@@ -1504,7 +1525,10 @@ export default function App() {
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
                   {[
                     { label: 'Citas de hoy', value: citasHoy, color: 'text-slate-900', tab: 'agenda' as TabId, show: true },
-                    { label: 'Expedientes', value: filteredPatientsByCompany.length, color: 'text-slate-900', tab: 'patients' as TabId, show: true },
+                    { label: esLegal ? 'Clientes' : 'Expedientes', value: filteredPatientsByCompany.length, color: 'text-slate-900', tab: 'patients' as TabId, show: true },
+                    { label: 'Casos abiertos', value: casosDeLaCompania.filter(c => c.estado === 'ABIERTO').length, color: 'text-slate-900', tab: 'casos' as TabId, show: esLegal },
+                    { label: 'Documentos pendientes', value: docsPendientes.length, color: 'text-amber-700', tab: 'casos' as TabId, show: esLegal },
+                    { label: 'Documentos vencidos', value: docsVencidos, color: 'text-rose-700', tab: 'casos' as TabId, show: esLegal },
                     { label: 'Consultas de nutrición', value: filteredConsultationsByCompany.filter(c => c.tipo === 'Nutrición').length, color: 'text-rose-700', tab: 'consultations' as TabId, show: muestraNutricion },
                     { label: 'Consultas de fisioterapia', value: filteredConsultationsByCompany.filter(c => c.tipo === 'Fisioterapia').length, color: 'text-emerald-700', tab: 'consultations' as TabId, show: muestraFisioterapia }
                   ].filter(k => k.show).map(k => (
@@ -1593,7 +1617,8 @@ export default function App() {
 
                 </div>
 
-                {/* Patient Overview Summary list */}
+                {/* Patient Overview Summary list (depende de consultas clínicas: no aplica al perfil Legal) */}
+                {!esLegal && (
                 <section className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden" aria-labelledby="ultimos-pacientes">
                   <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/60">
                     <h3 id="ultimos-pacientes" className="text-sm font-bold text-slate-900">Últimos pacientes atendidos</h3>
@@ -1653,6 +1678,7 @@ export default function App() {
                     </ul>
                   )}
                 </section>
+                )}
 
               </div>
             )}
@@ -1664,7 +1690,7 @@ export default function App() {
                 {/* Search & Actions toolbar */}
                 <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
                   <div className="relative w-full sm:max-w-md">
-                    <label htmlFor="buscar-pacientes" className="sr-only">Buscar pacientes</label>
+                    <label htmlFor="buscar-pacientes" className="sr-only">Buscar {persona.minusculaPlural}</label>
                     <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
                     <input
                       id="buscar-pacientes"
@@ -1694,7 +1720,7 @@ export default function App() {
                     style={{ backgroundColor: activeCompany.colorPrimario }}
                   >
                     <Plus className="w-4 h-4" aria-hidden="true" />
-                    Registrar expediente
+                    {esLegal ? 'Registrar cliente' : 'Registrar expediente'}
                   </button>
                 </div>
 
@@ -1710,7 +1736,7 @@ export default function App() {
                     <Users className="w-8 h-8 text-slate-400 mx-auto mb-2" aria-hidden="true" />
                     {patientSearch ? (
                       <>
-                        <p className="text-sm font-semibold text-slate-800">Ningún expediente coincide con “{patientSearch}”</p>
+                        <p className="text-sm font-semibold text-slate-800">Ningún {esLegal ? 'cliente' : 'expediente'} coincide con “{patientSearch}”</p>
                         <p className="text-sm text-slate-600 mt-1">Revise la ortografía o busque por número de cédula.</p>
                         <button
                           type="button"
@@ -1722,8 +1748,10 @@ export default function App() {
                       </>
                     ) : (
                       <>
-                        <p className="text-sm font-semibold text-slate-800">Aún no hay expedientes</p>
-                        <p className="text-sm text-slate-600 mt-1">Registre al primer paciente para empezar a llevar su historial.</p>
+                        <p className="text-sm font-semibold text-slate-800">Aún no hay {esLegal ? 'clientes' : 'expedientes'}</p>
+                        <p className="text-sm text-slate-600 mt-1">
+                          {esLegal ? 'Registre al primer cliente para abrirle casos y controlar sus documentos.' : 'Registre al primer paciente para empezar a llevar su historial.'}
+                        </p>
                       </>
                     )}
                   </div>
@@ -1759,14 +1787,42 @@ export default function App() {
                                 type="button"
                                 onClick={() => handleDeletePatient(p.id)}
                                 className="p-2.5 text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors"
-                                aria-label={`Eliminar expediente de ${p.nombreCompleto}`}
-                                title="Eliminar paciente"
+                                aria-label={`Eliminar ${esLegal ? 'cliente' : 'expediente de'} ${p.nombreCompleto}`}
+                                title={`Eliminar ${persona.minuscula}`}
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
                             </div>
                           </div>
 
+                          {esLegal ? (
+                            <>
+                              <dl className="bg-slate-50 rounded-xl p-3 border border-slate-100 text-xs grid grid-cols-2 gap-2 text-slate-700">
+                                <div>
+                                  <dt className="font-semibold text-slate-500 uppercase text-[11px] tracking-wide">Teléfono</dt>
+                                  <dd className="font-semibold text-slate-800">{p.telefono || 'No registrado'}</dd>
+                                </div>
+                                <div>
+                                  <dt className="font-semibold text-slate-500 uppercase text-[11px] tracking-wide">Casos abiertos</dt>
+                                  <dd className="font-semibold text-slate-800 tabular-nums">{casosDeLaCompania.filter(c => c.idPaciente === p.id && c.estado === 'ABIERTO').length}</dd>
+                                </div>
+                                <div className="col-span-2 border-t pt-2 border-slate-200">
+                                  <dt className="font-semibold text-slate-500 uppercase text-[11px] tracking-wide">Correo</dt>
+                                  <dd className="text-slate-800 truncate">{p.correoElectronico || 'Sin correo (no recibirá recordatorios)'}</dd>
+                                </div>
+                              </dl>
+                              <button
+                                type="button"
+                                onClick={() => { setCasosClienteFiltro(p.id); navigateTo('casos'); }}
+                                className="min-h-10 text-white rounded-xl text-sm font-semibold shadow-xs hover:brightness-110 transition-[filter] flex items-center justify-center gap-1.5"
+                                style={{ backgroundColor: activeCompany.colorPrimario }}
+                              >
+                                <FolderOpen className="w-4 h-4" aria-hidden="true" />
+                                Ver casos
+                              </button>
+                            </>
+                          ) : (
+                          <>
                           {/* Quick details & Clinical summary highlights */}
                           <dl className="bg-slate-50 rounded-xl p-3 border border-slate-100 text-xs grid grid-cols-2 gap-2 text-slate-700">
                             <div>
@@ -1812,6 +1868,8 @@ export default function App() {
                               Nueva consulta
                             </button>
                           </div>
+                          </>
+                          )}
                         </article>
                       );
                     })}
@@ -2026,6 +2084,19 @@ export default function App() {
               <ReporteriaClinica company={activeCompany} />
             )}
 
+            {activeTab === 'casos' && esLegal && (
+              <CasosLegalesManager
+                casos={casosDeLaCompania}
+                clientes={filteredPatientsByCompany}
+                themeColor={activeCompany.colorPrimario}
+                idClienteFiltro={casosClienteFiltro}
+                onQuitarFiltroCliente={() => setCasosClienteFiltro(null)}
+                onCasoGuardado={(caso) => setCasos(prev => prev.some(c => c.id === caso.id) ? prev.map(c => c.id === caso.id ? caso : c) : [caso, ...prev])}
+                onCasoEliminado={(id) => setCasos(prev => prev.filter(c => c.id !== id))}
+                onNotificacion={handleAddNotificationLog}
+              />
+            )}
+
             {/* ================= 4. CLINIC BRANDING CUSTOMIZATION ================= */}
             {activeTab === 'branding' && (
               <CompanySettings
@@ -2094,6 +2165,7 @@ export default function App() {
                 onVerificarEstadoFactura={handleVerificarEstadoFactura}
                 ivaPorDefecto={activeCompany.ivaPorDefecto}
                 themeColor={activeCompany.colorPrimario}
+                perfilCompania={activeCompany.perfilCompania}
               />
             )}
 

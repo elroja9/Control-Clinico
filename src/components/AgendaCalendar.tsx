@@ -3,6 +3,7 @@ import { Patient, User, Cita, CompaniaSmtpConfig, NotificationLog, CalendarBlock
 import FacturarModal from './FacturarModal';
 import { notify, confirmar } from './ui/Feedback';
 import { useDialog } from '../hooks/useDialog';
+import { terminoPersona } from '../utils/terminoPersona';
 import {
   Calendar as CalendarIcon,
   Clock,
@@ -73,6 +74,7 @@ interface AgendaCalendarProps {
   onVerificarEstadoFactura: (idFactura: number) => Promise<Factura>;
   ivaPorDefecto: number;
   themeColor: string;
+  perfilCompania?: string;
 }
 
 export default function AgendaCalendar({
@@ -94,8 +96,11 @@ export default function AgendaCalendar({
   onVerificarEstadoFactura,
   ivaPorDefecto,
   onDeleteCalendarBlock,
-  themeColor
+  themeColor,
+  perfilCompania
 }: AgendaCalendarProps) {
+  const persona = terminoPersona(perfilCompania);
+  const esLegal = perfilCompania === 'Legal';
   // Calendar views: 'day', 'week', 'month'
   const [view, setView] = useState<'day' | 'week' | 'month'>('month');
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
@@ -512,7 +517,7 @@ export default function AgendaCalendar({
     if (!(await confirmarCambioEstadoFacturada(selectedCita, 'CANCELADA'))) return;
     const ok = await confirmar({
       title: '¿Cancelar esta cita?',
-      message: 'La cita no se elimina: queda en el historial con estado CANCELADA y, si los correos están activos, se avisa al paciente.',
+      message: `La cita no se elimina: queda en el historial con estado CANCELADA y, si los correos están activos, se avisa al ${persona.minuscula}.`,
       confirmText: 'Cancelar cita',
       cancelText: 'Volver',
       tone: 'danger'
@@ -603,10 +608,10 @@ export default function AgendaCalendar({
                   onKeyDown={activarConTeclado(() => handleOpenEditCita(cita))}
                   className={`px-1 py-0.5 rounded-md text-[11px] font-bold truncate border flex items-center gap-0.5 ${getStatusColor(cita.estadoCita)}`}
                   title={`${time} - ${patient?.nombreCompleto}${esDomicilio ? ` · Domicilio: ${cita.direccionDomicilio || 'sin dirección'}` : ''}`}
-                  aria-label={`Cita ${time} con ${patient?.nombreCompleto || 'paciente'}, ${cita.estadoCita.toLowerCase().replace('_', ' ')}`}
+                  aria-label={`Cita ${time} con ${patient?.nombreCompleto || persona.minuscula}, ${cita.estadoCita.toLowerCase().replace('_', ' ')}`}
                 >
                   {esDomicilio && <MapPin className="w-2.5 h-2.5 shrink-0" />}
-                  <span className="truncate">{time} - {patient?.nombreCompleto || 'Paciente'}</span>
+                  <span className="truncate">{time} - {patient?.nombreCompleto || persona.singular}</span>
                 </div>
               );
             })}
@@ -730,7 +735,7 @@ export default function AgendaCalendar({
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
-                                    title="Abrir ubicación del paciente"
+                                    title={`Abrir ubicación del ${persona.minuscula}`}
                                     className="shrink-0 text-teal-700"
                                   >
                                     <Navigation className="w-2.5 h-2.5" />
@@ -836,7 +841,7 @@ export default function AgendaCalendar({
                                 </span>
                               )}
                             </div>
-                            <h4 className="text-xs font-bold text-slate-800">{patient?.nombreCompleto || 'Paciente'}</h4>
+                            <h4 className="text-xs font-bold text-slate-800">{patient?.nombreCompleto || persona.singular}</h4>
                             {esDomicilio && (
                               <p className="text-[11px] text-amber-700 font-semibold truncate max-w-sm flex items-center gap-1">
                                 <MapPin className="w-3 h-3 shrink-0" />
@@ -850,7 +855,7 @@ export default function AgendaCalendar({
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
-                                    title="Abrir ubicación del paciente"
+                                    title={`Abrir ubicación del ${persona.minuscula}`}
                                     className="shrink-0 flex items-center gap-0.5 text-teal-700 hover:underline font-bold"
                                   >
                                     <Navigation className="w-3 h-3" />
@@ -868,7 +873,7 @@ export default function AgendaCalendar({
                                 <Check className="w-3 h-3" aria-hidden="true" />
                                 Consulta atendida
                               </span>
-                            ) : (
+                            ) : esLegal ? null : (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -1046,7 +1051,7 @@ export default function AgendaCalendar({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Mail className="w-4 h-4 text-slate-500" />
-            <h3 className="text-xs font-bold uppercase text-slate-700 tracking-wider">Correos enviados a pacientes</h3>
+            <h3 className="text-xs font-bold uppercase text-slate-700 tracking-wider">Correos enviados a {persona.minusculaPlural}</h3>
           </div>
           <span className="text-[11px] bg-slate-100 text-slate-700 font-bold border border-slate-200 px-2.5 py-0.5 rounded-full tabular-nums">
             {logs.filter(l => l.idCompania === activeCompanyId).length}
@@ -1118,7 +1123,7 @@ export default function AgendaCalendar({
 
               {/* Patient Selection */}
               <div className="relative">
-                <label htmlFor="cita-paciente" className="block text-slate-700 text-xs font-bold mb-1.5">Paciente *</label>
+                <label htmlFor="cita-paciente" className="block text-slate-700 text-xs font-bold mb-1.5">{persona.singular} *</label>
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
                   <input
@@ -1161,7 +1166,7 @@ export default function AgendaCalendar({
                   />
                 </div>
                 {isPatientDropdownOpen && (
-                  <ul id="cita-paciente-lista" role="listbox" aria-label="Pacientes" className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg animate-slide-down">
+                  <ul id="cita-paciente-lista" role="listbox" aria-label={persona.plural} className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg animate-slide-down">
                     {filteredPatients.length > 0 ? (
                       filteredPatients.map((p, i) => (
                         <li
@@ -1181,7 +1186,7 @@ export default function AgendaCalendar({
                         </li>
                       ))
                     ) : (
-                      <li className="px-3 py-3 text-xs text-slate-600">Ningún paciente coincide con “{formPatientSearch}”. Regístrelo primero en Pacientes.</li>
+                      <li className="px-3 py-3 text-xs text-slate-600">Ningún {persona.minuscula} coincide con “{formPatientSearch}”. Regístrelo primero en {persona.plural}.</li>
                     )}
                   </ul>
                 )}
@@ -1297,7 +1302,7 @@ export default function AgendaCalendar({
                       className="inline-flex items-center gap-1 text-teal-700 font-bold hover:underline"
                     >
                       <Navigation className="w-3.5 h-3.5" />
-                      Abrir ubicación del paciente
+                      Abrir ubicación del {persona.minuscula}
                     </a>
                   )}
                 </div>
@@ -1309,7 +1314,7 @@ export default function AgendaCalendar({
                 <textarea id="agendacale-notas-internas-de-agenda"
                   value={formNotes}
                   onChange={(e) => setFormNotes(e.target.value)}
-                  placeholder="ej: Paciente reporta dolor irradiado. Solicita enfoque suave."
+                  placeholder={esLegal ? 'ej: Revisar avance del caso y documentos pendientes.' : 'ej: Paciente reporta dolor irradiado. Solicita enfoque suave.'}
                   rows={2}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden resize-none"
                 />
@@ -1370,7 +1375,8 @@ export default function AgendaCalendar({
           idCompania={activeCompanyId}
           idPaciente={facturaCita.idPaciente}
           idCita={facturaCita.id}
-          nombrePaciente={patients.find(p => p.id === facturaCita.idPaciente)?.nombreCompleto || 'Paciente'}
+          nombrePaciente={patients.find(p => p.id === facturaCita.idPaciente)?.nombreCompleto || persona.singular}
+          etiquetaPersona={persona.singular}
           servicios={companyServicios}
           ivaPorDefecto={ivaPorDefecto}
           cantidadesIniciales={facturaCita.idServicio ? { [facturaCita.idServicio]: 1 } : {}}
