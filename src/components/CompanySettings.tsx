@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import PlantillaDietaManager from './PlantillaDietaManager';
 import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION, Servicio, PorcentajeDieta, PlantillaDieta, PerfilCompania } from '../data/mockData';
+import CorreoEntranteSettings from './CorreoEntranteSettings';
 import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X } from 'lucide-react';
 import { notify, confirmar } from './ui/Feedback';
@@ -989,6 +990,8 @@ export default function CompanySettings({
           </div>
         </form>
       )}
+
+      {!isEditing && !isAdding && <CorreoEntranteSettings themeColor={currentCompany.colorPrimario} />}
 
       {/* Hacienda Digital Signature configuration per company — solo Administrador (el servidor
           también lo exige): credenciales, certificado y ambiente deciden qué se declara a Hacienda. */}

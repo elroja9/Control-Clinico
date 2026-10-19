@@ -3,6 +3,7 @@ import { CuentaPagar, Proveedor, Servicio } from '../data/mockData';
 import { Landmark, Plus, AlertCircle, DollarSign, Trash2, Upload, X, CheckCircle } from 'lucide-react';
 import { notify, confirmar } from './ui/Feedback';
 import { fechaCR } from '../utils/fechaCR';
+import BandejaFacturasCorreo from './BandejaFacturasCorreo';
 
 interface ImportarXmlResultado {
   cxp: CuentaPagar;
@@ -63,7 +64,9 @@ interface LineaForm {
 export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, onRegistrarPago, onImportarXml }: CxPManagerProps) {
   const [filtro, setFiltro] = useState<'TODAS' | 'PENDIENTE' | 'VENCIDA' | 'PAGADA'>('TODAS');
 
-  const [xmlPendiente, setXmlPendiente] = useState<{ nombreArchivo: string; xmlTexto: string } | null>(null);
+  // idFacturaCorreo: el XML vino de la bandeja de correo; tras importarlo se marca allí como IMPORTADA.
+  const [xmlPendiente, setXmlPendiente] = useState<{ nombreArchivo: string; xmlTexto: string; idFacturaCorreo?: number } | null>(null);
+  const [bandejaVersion, setBandejaVersion] = useState(0);
   const [xmlAlimentaInventario, setXmlAlimentaInventario] = useState(true);
   const [xmlError, setXmlError] = useState('');
   const [xmlImportando, setXmlImportando] = useState(false);
@@ -142,6 +145,16 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
       const resultado = await onImportarXml(xmlPendiente.xmlTexto, xmlAlimentaInventario);
       setXmlResultado(resultado);
       setXmlPendiente(null);
+      if (xmlPendiente.idFacturaCorreo) {
+        const res = await fetch(`/api/facturas-correo/${xmlPendiente.idFacturaCorreo}/estado`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ estado: 'IMPORTADA', idCuentaPagar: resultado.cxp.id })
+        });
+        // La CxP ya quedó creada: si solo falla el marcado, se avisa en vez de tratarlo como error de importación.
+        if (!res.ok) notify.warning('La factura se importó, pero no se pudo marcar como importada en la bandeja de correo.');
+        setBandejaVersion(v => v + 1);
+      }
     } catch (err: any) {
       setXmlError(err.message || 'No se pudo importar el archivo XML.');
     } finally {
@@ -281,6 +294,17 @@ export default function CxPManager({ cxp, proveedores, articulos, onCrearCxp, on
           </label>
         </div>
       </div>
+
+      <BandejaFacturasCorreo
+        version={bandejaVersion}
+        onImportar={(f, xml) => {
+          setXmlError('');
+          setXmlResultado(null);
+          setXmlPendiente({ nombreArchivo: `${f.emisorNombre} · ${f.numeroConsecutivo} (correo)`, xmlTexto: xml, idFacturaCorreo: f.id });
+          setXmlAlimentaInventario(true);
+          setFormAbierto(false);
+        }}
+      />
 
       {xmlError && (
         <div className="p-2.5 mb-4 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
