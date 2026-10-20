@@ -24,6 +24,7 @@ import {
   BarChart3,
   Loader2,
   FolderOpen,
+  BookOpen,
   type LucideIcon
 } from 'lucide-react';
 import { notify, confirmar } from './components/ui/Feedback';
@@ -89,10 +90,11 @@ import CxPManager from './components/CxPManager';
 import ReportesFiscales from './components/ReportesFiscales';
 import ReporteriaClinica from './components/ReporteriaClinica';
 import CasosLegalesManager from './components/CasosLegalesManager';
+import ManualUsuario from './components/ManualUsuario';
 
-type TabId = 'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales' | 'reporteria' | 'casos';
+type TabId = 'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales' | 'reporteria' | 'casos' | 'manual';
 
-const TAB_IDS: TabId[] = ['dashboard', 'patients', 'consultations', 'agenda', 'branding', 'saas-admin', 'mi-perfil', 'reservas-online', 'facturacion', 'cxp', 'reportes-fiscales', 'reporteria', 'casos'];
+const TAB_IDS: TabId[] = ['dashboard', 'patients', 'consultations', 'agenda', 'branding', 'saas-admin', 'mi-perfil', 'reservas-online', 'facturacion', 'cxp', 'reportes-fiscales', 'reporteria', 'casos', 'manual'];
 
 // La pestaña activa vive en el hash (#/agenda): refrescar la página no la pierde, se puede
 // enlazar directo a una sección y el botón "Atrás" del navegador vuelve a la anterior.
@@ -1236,6 +1238,7 @@ export default function App() {
         { id: 'branding', label: esLegal ? 'Personalizar Despacho' : 'Personalizar Clínica', icon: Building2 },
         { id: 'mi-perfil', label: 'Mi Perfil', icon: UserCircle },
         { id: 'reservas-online', label: 'Reservas en Línea', icon: Share2 },
+        { id: 'manual', label: 'Manual de Usuario', icon: BookOpen },
         ...(esSaasAdmin ? [{ id: 'saas-admin' as TabId, label: 'Administración SaaS', icon: Lock, iconClass: 'text-amber-600' }] : [])
       ]
     }
@@ -1472,6 +1475,14 @@ export default function App() {
             perfilCompania={activeCompany.perfilCompania}
           />
         </div>
+      ) : activeTab === 'manual' ? (
+        // Fuera de la grilla principal (print:hidden) para que se pueda imprimir / guardar en PDF
+        <ManualUsuario
+          esLegal={esLegal}
+          nombreEmpresa={activeCompany.nombreComercial}
+          themeColor={activeCompany.colorPrimario}
+          onClose={() => setActiveTab('dashboard')}
+        />
       ) : (
         // Main Workspace Dashboard & Tab Controls
         <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-6 print:hidden">
