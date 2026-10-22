@@ -1478,7 +1478,7 @@ export default function App() {
       ) : activeTab === 'manual' ? (
         // Fuera de la grilla principal (print:hidden) para que se pueda imprimir / guardar en PDF
         <ManualUsuario
-          esLegal={esLegal}
+          perfil={activeCompany.perfilCompania}
           nombreEmpresa={activeCompany.nombreComercial}
           themeColor={activeCompany.colorPrimario}
           onClose={() => setActiveTab('dashboard')}

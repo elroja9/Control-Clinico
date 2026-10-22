@@ -3,6 +3,7 @@ import { ArrowLeft, Printer } from 'lucide-react';
 interface Bloque {
   sub: string;
   pasos: string[];
+  img?: string;
 }
 
 interface Seccion {
@@ -13,8 +14,16 @@ interface Seccion {
   nota?: string;
 }
 
+// Capturas en public/manual/<carpeta>/, tomadas con datos ficticios para cada perfil de empresa
+const CARPETAS: Record<string, string> = { Fisioterapia: 'fisioterapia', 'Nutrición': 'nutricion', Ambas: 'ambas', Spa: 'spa', Legal: 'legal' };
+
 // El contenido se arma según el perfil: un despacho legal no ve consultas ni reportería, y una clínica no ve casos.
-const secciones = (esLegal: boolean): Seccion[] => {
+const secciones = (perfil: string): Seccion[] => {
+  const esLegal = perfil === 'Legal';
+  const f = (n: string) => `/manual/${CARPETAS[perfil] ?? 'ambas'}/${n}.jpg`;
+  const veFisio = perfil === 'Fisioterapia' || perfil === 'Ambas';
+  // Spa y Ambas abren el formulario de nutrición por defecto
+  const veNutri = !veFisio || perfil === 'Ambas';
   const pac = esLegal ? 'cliente' : 'paciente';
   const pacs = esLegal ? 'clientes' : 'pacientes';
   const empresa = esLegal ? 'Despacho' : 'Clínica';
@@ -26,6 +35,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
       bloques: [
         {
           sub: 'Iniciar sesión',
+          img: '/manual/login.jpg',
           pasos: [
             'Escriba su usuario o correo y su contraseña, y pulse "Iniciar sesión".',
             'Si olvidó la contraseña, pulse "¿Olvidó su contraseña?", indique su usuario o correo y recibirá una contraseña temporal de 8 dígitos.',
@@ -51,6 +61,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
       bloques: [
         {
           sub: 'Identidad de marca y datos fiscales',
+          img: f('branding'),
           pasos: [
             'Pulse "Editar Marca" para cambiar nombre comercial, razón social, cédula física o jurídica, dirección (provincia, cantón, distrito y otras señas), colores y logo.',
             'Indique el código de actividad económica de Hacienda y el correo emisor de facturas.'
@@ -114,7 +125,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
       titulo: 'Resumen',
       intro: `Pantalla de inicio con los indicadores del día: citas de hoy, ${pacs}${esLegal ? ', casos abiertos y documentos pendientes o vencidos' : ' y consultas por especialidad'}.`,
       bloques: [
-        { sub: 'Uso', pasos: ['Pulse cualquier indicador para ir directo a la sección correspondiente.'] }
+        { sub: 'Uso', img: f('dashboard'), pasos: ['Pulse cualquier indicador para ir directo a la sección correspondiente.'] }
       ]
     },
     {
@@ -124,6 +135,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
       bloques: [
         {
           sub: `Registrar un ${pac}`,
+          img: f('paciente-form'),
           pasos: [
             `Pulse "${esLegal ? 'Registrar cliente' : 'Registrar expediente'}".`,
             'Complete los campos obligatorios (marcados con *): nombre completo y número de identificación. El tipo de cédula (física, jurídica o extranjero) se usa al facturar.',
@@ -133,6 +145,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
         },
         {
           sub: 'Buscar y administrar',
+          img: f('patients'),
           pasos: [
             'Use el buscador por nombre o cédula.',
             'El lápiz edita los datos personales y la papelera elimina el registro (pide confirmación).',
@@ -150,6 +163,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
       bloques: [
         {
           sub: 'Ver la agenda',
+          img: f('agenda-semana'),
           pasos: [
             'Cambie entre las vistas Mes, Semana y Día, y avance o retroceda con las flechas.',
             'Filtre por profesional o vea "Todos los especialistas".',
@@ -158,6 +172,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
         },
         {
           sub: 'Crear o editar una cita',
+          img: f('cita-form'),
           pasos: [
             `Pulse "Nueva cita" o un espacio "Disponible". Busque al ${pac} por nombre o cédula.`,
             'Elija servicio, profesional, fecha, hora y duración, y el estado de la cita.',
@@ -189,26 +204,33 @@ const secciones = (esLegal: boolean): Seccion[] => {
       titulo: 'Consultas clínicas',
       intro: 'Registro de la atención de fisioterapia o nutrición y su reporte.',
       bloques: [
-        {
+        ...(perfil === 'Ambas' ? [{
+          sub: 'Elegir la especialidad',
+          pasos: ['Desde "Nueva consulta" o "Iniciar consulta", elija arriba la especialidad: Fisioterapia o Nutrición. El formulario cambia según la que elija.']
+        }] : []),
+        ...(veFisio ? [{
           sub: 'Fisioterapia',
+          img: perfil === 'Fisioterapia' ? f('consulta-form') : undefined,
           pasos: [
             'Registre el motivo de consulta, el diagnóstico médico o referencia y la intensidad del dolor (escala EVA 0-10).',
             'Marque las zonas de dolor en el mapa anatómico digital.',
             'Complete el examen físico: postura, palpación, fuerza (escala Daniels 0-5) y factores agravantes y atenuantes.',
             'Indique la prescripción: agentes físicos (TENS, ultrasonido…), ejercicio terapéutico, frecuencia e indicaciones.'
           ]
-        },
-        {
+        }] : []),
+        ...(veNutri ? [{
           sub: 'Nutrición',
+          img: perfil === 'Fisioterapia' ? undefined : f('consulta-form'),
           pasos: [
             'Registre la antropometría (estatura, peso, circunferencias), la composición corporal y los exámenes de laboratorio.',
             'Complete la evaluación dietética y el estilo de vida (sueño, ejercicio, hábitos).',
             'El sistema calcula el IMC y la tasa metabólica basal; elija el factor de actividad y la prescripción calórica (déficit, mantenimiento o superávit).',
             'Ajuste la distribución de macronutrientes y diseñe el menú semanal, partiendo de una plantilla si lo desea.'
           ]
-        },
+        }] : []),
         {
           sub: 'Guardar y reporte',
+          img: perfil === 'Spa' ? undefined : f('reporte'),
           pasos: [
             'Pulse "Guardar consulta y ver reporte".',
             'En el reporte puede imprimirlo o guardarlo en PDF ("Imprimir / PDF"), enviarlo por correo al paciente y facturar la consulta.',
@@ -217,6 +239,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
         },
         {
           sub: 'Historial de citas',
+          img: f('consultations'),
           pasos: [
             'Lista todas las consultas registradas, con buscador.',
             '"Ver reporte" abre el reporte; la papelera elimina la consulta (pide confirmación).'
@@ -231,6 +254,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
       bloques: [
         {
           sub: 'Crear un caso',
+          img: f('casos'),
           pasos: [
             'Elija el cliente y escriba el título del caso (obligatorios).',
             'Agregue materia, número de expediente judicial y ubicación física de la carpeta.',
@@ -262,6 +286,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
         },
         {
           sub: 'Historial de comprobantes',
+          img: f('facturacion'),
           pasos: [
             'Ver / Imprimir / Reenviar: abre el comprobante, permite imprimirlo y enviarlo de nuevo al correo del cliente.',
             'Verificar estado con Hacienda: consulta si el comprobante fue aceptado o rechazado.',
@@ -290,6 +315,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
         },
         {
           sub: 'Registrar una compra',
+          img: f('cxp'),
           pasos: [
             'Pulse "Registrar Compra" y elija el tipo: "Gasto (sin inventario)" o "Compra de Artículos" (suma existencias al inventario).',
             'Indique proveedor, monto total con IVA, referencia y plazo de crédito en días.',
@@ -319,6 +345,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
       bloques: [
         {
           sub: 'Uso',
+          img: f('reportes-fiscales'),
           pasos: [
             'Elija el período (D-104) o el año fiscal (D-101).',
             'El D-104 muestra el débito fiscal de las ventas, el crédito fiscal de las compras y las ventas exentas.',
@@ -336,6 +363,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
       bloques: [
         {
           sub: 'Uso',
+          img: f('reporteria'),
           pasos: [
             'Elija vista mensual o un rango personalizado de fechas.',
             'Revise la tendencia mensual y el detalle por paciente.',
@@ -351,6 +379,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
       bloques: [
         {
           sub: 'Uso',
+          img: f('mi-perfil'),
           pasos: [
             'Escriba su dirección principal y el tiempo máximo de traslado que acepta (en minutos).',
             'La agenda usa estos datos al programar visitas a domicilio.'
@@ -365,6 +394,7 @@ const secciones = (esLegal: boolean): Seccion[] => {
       bloques: [
         {
           sub: 'Compartir el enlace',
+          img: f('reservas-online'),
           pasos: [
             'Use "Copiar enlace" o "Compartir" para enviarlo por WhatsApp, redes sociales o correo, y "Ver página" para revisarla.',
             `El ${pac} elige profesional, servicio, tipo de visita (en consultorio o a domicilio) y horario disponible, y escribe sus datos.`,
@@ -395,14 +425,14 @@ const secciones = (esLegal: boolean): Seccion[] => {
 };
 
 interface Props {
-  esLegal: boolean;
+  perfil: string;
   nombreEmpresa: string;
   themeColor: string;
   onClose: () => void;
 }
 
-export default function ManualUsuario({ esLegal, nombreEmpresa, themeColor, onClose }: Props) {
-  const contenido = secciones(esLegal);
+export default function ManualUsuario({ perfil, nombreEmpresa, themeColor, onClose }: Props) {
+  const contenido = secciones(perfil);
   // El índice usa scrollIntoView: un enlace #id rompería la navegación, que vive en el hash (#/manual)
   const irA = (id: string) => document.getElementById(`manual-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -463,6 +493,12 @@ export default function ManualUsuario({ esLegal, nombreEmpresa, themeColor, onCl
                 <ul className="list-disc pl-5 space-y-1 text-sm text-slate-700">
                   {b.pasos.map(p => <li key={p}>{p}</li>)}
                 </ul>
+                {b.img && (
+                  <figure className="mt-3">
+                    <img src={b.img} alt={`Pantalla: ${b.sub}`} width={1280} height={800} className="w-full h-auto rounded-xl border border-slate-200 shadow-xs" />
+                    <figcaption className="text-xs text-slate-500 mt-1.5">{b.sub}</figcaption>
+                  </figure>
+                )}
               </div>
             ))}
             {s.nota && (
