@@ -238,7 +238,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
               {d104.yaCerrado && (
                 <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-[11px] text-emerald-800">
                   <CheckCircle className="w-4 h-4 shrink-0" />
-                  <span>Período cerrado el {d104.fechaCierre ? new Date(d104.fechaCierre).toLocaleString('es-CR') : ''}. Este es un registro fiscal permanente.</span>
+                  <span>Período cerrado el {d104.fechaCierre ? new Date(d104.fechaCierre).toLocaleString('es-CR') : ''} — registro fiscal permanente.</span>
                 </div>
               )}
 
@@ -326,7 +326,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
               {d101.yaCerrado && (
                 <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-[11px] text-emerald-800">
                   <CheckCircle className="w-4 h-4 shrink-0" />
-                  <span>Liquidación presentada el {d101.fechaCierre ? new Date(d101.fechaCierre).toLocaleString('es-CR') : ''}. Este es un registro fiscal permanente.</span>
+                  <span>Liquidación presentada el {d101.fechaCierre ? new Date(d101.fechaCierre).toLocaleString('es-CR') : ''} — registro fiscal permanente.</span>
                 </div>
               )}
 
