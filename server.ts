@@ -31,12 +31,12 @@ import {
   construirXmlFactura,
   construirXmlNotaCredito,
   construirXmlNotaDebito,
-  PLAZO_CREDITO_DIAS_DEFECTO,
   RAZON_MAX
 } from "./server/haciendaFactura";
 import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda, esperarResolucionHacienda, HACIENDA_FETCH_TIMEOUT_MS } from "./server/haciendaApi";
 import type { AmbienteHacienda, EstadoHaciendaResultado } from "./server/haciendaApi";
 import { fechaCR, sumarDiasCR } from "./src/utils/fechaCR";
+import { errorIdentificacion } from "./src/utils/identificacion";
 import { serviciosDefectoParaPerfil } from "./server/serviciosDefecto";
 import { parsearFacturaProveedorXML } from "./server/xmlProveedorParser";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
@@ -47,6 +47,8 @@ import { renderFacturaPdf, renderConsultaPacientePdf } from "./server/pdfTemplat
 import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderFacturaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail, renderRecordatorioDocumentosEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
 import { tocaRecordatorio } from "./server/recordatoriosCasos";
+import { calcularImpuestoRenta, validarParametrosRenta } from "./server/impuestoRenta";
+import type { ParametrosRenta } from "./server/impuestoRenta";
 import { recolectarComprobantes, verificarConexionImap, listarCarpetas, carpetasDe } from "./server/correoProveedores";
 import type { ConfigImap, AvanceCarpeta } from "./server/correoProveedores";
 import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales, PorcentajeDieta, PlantillaDieta, CasoLegal, DocumentoCaso, NotificationLog, CompaniaImapConfig } from "./src/data/mockData";
@@ -99,6 +101,7 @@ interface LocalGastosManuales extends GastosManualesAnuales { idCompania: number
 let localGastosManuales: LocalGastosManuales[] = [];
 interface LocalCierreFiscal { id: number; idCompania: number; tipo: "D104" | "D101"; periodo: string; datos: ReporteD104 | ReporteD101; creadoPor: string | null; creadoEn: string; }
 let localCierresFiscales: LocalCierreFiscal[] = [];
+let localParametrosRenta: ParametrosRenta[] = [];
 let localCasos: Omit<CasoLegal, "documentos">[] = [];
 let localDocumentosCaso: DocumentoCaso[] = [];
 
@@ -993,64 +996,7 @@ function construirReporteD104(periodo: string, company: Company, facturasMes: an
   };
 }
 
-// Tarifas del Impuesto sobre la Renta (D-101) de Costa Rica — tramos progresivos para Persona
-// Física con Actividad Lucrativa y Persona Jurídica (régimen de tarifa reducida para PYMEs).
-function calcularImpuestoRenta(utilidad: number, tipo: "fisica" | "juridica"): { total: number; tramos: string[] } {
-  let total = 0;
-  const tramos: string[] = [];
-  const fmt = (n: number) => `₡${Math.round(n).toLocaleString("es-CR")}`;
-
-  if (tipo === "fisica") {
-    const limites = [4181000, 6244000, 10414000, 20883000];
-    const tasas = [0.10, 0.15, 0.20, 0.25];
-    tramos.push(`Exento hasta ${fmt(limites[0])}: ₡0`);
-    if (utilidad > limites[0]) {
-      const b2 = Math.min(utilidad, limites[1]) - limites[0];
-      total += b2 * tasas[0];
-      tramos.push(`10% sobre exceso de ${fmt(limites[0])} (hasta ${fmt(limites[1])}): ${fmt(b2)} gravados ➔ ${fmt(b2 * tasas[0])}`);
-      if (utilidad > limites[1]) {
-        const b3 = Math.min(utilidad, limites[2]) - limites[1];
-        total += b3 * tasas[1];
-        tramos.push(`15% sobre exceso de ${fmt(limites[1])} (hasta ${fmt(limites[2])}): ${fmt(b3)} gravados ➔ ${fmt(b3 * tasas[1])}`);
-      }
-      if (utilidad > limites[2]) {
-        const b4 = Math.min(utilidad, limites[3]) - limites[2];
-        total += b4 * tasas[2];
-        tramos.push(`20% sobre exceso de ${fmt(limites[2])} (hasta ${fmt(limites[3])}): ${fmt(b4)} gravados ➔ ${fmt(b4 * tasas[2])}`);
-      }
-      if (utilidad > limites[3]) {
-        const b5 = utilidad - limites[3];
-        total += b5 * tasas[3];
-        tramos.push(`25% sobre exceso de ${fmt(limites[3])}: ${fmt(b5)} gravados ➔ ${fmt(b5 * tasas[3])}`);
-      }
-    }
-  } else {
-    const limites = [5713000, 8570000, 11428000];
-    const tasas = [0.05, 0.10, 0.15, 0.20];
-    const b1 = Math.min(utilidad, limites[0]);
-    total += b1 * tasas[0];
-    tramos.push(`5% sobre renta neta inicial (hasta ${fmt(limites[0])}): ${fmt(b1)} gravados ➔ ${fmt(b1 * tasas[0])}`);
-    if (utilidad > limites[0]) {
-      const b2 = Math.min(utilidad, limites[1]) - limites[0];
-      total += b2 * tasas[1];
-      tramos.push(`10% sobre exceso de ${fmt(limites[0])} (hasta ${fmt(limites[1])}): ${fmt(b2)} gravados ➔ ${fmt(b2 * tasas[1])}`);
-    }
-    if (utilidad > limites[1]) {
-      const b3 = Math.min(utilidad, limites[2]) - limites[1];
-      total += b3 * tasas[2];
-      tramos.push(`15% sobre exceso de ${fmt(limites[1])} (hasta ${fmt(limites[2])}): ${fmt(b3)} gravados ➔ ${fmt(b3 * tasas[2])}`);
-    }
-    if (utilidad > limites[2]) {
-      const b4 = utilidad - limites[2];
-      total += b4 * tasas[3];
-      tramos.push(`20% sobre exceso de ${fmt(limites[2])}: ${fmt(b4)} gravados ➔ ${fmt(b4 * tasas[3])}`);
-    }
-  }
-
-  return { total: Math.round(total * 100) / 100, tramos };
-}
-
-function construirReporteD101(anio: number, company: Company, facturasAnio: any[], notasCreditoAnio: any[], notasDebitoAnio: any[], comprasCxPAnio: number, gastosManuales: GastosManualesAnuales, yaCerrado: boolean, fechaCierre: string | null): ReporteD101 {
+function construirReporteD101(anio: number, company: Company, facturasAnio: any[], notasCreditoAnio: any[], notasDebitoAnio: any[], comprasCxPAnio: number, gastosManuales: GastosManualesAnuales, yaCerrado: boolean, fechaCierre: string | null, parametrosRenta: ParametrosRenta | null): ReporteD101 {
   // Una Nota de Débito ACEPTADA es un ingreso adicional y una Nota de Crédito ACEPTADA (parcial o
   // de anulación) lo rebaja — igual que en el D-104, cada una en el año en que se emitió.
   const sumar = (docs: any[], campo: string) => docs.reduce((s, f) => s + (Number(f[campo]) || 0), 0);
@@ -1058,8 +1004,18 @@ function construirReporteD101(anio: number, company: Company, facturasAnio: any[
   const ivaAnual = sumar(facturasAnio, "totalIva") + sumar(notasDebitoAnio, "totalIva") - sumar(notasCreditoAnio, "totalIva");
   const totalGastosDeducibles = comprasCxPAnio + gastosManuales.alquileres + gastosManuales.servicios + gastosManuales.planilla + gastosManuales.otros;
   const utilidadNeta = Math.max(0, ventasNetas - totalGastosDeducibles);
-  const tipoContribuyente: "fisica" | "juridica" = company.tipoIdentificacion === "01" ? "fisica" : "juridica";
-  const { total: impuestoRenta, tramos } = calcularImpuestoRenta(utilidadNeta, tipoContribuyente);
+  // Cédula física (01) y DIMEX (03) son personas físicas; jurídica (02) y NITE (04) tributan como jurídicas.
+  const tipoContribuyente: "fisica" | "juridica" = company.tipoIdentificacion === "01" || company.tipoIdentificacion === "03" ? "fisica" : "juridica";
+  // Los ingresos brutos (ventas sin IVA) deciden si una persona jurídica califica para la escala reducida.
+  let impuestoRenta = 0;
+  let tramos: string[] = ["No hay tramos de renta configurados: el administrador SaaS debe registrarlos en Administración SaaS › Tramos de renta."];
+  if (parametrosRenta) {
+    const calculo = calcularImpuestoRenta(utilidadNeta, tipoContribuyente, ventasNetas, parametrosRenta);
+    impuestoRenta = calculo.total;
+    tramos = parametrosRenta.anio === anio
+      ? calculo.tramos
+      : [`No hay tramos registrados para ${anio}: se usaron los del período ${parametrosRenta.anio}. Verifique los vigentes.`, ...calculo.tramos];
+  }
   const redondear2 = (n: number) => Math.round(n * 100) / 100;
 
   return {
@@ -1074,6 +1030,7 @@ function construirReporteD101(anio: number, company: Company, facturasAnio: any[
     utilidadNeta: redondear2(utilidadNeta),
     impuestoRenta,
     tramos,
+    referenciaTramos: parametrosRenta ? `${parametrosRenta.referenciaLegal || 'Tramos registrados'} (período ${parametrosRenta.anio})` : null,
     cantidadFacturas: facturasAnio.length,
     cantidadNotasCredito: notasCreditoAnio.length,
     cantidadNotasDebito: notasDebitoAnio.length,
@@ -1345,16 +1302,25 @@ async function startServer() {
         }
       }
 
+      // Plazos de crédito (Parámetros contables): si no vienen se conserva el guardado o el predeterminado de la BD.
+      const plazoOpcional = (v: any) => (v == null || v === "" ? null : Number(v));
+      const plazoClientes = plazoOpcional(c.plazoCreditoClientesDias);
+      const plazoProveedores = plazoOpcional(c.plazoCreditoProveedoresDias);
+      if ([plazoClientes, plazoProveedores].some(v => v != null && !(Number.isInteger(v) && v > 0))) {
+        return res.status(400).json({ error: "Los plazos de crédito deben ser un número entero de días mayor que cero." });
+      }
+
       if (dbConnected && pool) {
         if (c.id) {
           const [exists] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [c.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, regimenSimplificado = ? WHERE id_compania = ?",
+              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, regimenSimplificado = ?, plazoCreditoClientesDias = COALESCE(?, plazoCreditoClientesDias), plazoCreditoProveedoresDias = COALESCE(?, plazoCreditoProveedoresDias) WHERE id_compania = ?",
               [
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
                 c.estadoSaas, c.maxUsuarios, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, c.requiereConfirmacionCitas ? 1 : 0,
                 c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0,
+                plazoClientes, plazoProveedores,
                 c.id
               ]
             );
@@ -1363,11 +1329,12 @@ async function startServer() {
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, requiereConfirmacionCitas, provincia, canton, distrito, otrasSenas, regimenSimplificado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, requiereConfirmacionCitas, provincia, canton, distrito, otrasSenas, regimenSimplificado, plazoCreditoClientesDias, plazoCreditoProveedoresDias) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, DEFAULT(plazoCreditoClientesDias)), COALESCE(?, DEFAULT(plazoCreditoProveedoresDias)))",
           [
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
             c.estadoSaas || 'PENDIENTE', c.maxUsuarios || 5, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, c.requiereConfirmacionCitas ? 1 : 0,
-            c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0
+            c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0,
+            plazoClientes, plazoProveedores
           ]
         );
         c.id = (result as any).insertId;
@@ -3231,6 +3198,11 @@ async function startServer() {
 
       if (!company) return res.status(404).json({ error: "Empresa no encontrada." });
       if (!paciente) return res.status(404).json({ error: "Paciente no encontrado." });
+      // Plazo de crédito: el elegido en la factura o, si no viene, el de la empresa (Personalizar › Parámetros contables).
+      const plazoCredito = condicionVenta === "02" ? Number(body.plazoCreditoDias ?? company.plazoCreditoClientesDias) : null;
+      if (condicionVenta === "02" && !(Number.isInteger(plazoCredito) && (plazoCredito as number) > 0)) {
+        return res.status(400).json({ error: "Indique un plazo de crédito en días (número entero mayor que cero)." });
+      }
       if (!company.provincia || !company.canton || !company.distrito || !company.otrasSenas) {
         return res.status(400).json({ error: "Configure la ubicación fiscal de la empresa (provincia/cantón/distrito/señas) en Configuración de Empresa antes de facturar." });
       }
@@ -3368,6 +3340,7 @@ async function startServer() {
         },
         condicionVenta,
         medioPago,
+        plazoCredito,
         lineas: lineasCalculadas,
         resumen
       });
@@ -3393,7 +3366,8 @@ async function startServer() {
         idFacturaReferencia: null,
         motivoAnulacion: null,
         medioPago,
-        montoRecibido
+        montoRecibido,
+        plazoCredito
       };
 
       if (omitirEnvioHacienda) {
@@ -3427,8 +3401,8 @@ async function startServer() {
         try {
           await connection.beginTransaction();
           const [result] = await connection.query(
-            "INSERT INTO facturas (idCompania, idCita, id_consulta, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido, xml_firmado, respuesta_hacienda) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idConsulta, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion, nuevaFactura.medioPago, nuevaFactura.montoRecibido, nuevaFactura.xmlFirmado || null, nuevaFactura.respuestaHacienda || null]
+            "INSERT INTO facturas (idCompania, idCita, id_consulta, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido, plazoCredito, xml_firmado, respuesta_hacienda) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [nuevaFactura.idCompania, nuevaFactura.idCita, nuevaFactura.idConsulta, nuevaFactura.idPaciente, nuevaFactura.clave, nuevaFactura.consecutivo, nuevaFactura.fechaEmision, nuevaFactura.ambiente, nuevaFactura.subtotal, nuevaFactura.totalIva, nuevaFactura.total, nuevaFactura.estado, nuevaFactura.mensajeError, nuevaFactura.creadaEn, nuevaFactura.condicionVenta, nuevaFactura.tipoDocumento, nuevaFactura.idFacturaReferencia, nuevaFactura.motivoAnulacion, nuevaFactura.medioPago, nuevaFactura.montoRecibido, nuevaFactura.plazoCredito, nuevaFactura.xmlFirmado || null, nuevaFactura.respuestaHacienda || null]
           );
           nuevaFactura.id = (result as any).insertId;
           await guardarLineasFactura(connection, nuevaFactura.id, nuevaFactura.lineas);
@@ -3454,12 +3428,12 @@ async function startServer() {
       // del paciente es un hecho de negocio, no algo condicionado al trámite fiscal.
       if (condicionVenta === "02") {
         const fechaEmisionSolo = nuevaFactura.fechaEmision.split("T")[0];
-        const fechaVencimiento = sumarDiasCR(fechaEmisionSolo, PLAZO_CREDITO_DIAS_DEFECTO);
+        const fechaVencimiento = sumarDiasCR(fechaEmisionSolo, plazoCredito as number);
 
         if (dbConnected && pool) {
           await pool.query(
             "INSERT INTO cuentas_cobrar (idCompania, idFactura, facturaConsecutivo, idPaciente, fechaEmision, fechaVencimiento, plazoDias, montoTotal, saldoPendiente, estado, creadaEn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?)",
-            [idCompania, nuevaFactura.id, consecutivo, idPaciente, fechaEmisionSolo, fechaVencimiento, PLAZO_CREDITO_DIAS_DEFECTO, resumen.totalComprobante, resumen.totalComprobante, new Date().toISOString()]
+            [idCompania, nuevaFactura.id, consecutivo, idPaciente, fechaEmisionSolo, fechaVencimiento, plazoCredito, resumen.totalComprobante, resumen.totalComprobante, new Date().toISOString()]
           );
         } else {
           localCuentasCobrar.push({
@@ -3470,7 +3444,7 @@ async function startServer() {
             idPaciente,
             fechaEmision: fechaEmisionSolo,
             fechaVencimiento,
-            plazoDias: PLAZO_CREDITO_DIAS_DEFECTO,
+            plazoDias: plazoCredito as number,
             montoTotal: resumen.totalComprobante,
             saldoPendiente: resumen.totalComprobante,
             estado: "PENDIENTE",
@@ -3816,6 +3790,7 @@ async function startServer() {
         receptor: { nombre: paciente.nombreCompleto, tipoIdentificacion: tipoIdReceptor, identificacion: paciente.identificacion, correoElectronico: paciente.correoElectronico || undefined },
         condicionVenta,
         medioPago: factura.medioPago || "01",
+        plazoCredito: factura.plazoCredito ?? null,
         lineas: lineasNc,
         resumen,
         referencia: { tipoDocumento: "01", numero: factura.clave, fechaEmision: factura.fechaEmision, codigo: "01", razon: motivo }
@@ -3927,6 +3902,7 @@ async function startServer() {
       mensajeError: transmision.mensajeError,
       creadaEn: new Date().toISOString(),
       condicionVenta,
+      plazoCredito: condicionVenta === "02" ? factura.plazoCredito ?? null : null,
       tipoDocumento,
       idFacturaReferencia: factura.id,
       motivoAnulacion: motivo,
@@ -3939,8 +3915,8 @@ async function startServer() {
     if (dbConnected && pool) {
       const insertarNota = async (connection: any) => {
         const [result] = await connection.query(
-          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido, xml_firmado, respuesta_hacienda) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [nota.idCompania, nota.idCita, nota.idPaciente, nota.clave, nota.consecutivo, nota.fechaEmision, nota.ambiente, nota.subtotal, nota.totalIva, nota.total, nota.estado, nota.mensajeError, nota.creadaEn, nota.condicionVenta, nota.tipoDocumento, nota.idFacturaReferencia, nota.motivoAnulacion, nota.medioPago, nota.montoRecibido, nota.xmlFirmado || null, nota.respuestaHacienda || null]
+          "INSERT INTO facturas (idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido, plazoCredito, xml_firmado, respuesta_hacienda) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [nota.idCompania, nota.idCita, nota.idPaciente, nota.clave, nota.consecutivo, nota.fechaEmision, nota.ambiente, nota.subtotal, nota.totalIva, nota.total, nota.estado, nota.mensajeError, nota.creadaEn, nota.condicionVenta, nota.tipoDocumento, nota.idFacturaReferencia, nota.motivoAnulacion, nota.medioPago, nota.montoRecibido, nota.plazoCredito, nota.xmlFirmado || null, nota.respuestaHacienda || null]
         );
         nota.id = (result as any).insertId;
         await guardarLineasFactura(connection, nota.id, nota.lineas);
@@ -3996,7 +3972,7 @@ async function startServer() {
       const fechaEmision = fechaCR();
       const nueva = {
         idCompania: factura.idCompania, idFactura: factura.id, facturaConsecutivo: factura.consecutivo, idPaciente: factura.idPaciente,
-        fechaEmision, fechaVencimiento: sumarDiasCR(fechaEmision, PLAZO_CREDITO_DIAS_DEFECTO), plazoDias: PLAZO_CREDITO_DIAS_DEFECTO,
+        fechaEmision, fechaVencimiento: sumarDiasCR(fechaEmision, factura.plazoCredito), plazoDias: factura.plazoCredito,
         montoTotal: redondear(delta), saldoPendiente: redondear(delta), estado: "PENDIENTE" as const, creadaEn: new Date().toISOString()
       };
       if (connection) {
@@ -4143,6 +4119,7 @@ async function startServer() {
         receptor: { nombre: paciente.nombreCompleto, tipoIdentificacion: tipoIdReceptor, identificacion: paciente.identificacion, correoElectronico: paciente.correoElectronico || undefined },
         condicionVenta,
         medioPago: factura.medioPago || "01",
+        plazoCredito: factura.plazoCredito ?? null,
         lineas: lineasCalculadas,
         resumen,
         referencia: { tipoDocumento: "01", numero: factura.clave, fechaEmision: factura.fechaEmision, codigo: "02", razon: motivo }
@@ -4247,6 +4224,7 @@ async function startServer() {
         receptor: { nombre: paciente.nombreCompleto, tipoIdentificacion: tipoIdReceptor, identificacion: paciente.identificacion, correoElectronico: paciente.correoElectronico || undefined },
         condicionVenta,
         medioPago,
+        plazoCredito: factura.plazoCredito ?? null,
         lineas: lineasCalculadas,
         resumen,
         referencia: { tipoDocumento: "01", numero: factura.clave, fechaEmision: factura.fechaEmision, codigo: "02", razon: motivo }
@@ -4557,6 +4535,8 @@ async function startServer() {
       if (!p.identificacion || !p.nombre) {
         return res.status(400).json({ error: "Indique identificación y nombre del proveedor." });
       }
+      const problemaIdentificacion = errorIdentificacion(p.tipoIdentificacion || "02", String(p.identificacion));
+      if (problemaIdentificacion) return res.status(400).json({ error: problemaIdentificacion });
 
       if (dbConnected && pool) {
         if (p.id) {
@@ -4626,13 +4606,27 @@ async function startServer() {
   // esta compra, y registra el movimiento — misma transacción atómica que el descuento de stock
   // en POST /api/facturas, para no desincronizar inventario si dos compras concurrentes tocan el
   // mismo artículo).
+  // Plazo de pago a proveedores configurado en la empresa (Personalizar › Parámetros contables).
+  async function plazoProveedoresEmpresa(idCompania: number): Promise<number | null> {
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT plazoCreditoProveedoresDias FROM companias WHERE id_compania = ?", [idCompania]);
+      const v = (rows as any[])[0]?.plazoCreditoProveedoresDias;
+      return v != null ? Number(v) : null;
+    }
+    return localCompanies.find(c => c.id === idCompania)?.plazoCreditoProveedoresDias ?? null;
+  }
+
   app.post("/api/cxp", requireAuth, async (req, res) => {
     try {
       const body = req.body;
       const idCompania = sessionOf(req).idCompania;
       const idProveedor = parseInt(body.idProveedor);
       const esServicio = !!body.esServicio;
-      const plazoDias = parseInt(body.plazoDias) || 30;
+      // 0 = compra de contado (antes `|| 30` la convertía en 30 días de crédito)
+      const plazoDias = body.plazoDias == null || body.plazoDias === "" ? await plazoProveedoresEmpresa(idCompania) : Number(body.plazoDias);
+      if (!(Number.isInteger(plazoDias) && (plazoDias as number) >= 0)) {
+        return res.status(400).json({ error: "Indique el plazo de crédito en días (0 si es de contado)." });
+      }
       const numeroFacturaProveedor = body.numeroFacturaProveedor ? String(body.numeroFacturaProveedor).slice(0, 100) : null;
       const notas = body.notas ? String(body.notas).slice(0, 255) : null;
       const ivaAcreditable = body.ivaAcreditable != null ? parseFloat(body.ivaAcreditable) : 0;
@@ -4881,7 +4875,8 @@ async function startServer() {
       const numeroFacturaProveedor = (parsed.numeroFacturaProv || "").slice(0, 100) || null;
       const fechaRegistro = parsed.fechaEmision ? parsed.fechaEmision.slice(0, 10) : fechaCR();
       const esContado = parsed.condicionVenta === "01";
-      const plazoDias = esContado ? 0 : Math.max(1, parsed.plazoDias || 30);
+      // Si el XML de crédito no trae <PlazoCredito>, se usa el plazo de proveedores de la empresa.
+      const plazoDias = esContado ? 0 : Math.max(1, parsed.plazoDias || (await plazoProveedoresEmpresa(idCompania)) || 1);
       const fechaVencimiento = sumarDiasCR(fechaRegistro, plazoDias);
       const montoTotal = redondear(parsed.montoTotal);
       // Crédito fiscal (D-104): solo lo da una Factura Electrónica emitida a nombre de esta empresa.
@@ -5247,6 +5242,74 @@ async function startServer() {
     }
   });
 
+  const filaAParametrosRenta = (r: any): ParametrosRenta => ({
+    anio: Number(r.anio),
+    escalaFisica: typeof r.escalaFisica === "string" ? JSON.parse(r.escalaFisica) : r.escalaFisica,
+    escalaJuridica: typeof r.escalaJuridica === "string" ? JSON.parse(r.escalaJuridica) : r.escalaJuridica,
+    topeIngresosEscalaReducida: Number(r.topeIngresosEscalaReducida),
+    tarifaGeneralJuridica: Number(r.tarifaGeneralJuridica),
+    referenciaLegal: r.referenciaLegal || "",
+    actualizadoEn: r.actualizadoEn || null
+  });
+
+  // Tramos del período pedido; si Hacienda aún no publicó (o nadie registró) los de ese año, los del
+  // período más reciente anterior — el D-101 lo advierte. Sin ninguno registrado devuelve null.
+  async function obtenerParametrosRenta(anio: number): Promise<ParametrosRenta | null> {
+    if (dbConnected && pool) {
+      const [rows] = await pool.query(
+        "SELECT * FROM parametros_renta ORDER BY (anio <= ?) DESC, ABS(anio - ?) ASC LIMIT 1",
+        [anio, anio]
+      );
+      const fila = (rows as any[])[0];
+      return fila ? filaAParametrosRenta(fila) : null;
+    }
+    const ordenados = [...localParametrosRenta].sort((a, b) => Number(b.anio <= anio) - Number(a.anio <= anio) || Math.abs(a.anio - anio) - Math.abs(b.anio - anio));
+    return ordenados[0] || null;
+  }
+
+  app.get("/api/parametros-renta", requireAuth, async (_req, res) => {
+    try {
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM parametros_renta ORDER BY anio DESC");
+        return res.json((rows as any[]).map(filaAParametrosRenta));
+      }
+      res.json([...localParametrosRenta].sort((a, b) => b.anio - a.anio));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Los tramos son nacionales (iguales para todas las empresas): solo el administrador SaaS los mantiene.
+  app.put("/api/parametros-renta/:anio", requireAuth, requireSaasAdmin, async (req, res) => {
+    try {
+      const b = req.body || {};
+      const escala = (e: any) => Array.isArray(e) ? e.map((t: any) => [t?.[0] == null || t?.[0] === "" ? null : Number(t[0]), Number(t?.[1])] as [number | null, number]) : [];
+      const p: ParametrosRenta = {
+        anio: parseInt(req.params.anio),
+        escalaFisica: escala(b.escalaFisica),
+        escalaJuridica: escala(b.escalaJuridica),
+        topeIngresosEscalaReducida: Number(b.topeIngresosEscalaReducida),
+        tarifaGeneralJuridica: Number(b.tarifaGeneralJuridica),
+        referenciaLegal: String(b.referenciaLegal || "").trim().slice(0, 255),
+        actualizadoEn: new Date().toISOString()
+      };
+      const problema = validarParametrosRenta(p);
+      if (problema) return res.status(400).json({ error: problema });
+
+      if (dbConnected && pool) {
+        await pool.query(
+          "INSERT INTO parametros_renta (anio, escalaFisica, escalaJuridica, topeIngresosEscalaReducida, tarifaGeneralJuridica, referenciaLegal, actualizadoEn) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE escalaFisica = VALUES(escalaFisica), escalaJuridica = VALUES(escalaJuridica), topeIngresosEscalaReducida = VALUES(topeIngresosEscalaReducida), tarifaGeneralJuridica = VALUES(tarifaGeneralJuridica), referenciaLegal = VALUES(referenciaLegal), actualizadoEn = VALUES(actualizadoEn)",
+          [p.anio, JSON.stringify(p.escalaFisica), JSON.stringify(p.escalaJuridica), p.topeIngresosEscalaReducida, p.tarifaGeneralJuridica, p.referenciaLegal, p.actualizadoEn]
+        );
+      } else {
+        localParametrosRenta = [...localParametrosRenta.filter(x => x.anio !== p.anio), p];
+      }
+      res.json(p);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   async function obtenerDatosD101(idCompania: number, anio: number) {
     const anioStr = String(anio);
     if (dbConnected && pool) {
@@ -5294,7 +5357,7 @@ async function startServer() {
       const [cierreRows] = await pool.query("SELECT * FROM cierres_fiscales WHERE idCompania = ? AND tipo = 'D101' AND periodo = ?", [idCompania, anioStr]);
       const cierre = (cierreRows as any[])[0];
 
-      return { company, facturasAnio, notasCreditoAnio, notasDebitoAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
+      return { company, facturasAnio, notasCreditoAnio, notasDebitoAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null, parametrosRenta: await obtenerParametrosRenta(anio) };
     } else {
       const company = localCompanies.find(c => c.id === idCompania);
       if (!company) return null;
@@ -5307,7 +5370,7 @@ async function startServer() {
         ? { alquileres: gm.alquileres, servicios: gm.servicios, planilla: gm.planilla, otros: gm.otros }
         : { alquileres: 0, servicios: 0, planilla: 0, otros: 0 };
       const cierre = localCierresFiscales.find(c => c.idCompania === idCompania && c.tipo === "D101" && c.periodo === anioStr);
-      return { company, facturasAnio, notasCreditoAnio, notasDebitoAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null };
+      return { company, facturasAnio, notasCreditoAnio, notasDebitoAnio, comprasCxPAnio, gastosManuales, yaCerrado: !!cierre, fechaCierre: cierre ? cierre.creadoEn : null, parametrosRenta: await obtenerParametrosRenta(anio) };
     }
   }
 
@@ -5318,7 +5381,7 @@ async function startServer() {
       if (!Number.isFinite(anio) || anio < 2000 || anio > 2100) return res.status(400).json({ error: "Año inválido." });
       const datos = await obtenerDatosD101(idCompania, anio);
       if (!datos) return res.status(404).json({ error: "Empresa no encontrada." });
-      res.json(construirReporteD101(anio, datos.company, datos.facturasAnio, datos.notasCreditoAnio, datos.notasDebitoAnio, datos.comprasCxPAnio, datos.gastosManuales, datos.yaCerrado, datos.fechaCierre));
+      res.json(construirReporteD101(anio, datos.company, datos.facturasAnio, datos.notasCreditoAnio, datos.notasDebitoAnio, datos.comprasCxPAnio, datos.gastosManuales, datos.yaCerrado, datos.fechaCierre, datos.parametrosRenta));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -5372,7 +5435,7 @@ async function startServer() {
       }
 
       const creadoEn = new Date().toISOString();
-      const reporte = construirReporteD101(anio, datos.company, datos.facturasAnio, datos.notasCreditoAnio, datos.notasDebitoAnio, datos.comprasCxPAnio, datos.gastosManuales, true, creadoEn);
+      const reporte = construirReporteD101(anio, datos.company, datos.facturasAnio, datos.notasCreditoAnio, datos.notasDebitoAnio, datos.comprasCxPAnio, datos.gastosManuales, true, creadoEn, datos.parametrosRenta);
 
       if (dbConnected && pool) {
         try {

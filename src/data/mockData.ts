@@ -47,6 +47,8 @@ export interface Company {
   proximoVencimiento: string | null; // 'YYYY-MM-DD'
   horarioAtencion: HorarioAtencion;
   requiereConfirmacionCitas: boolean; // si es true, las citas creadas por el cliente quedan PROGRAMADA (pendiente de confirmar) en vez de CONFIRMADA
+  plazoCreditoClientesDias?: number; // plazo por defecto de las ventas a crédito (editable en cada factura)
+  plazoCreditoProveedoresDias?: number; // plazo por defecto de las compras a crédito en CxP
   regimenSimplificado: boolean; // Régimen de Tributación Simplificada: no declara IVA por D-104 (paga cuota fija) — los reportes fiscales muestran esto solo como referencia informativa
   // Ubicación fiscal (requerida por Hacienda para el bloque Emisor.Ubicacion de la factura electrónica)
   provincia: string; // código INEC, 1 dígito
@@ -881,6 +883,7 @@ export interface Factura {
   motivoAnulacion: string | null; // en NC/ND: motivo del ajuste; en una Factura ANULADA: motivo de la anulación
   medioPago: string; // '01' Efectivo, '02' Tarjeta, '06' SINPE Móvil — catálogo de Hacienda
   montoRecibido: number | null; // solo informativo, para trazabilidad del vuelto entregado
+  plazoCredito?: number | null; // días de crédito con que se emitió (solo condicionVenta '02')
 }
 
 // CXC — Cuentas por Cobrar. Se crea automáticamente al facturar con condicionVenta='02'
@@ -1021,6 +1024,7 @@ export interface ReporteD101 {
   utilidadNeta: number;
   impuestoRenta: number;
   tramos: string[];
+  referenciaTramos?: string | null; // decreto de los tramos usados; ausente en cierres guardados antes de parametrizarlos
   cantidadFacturas: number;
   cantidadNotasCredito?: number; // opcional: los cierres guardados antes de este campo no lo traen
   cantidadNotasDebito: number;

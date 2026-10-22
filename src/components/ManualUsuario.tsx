@@ -91,6 +91,14 @@ const secciones = (perfil: string): Seccion[] => {
           ]
         },
         {
+          sub: 'Parámetros contables',
+          pasos: [
+            'En "Editar Marca", bloque "Parámetros contables", defina el plazo de crédito a clientes y el plazo de pago a proveedores, en días.',
+            'El plazo de clientes se sugiere al facturar a crédito (se puede cambiar en cada factura) y define el vencimiento de la cuenta por cobrar.',
+            'El plazo de proveedores se sugiere al registrar una compra y se usa cuando el XML del proveedor no trae plazo.'
+          ]
+        },
+        {
           sub: 'Correo de salida (SMTP)',
           pasos: [
             'Elija el proveedor (Google o Microsoft), escriba el correo remitente y la contraseña de aplicación, y pulse "Guardar Configuración SMTP".',
@@ -280,7 +288,9 @@ const secciones = (perfil: string): Seccion[] => {
           sub: 'Emitir una factura',
           pasos: [
             `Desde una cita${esLegal ? '' : ' o desde el reporte de una consulta'}, pulse "Facturar".`,
-            'Revise las líneas y el subtotal, elija el medio de pago (efectivo, tarjeta o SINPE Móvil) y, si es efectivo, el monto recibido.',
+            'Revise las líneas y el subtotal y elija la condición de venta: Contado o Crédito.',
+            'De contado: elija el medio de pago (efectivo, tarjeta, cheque, transferencia o SINPE Móvil); con efectivo puede anotar el monto recibido para calcular el vuelto.',
+            'A crédito: confirme el plazo en días (viene el de la empresa). Se crea automáticamente la cuenta por cobrar.',
             'Pulse "Emitir Factura". La opción "Modo prueba" genera el comprobante sin enviarlo a Hacienda.'
           ]
         },
@@ -288,6 +298,7 @@ const secciones = (perfil: string): Seccion[] => {
           sub: 'Historial de comprobantes',
           img: f('facturacion'),
           pasos: [
+            'Elija el mes y busque por consecutivo o cliente. Arriba ve las ventas netas sin IVA y el IVA cobrado del mes (con el mismo criterio del D-104), y cuántos comprobantes siguen sin respuesta o fueron rechazados por Hacienda.',
             'Ver / Imprimir / Reenviar: abre el comprobante, permite imprimirlo y enviarlo de nuevo al correo del cliente.',
             'Verificar estado con Hacienda: consulta si el comprobante fue aceptado o rechazado.',
             'Nota de Crédito parcial: rebaja una parte de la factura, indicando el motivo.',
@@ -298,7 +309,7 @@ const secciones = (perfil: string): Seccion[] => {
         {
           sub: 'Cuentas por cobrar',
           pasos: [
-            'Debajo del historial se listan las facturas a crédito con su estado: Pendiente, Cobrado o Vencido.',
+            'Debajo del historial se listan las facturas a crédito, las vencidas primero, con los días que faltan o que lleva de atraso.',
             'Pulse "Registrar Abono" para anotar un pago con su monto, medio de pago y referencia (por ejemplo, el número de SINPE).'
           ]
         }
@@ -318,7 +329,8 @@ const secciones = (perfil: string): Seccion[] => {
           img: f('cxp'),
           pasos: [
             'Pulse "Registrar Compra" y elija el tipo: "Gasto (sin inventario)" o "Compra de Artículos" (suma existencias al inventario).',
-            'Indique proveedor, monto total con IVA, referencia y plazo de crédito en días.',
+            'Indique proveedor, monto total con IVA, referencia y plazo de crédito en días (0 si es de contado).',
+            'La identificación del proveedor debe calzar con su tipo (física 9 dígitos, jurídica 10, DIMEX 11-12, NITE 10); si no, sus facturas no dan crédito fiscal.',
             'También puede usar "Cargar Factura XML" para importar la compra directamente desde el XML de la factura electrónica del proveedor; revise los datos y pulse "Confirmar e Importar".'
           ]
         },
@@ -349,12 +361,13 @@ const secciones = (perfil: string): Seccion[] => {
           pasos: [
             'Elija el período (D-104) o el año fiscal (D-101).',
             'El D-104 muestra el débito fiscal de las ventas, el crédito fiscal de las compras y las ventas exentas.',
-            'El D-101 calcula ventas netas, gastos deducibles, utilidad neta y el impuesto de renta estimado. Agregue los gastos anuales adicionales (planilla, alquileres) para afinar el cálculo y use "Ver desglose por tramos".',
+            'El D-101 calcula ventas netas, gastos deducibles, utilidad neta y el impuesto de renta estimado con los tramos del período (indica el decreto usado). Agregue los gastos anuales que no pasan por Cuentas por Pagar y pulse "Guardar gastos y recalcular" antes de presentar.',
+            'Una persona jurídica con ingresos brutos sobre el tope del período paga la tarifa general en lugar de la escala reducida.',
             'Si hay comprobantes sin resolver en Hacienda, el sistema le avisa: verifíquelos antes de declarar.'
           ]
         }
       ],
-      nota: 'Las cifras son una guía basada en lo registrado en el sistema; confirme siempre con su contador antes de presentar la declaración. En régimen simplificado el reporte es solo informativo.'
+      nota: 'Las cifras son una guía basada en lo registrado en el sistema; confirme siempre con su contador antes de presentar la declaración. En régimen simplificado el reporte es solo informativo. Los tramos de renta los actualiza el administrador de la plataforma cada año, cuando Hacienda publica el decreto.'
     },
     !esLegal && {
       id: 'reporteria',

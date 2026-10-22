@@ -73,6 +73,7 @@ interface AgendaCalendarProps {
   }) => Promise<Factura>;
   onVerificarEstadoFactura: (idFactura: number) => Promise<Factura>;
   ivaPorDefecto: number;
+  plazoCreditoDefecto?: number;
   themeColor: string;
   perfilCompania?: string;
 }
@@ -95,6 +96,7 @@ export default function AgendaCalendar({
   onCrearFactura,
   onVerificarEstadoFactura,
   ivaPorDefecto,
+  plazoCreditoDefecto,
   onDeleteCalendarBlock,
   themeColor,
   perfilCompania
@@ -1379,6 +1381,7 @@ export default function AgendaCalendar({
           etiquetaPersona={persona.singular}
           servicios={companyServicios}
           ivaPorDefecto={ivaPorDefecto}
+          plazoCreditoDefecto={plazoCreditoDefecto}
           cantidadesIniciales={facturaCita.idServicio ? { [facturaCita.idServicio]: 1 } : {}}
           onCrearFactura={onCrearFactura}
           onVerificarEstadoFactura={onVerificarEstadoFactura}

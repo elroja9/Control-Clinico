@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { CuentaCobrar, Patient } from '../data/mockData';
 import { Wallet, AlertCircle, DollarSign } from 'lucide-react';
 import { fechaCR } from '../utils/fechaCR';
+import { MEDIO_PAGO_ABONO, colones, fechaCorta, plazoVencimiento } from '../utils/facturacion';
 
 interface CxCManagerProps {
   cxc: CuentaCobrar[];
@@ -9,30 +10,21 @@ interface CxCManagerProps {
   onRegistrarPago: (idCuentaCobrar: number, monto: number, medioPago: string, referencia: string) => Promise<void>;
 }
 
-const MEDIOS_PAGO: Record<string, string> = {
-  '01': 'Efectivo',
-  '02': 'Tarjeta',
-  '03': 'Transferencia/SINPE',
-  '04': 'Cheque'
-};
-
-// Fecha de hoy en Costa Rica: con la fecha UTC, después de las 6 p.m. una cuenta que vence hoy ya
-// aparecía VENCIDA.
-function hoyISO(): string {
-  return fechaCR();
-}
-
+// Con la fecha de hoy en Costa Rica: con la fecha UTC, después de las 6 p.m. una cuenta que vence
+// hoy ya aparecía VENCIDA.
 function estadoEfectivo(c: CuentaCobrar): 'PENDIENTE' | 'VENCIDA' | 'PAGADA' | 'ANULADA' {
   if (c.estado !== 'PENDIENTE') return c.estado;
-  return c.fechaVencimiento < hoyISO() ? 'VENCIDA' : 'PENDIENTE';
+  return c.fechaVencimiento < fechaCR() ? 'VENCIDA' : 'PENDIENTE';
 }
 
 const ESTADO_ESTILO: Record<string, string> = {
   PENDIENTE: 'bg-amber-100 text-amber-800',
   VENCIDA: 'bg-rose-100 text-rose-800',
   PAGADA: 'bg-emerald-100 text-emerald-800',
-  ANULADA: 'bg-slate-200 text-slate-600'
+  ANULADA: 'bg-slate-200 text-slate-700'
 };
+
+const FILTROS = [['TODAS', 'Todas'], ['PENDIENTE', 'Al día'], ['VENCIDA', 'Vencidas'], ['PAGADA', 'Pagadas']] as const;
 
 export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManagerProps) {
   const [filtro, setFiltro] = useState<'TODAS' | 'PENDIENTE' | 'VENCIDA' | 'PAGADA'>('TODAS');
@@ -45,10 +37,12 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
 
   const nombrePaciente = (idPaciente: number) => patients.find(p => p.id === idPaciente)?.nombreCompleto || `Paciente #${idPaciente}`;
 
-  const ordenadas = [...cxc].sort((a, b) => b.fechaEmision.localeCompare(a.fechaEmision));
+  // Las vencidas primero (por fecha de vencimiento): es lo que tesorería tiene que gestionar hoy.
+  const ordenadas = [...cxc].sort((a, b) =>
+    Number(estadoEfectivo(b) === 'VENCIDA') - Number(estadoEfectivo(a) === 'VENCIDA') || a.fechaVencimiento.localeCompare(b.fechaVencimiento));
   const visibles = ordenadas.filter(c => filtro === 'TODAS' || estadoEfectivo(c) === filtro);
 
-  const totalPendiente = cxc.filter(c => estadoEfectivo(c) !== 'PAGADA' && c.estado === 'PENDIENTE').reduce((s, c) => s + c.saldoPendiente, 0);
+  const saldoPorCobrar = cxc.filter(c => c.estado === 'PENDIENTE').reduce((s, c) => s + c.saldoPendiente, 0);
   const totalVencido = cxc.filter(c => estadoEfectivo(c) === 'VENCIDA').reduce((s, c) => s + c.saldoPendiente, 0);
   const totalCobrado = cxc.reduce((s, c) => s + c.pagos.reduce((sp, p) => sp + p.monto, 0), 0);
 
@@ -67,7 +61,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
       return;
     }
     if (monto > c.saldoPendiente) {
-      setError(`El abono no puede superar el saldo pendiente (₡${c.saldoPendiente.toLocaleString('es-CR')}).`);
+      setError(`El abono no puede superar el saldo pendiente (${colones(c.saldoPendiente)}).`);
       return;
     }
     setGuardando(true);
@@ -82,149 +76,134 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
     }
   };
 
+  const campo = 'w-full min-h-10 bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800';
+
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5">
       <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-3">
-        <Wallet className="w-5 h-5 text-slate-500" />
+        <Wallet className="w-5 h-5 text-slate-500" aria-hidden="true" />
         <div>
           <h3 className="text-sm font-bold text-slate-800">Cuentas por Cobrar</h3>
-          <p className="text-[11px] text-slate-500">Facturas emitidas a crédito y sus abonos</p>
+          <p className="text-[11px] text-slate-600">Facturas emitidas a crédito y sus abonos</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+      <dl className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
-          <span className="text-[11px] font-bold text-amber-700 uppercase block">Pendiente</span>
-          <span className="text-sm font-bold text-amber-900">₡{totalPendiente.toLocaleString('es-CR', { maximumFractionDigits: 0 })}</span>
+          <dt className="text-[11px] font-bold text-amber-800 uppercase">Saldo por cobrar</dt>
+          <dd className="text-sm font-bold text-amber-900 tabular-nums">{colones(saldoPorCobrar)}</dd>
         </div>
         <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl">
-          <span className="text-[11px] font-bold text-rose-700 uppercase block">Vencido</span>
-          <span className="text-sm font-bold text-rose-900">₡{totalVencido.toLocaleString('es-CR', { maximumFractionDigits: 0 })}</span>
+          <dt className="text-[11px] font-bold text-rose-800 uppercase">De eso, vencido</dt>
+          <dd className="text-sm font-bold text-rose-900 tabular-nums">{colones(totalVencido)}</dd>
         </div>
         <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
-          <span className="text-[11px] font-bold text-emerald-700 uppercase block">Cobrado</span>
-          <span className="text-sm font-bold text-emerald-900">₡{totalCobrado.toLocaleString('es-CR', { maximumFractionDigits: 0 })}</span>
+          <dt className="text-[11px] font-bold text-emerald-800 uppercase">Cobrado (abonos)</dt>
+          <dd className="text-sm font-bold text-emerald-900 tabular-nums">{colones(totalCobrado)}</dd>
         </div>
-      </div>
+      </dl>
 
-      <div className="flex flex-wrap gap-1.5 mb-3">
-        {(['TODAS', 'PENDIENTE', 'VENCIDA', 'PAGADA'] as const).map(f => (
+      <div className="flex flex-wrap gap-1.5 mb-3" role="group" aria-label="Filtrar cuentas por cobrar">
+        {FILTROS.map(([f, etiqueta]) => (
           <button
             key={f}
+            type="button"
             onClick={() => setFiltro(f)}
-            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold ${filtro === f ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            aria-pressed={filtro === f}
+            className={`min-h-9 px-3 rounded-lg text-[11px] font-bold ${filtro === f ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
           >
-            {f === 'TODAS' ? 'Todas' : f.charAt(0) + f.slice(1).toLowerCase()}
+            {etiqueta}
           </button>
         ))}
       </div>
 
       {visibles.length === 0 && (
-        <p className="text-slate-500 text-xs text-center py-6">No hay cuentas por cobrar en este filtro.</p>
+        <p className="text-slate-600 text-xs text-center py-6">No hay cuentas por cobrar en este filtro.</p>
       )}
 
-      <div className="space-y-1.5">
+      <ul className="space-y-1.5">
         {visibles.map(c => {
           const estado = estadoEfectivo(c);
+          const plazo = c.estado === 'PENDIENTE' ? plazoVencimiento(c.fechaVencimiento) : null;
           return (
-            <div key={c.id} className="p-2.5 bg-white border border-slate-200 rounded-lg">
+            <li key={c.id} className="p-2.5 bg-white border border-slate-200 rounded-lg">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
                   <span className="font-semibold text-slate-800 text-xs block">{nombrePaciente(c.idPaciente)}</span>
-                  <span className="text-[11px] text-slate-500 block">
-                    Factura {c.facturaConsecutivo} &middot; Emitida {c.fechaEmision} &middot; Vence {c.fechaVencimiento}
-                  </span>
                   <span className="text-[11px] text-slate-600 block">
-                    Total ₡{c.montoTotal.toLocaleString('es-CR')} &middot; Saldo ₡{c.saldoPendiente.toLocaleString('es-CR')}
+                    Factura {c.facturaConsecutivo} &middot; Emitida {fechaCorta(c.fechaEmision)} &middot; {c.plazoDias} días &middot; Vence {fechaCorta(c.fechaVencimiento)}
+                    {plazo && <span className={`font-semibold ${plazo.vencida ? 'text-rose-700' : 'text-slate-700'}`}> ({plazo.texto})</span>}
+                  </span>
+                  <span className="text-[11px] text-slate-700 block tabular-nums">
+                    Total {colones(c.montoTotal)} &middot; <span className="font-semibold">Saldo {colones(c.saldoPendiente)}</span>
                   </span>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1 shrink-0">
                   <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${ESTADO_ESTILO[estado]}`}>{estado}</span>
                   {c.estado === 'PENDIENTE' && (
                     <button
+                      type="button"
                       onClick={() => abrirAbono(c)}
-                      title="Registrar Abono"
-                      className="p-2.5 rounded-lg text-emerald-600 hover:bg-emerald-50"
-                      aria-label="Registrar Abono"
+                      title="Registrar abono"
+                      className="w-10 h-10 flex items-center justify-center rounded-lg text-emerald-700 hover:bg-emerald-50"
+                      aria-label={`Registrar abono de ${nombrePaciente(c.idPaciente)}, factura ${c.facturaConsecutivo}`}
                     >
-                      <DollarSign className="w-3.5 h-3.5" />
+                      <DollarSign className="w-4 h-4" aria-hidden="true" />
                     </button>
                   )}
                 </div>
               </div>
 
               {c.pagos.length > 0 && (
-                <div className="mt-1.5 pl-2 border-l-2 border-slate-100 space-y-0.5">
+                <ul className="mt-1.5 pl-2 border-l-2 border-slate-100 space-y-0.5" aria-label="Abonos">
                   {c.pagos.map(p => (
-                    <p key={p.id} className="text-[11px] text-slate-500">
-                      {p.fecha} &middot; ₡{p.monto.toLocaleString('es-CR')} &middot; {MEDIOS_PAGO[p.medioPago] || p.medioPago}{p.referencia ? ` (${p.referencia})` : ''}
-                    </p>
+                    <li key={p.id} className="text-[11px] text-slate-600 tabular-nums">
+                      {fechaCorta(p.fecha)} &middot; {colones(p.monto)} &middot; {MEDIO_PAGO_ABONO[p.medioPago] || p.medioPago}{p.referencia ? ` (${p.referencia})` : ''}
+                    </li>
                   ))}
-                </div>
+                </ul>
               )}
 
               {abonandoId === c.id && (
                 <div className="mt-2.5 pt-2.5 border-t border-slate-100 space-y-2">
                   {error && (
-                    <div className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] flex items-center gap-1.5">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <div role="alert" className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                       <span>{error}</span>
                     </div>
                   )}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <div>
-                      <label className="block text-slate-600 font-medium mb-1 text-[11px]">Monto (₡)</label>
-                      <input
-                        type="number" min="0" step="0.01"
-                        value={montoAbono}
-                        onChange={(e) => setMontoAbono(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                      />
+                      <label htmlFor={`cxc-monto-${c.id}`} className="block text-slate-600 font-medium mb-1 text-[11px]">Monto (₡)</label>
+                      <input id={`cxc-monto-${c.id}`} type="number" min="0" step="0.01" inputMode="decimal" value={montoAbono} onChange={(e) => setMontoAbono(e.target.value)} className={campo} />
                     </div>
                     <div>
-                      <label className="block text-slate-600 font-medium mb-1 text-[11px]">Medio de Pago</label>
-                      <select
-                        value={medioPagoAbono}
-                        onChange={(e) => setMedioPagoAbono(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                      >
-                        {Object.entries(MEDIOS_PAGO).map(([codigo, nombre]) => (
+                      <label htmlFor={`cxc-medio-${c.id}`} className="block text-slate-600 font-medium mb-1 text-[11px]">Medio de pago</label>
+                      <select id={`cxc-medio-${c.id}`} value={medioPagoAbono} onChange={(e) => setMedioPagoAbono(e.target.value)} className={campo}>
+                        {Object.entries(MEDIO_PAGO_ABONO).map(([codigo, nombre]) => (
                           <option key={codigo} value={codigo}>{nombre}</option>
                         ))}
                       </select>
                     </div>
                     <div>
-                      <label className="block text-slate-600 font-medium mb-1 text-[11px]">Referencia</label>
-                      <input
-                        type="text"
-                        value={referenciaAbono}
-                        onChange={(e) => setReferenciaAbono(e.target.value)}
-                        placeholder="ej: # comprobante SINPE"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                      />
+                      <label htmlFor={`cxc-ref-${c.id}`} className="block text-slate-600 font-medium mb-1 text-[11px]">Referencia</label>
+                      <input id={`cxc-ref-${c.id}`} type="text" value={referenciaAbono} onChange={(e) => setReferenciaAbono(e.target.value)} placeholder="ej: # comprobante SINPE" className={campo} />
                     </div>
                   </div>
                   <div className="flex gap-2 justify-end">
-                    <button
-                      onClick={() => setAbonandoId(null)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                    >
+                    <button type="button" onClick={() => setAbonandoId(null)} className="min-h-10 px-3 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100">
                       Cancelar
                     </button>
-                    <button
-                      onClick={() => confirmarAbono(c)}
-                      disabled={guardando}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60"
-                    >
-                      {guardando ? 'Guardando…' : 'Registrar Abono'}
+                    <button type="button" onClick={() => confirmarAbono(c)} disabled={guardando} className="min-h-10 px-3 rounded-lg text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60">
+                      {guardando ? 'Guardando…' : 'Registrar abono'}
                     </button>
                   </div>
                 </div>
               )}
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ul>
     </div>
   );
 }

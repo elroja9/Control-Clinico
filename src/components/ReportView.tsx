@@ -544,6 +544,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
           nombrePaciente={patient.nombreCompleto}
           servicios={companyServicios}
           ivaPorDefecto={company.ivaPorDefecto}
+          plazoCreditoDefecto={company.plazoCreditoClientesDias}
           onCrearFactura={onCrearFactura}
           onVerificarEstadoFactura={onVerificarEstadoFactura}
           onClose={() => setFacturando(false)}

@@ -14,11 +14,6 @@
 
 import { fechaHoraCR } from "../src/utils/fechaCR";
 
-/** Plazo de crédito (en días) usado tanto en el nodo <PlazoCredito> del XML como al calcular el
- * vencimiento de la Cuenta por Cobrar (server.ts) cuando condicionVenta = '02' — una sola fuente
- * de verdad para que ambos nunca queden desincronizados. */
-export const PLAZO_CREDITO_DIAS_DEFECTO = 30;
-
 export interface EmisorFactura {
   nombre: string;
   nombreComercial: string;
@@ -290,6 +285,9 @@ export interface DatosFacturaXml {
   receptor: ReceptorFactura;
   condicionVenta: string; // '01' = contado
   medioPago: string; // '01' = efectivo, '02' = tarjeta, etc.
+  /** Días de <PlazoCredito>, obligatorio con condicionVenta = '02'. Es el mismo número con que
+   * server.ts calcula el vencimiento de la cuenta por cobrar. */
+  plazoCredito?: number | null;
   lineas: LineaFacturaCalculada[];
   resumen: ResumenCalculado;
 }
@@ -302,7 +300,10 @@ export interface DatosFacturaXml {
  * nada, así que declarar "01 Efectivo" por el total sería falso. Mismo criterio que el POS, que
  * factura a crédito así en producción. */
 function construirCuerpoComprobante(datos: DatosFacturaXml): string {
-  const { clave, consecutivo, fechaEmision, emisor, receptor, condicionVenta, medioPago, lineas, resumen } = datos;
+  const { clave, consecutivo, fechaEmision, emisor, receptor, condicionVenta, medioPago, plazoCredito, lineas, resumen } = datos;
+  if (condicionVenta === "02" && !(Number.isInteger(plazoCredito) && (plazoCredito as number) > 0)) {
+    throw new Error("Una venta a crédito necesita un plazo de crédito en días mayor que cero.");
+  }
 
   const lineasXml = lineas.map(l => `
     <LineaDetalle>
@@ -355,7 +356,7 @@ function construirCuerpoComprobante(datos: DatosFacturaXml): string {
     ${receptor.correoElectronico ? `<CorreoElectronico>${escapeXml(receptor.correoElectronico)}</CorreoElectronico>` : ""}
   </Receptor>
   <CondicionVenta>${escapeXml(condicionVenta)}</CondicionVenta>
-  ${condicionVenta === "02" ? `<PlazoCredito>${PLAZO_CREDITO_DIAS_DEFECTO}</PlazoCredito>\n  ` : ""}<DetalleServicio>${lineasXml}
+  ${condicionVenta === "02" ? `<PlazoCredito>${plazoCredito}</PlazoCredito>\n  ` : ""}<DetalleServicio>${lineasXml}
   </DetalleServicio>
   <ResumenFactura>
     <CodigoTipoMoneda>

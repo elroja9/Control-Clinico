@@ -62,9 +62,13 @@ describe('construirXmlFactura — MedioPago', () => {
   });
 
   it('se omite en una venta a crédito (todavía no se ha pagado nada)', () => {
-    const xml = construirXmlFactura({ ...base(), condicionVenta: '02' });
+    const xml = construirXmlFactura({ ...base(), condicionVenta: '02', plazoCredito: 45 });
     expect(xml).not.toContain('<MedioPago>');
-    expect(xml).toContain('<PlazoCredito>30</PlazoCredito>');
+    expect(xml).toContain('<PlazoCredito>45</PlazoCredito>');
+  });
+
+  it('rechaza una venta a crédito sin plazo', () => {
+    expect(() => construirXmlFactura({ ...base(), condicionVenta: '02' })).toThrow(/plazo de crédito/);
   });
 });
 
@@ -79,7 +83,7 @@ describe('Notas de Crédito y Débito — InformacionReferencia', () => {
   });
 
   it('omite MedioPago en la nota de una venta a crédito y lo conserva en contado', () => {
-    expect(construirXmlNotaCredito({ ...base(), condicionVenta: '02', referencia: ref })).not.toContain('<MedioPago>');
+    expect(construirXmlNotaCredito({ ...base(), condicionVenta: '02', plazoCredito: 30, referencia: ref })).not.toContain('<MedioPago>');
     expect(construirXmlNotaDebito({ ...base(), condicionVenta: '01', referencia: { ...ref, codigo: '02' } })).toContain('<MedioPago>');
   });
 

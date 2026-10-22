@@ -91,6 +91,7 @@ import ReportesFiscales from './components/ReportesFiscales';
 import ReporteriaClinica from './components/ReporteriaClinica';
 import CasosLegalesManager from './components/CasosLegalesManager';
 import ManualUsuario from './components/ManualUsuario';
+import ParametrosRentaManager from './components/ParametrosRentaManager';
 
 type TabId = 'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales' | 'reporteria' | 'casos' | 'manual';
 
@@ -771,6 +772,7 @@ export default function App() {
     condicionVenta: string;
     medioPago: string;
     montoRecibido: number | null;
+    plazoCreditoDias: number | null;
     modoPrueba: boolean;
     lineas: Array<{ idServicio: number; cantidad: number }>;
   }): Promise<Factura> => {
@@ -782,6 +784,8 @@ export default function App() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'No se pudo generar la factura.');
     setFacturas(prev => [...prev, data]);
+    // Una venta a crédito crea su cuenta por cobrar y un artículo vendido rebaja existencias
+    recargarFacturacion().catch(() => {});
     return data;
   };
 
@@ -2079,6 +2083,7 @@ export default function App() {
                   cxp={cxp.filter(c => c.idCompania === selectedCompanyId)}
                   proveedores={proveedores.filter(p => p.idCompania === selectedCompanyId)}
                   articulos={servicios.filter(s => s.idCompania === selectedCompanyId && s.tipo === 'ARTICULO')}
+                  plazoCreditoDefecto={activeCompany.plazoCreditoProveedoresDias}
                   onCrearCxp={handleCrearCxp}
                   onRegistrarPago={handleRegistrarPagoCxp}
                   onImportarXml={handleImportarXmlCxp}
@@ -2146,6 +2151,7 @@ export default function App() {
                 onAddPayment={handleAddPayment}
               />
             )}
+            {activeTab === 'saas-admin' && esSaasAdmin && <ParametrosRentaManager />}
 
             {activeTab === 'mi-perfil' && (
               <MyProfile currentUser={currentUser} onSaveUser={handleSaveUser} />
@@ -2176,6 +2182,7 @@ export default function App() {
                 onCrearFactura={handleCrearFactura}
                 onVerificarEstadoFactura={handleVerificarEstadoFactura}
                 ivaPorDefecto={activeCompany.ivaPorDefecto}
+                plazoCreditoDefecto={activeCompany.plazoCreditoClientesDias}
                 themeColor={activeCompany.colorPrimario}
                 perfilCompania={activeCompany.perfilCompania}
               />

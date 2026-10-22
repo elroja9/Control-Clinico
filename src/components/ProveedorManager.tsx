@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Proveedor } from '../data/mockData';
 import { Truck, Plus, Edit, Power } from 'lucide-react';
 import { notify } from './ui/Feedback';
+import { errorIdentificacion } from '../utils/identificacion';
 
 interface ProveedorManagerProps {
   proveedores: Proveedor[];
@@ -51,6 +52,11 @@ export default function ProveedorManager({ proveedores, onSaveProveedor }: Prove
       setError('Indique identificación y nombre del proveedor.');
       return;
     }
+    const problema = errorIdentificacion(tipoIdentificacion, identificacion.trim());
+    if (problema) {
+      setError(problema);
+      return;
+    }
     setGuardando(true);
     setError('');
     try {
@@ -93,17 +99,17 @@ export default function ProveedorManager({ proveedores, onSaveProveedor }: Prove
         {!formAbierto && (
           <button
             onClick={abrirNuevo}
-            className="flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
+            className="min-h-10 flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white px-3 rounded-lg text-xs font-semibold transition-colors"
           >
-            <Plus className="w-3.5 h-3.5" />
-            Nuevo Proveedor
+            <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+            Nuevo proveedor
           </button>
         )}
       </div>
 
       {formAbierto && (
         <form onSubmit={handleGuardar} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-3 mb-4">
-          {error && <p className="text-[11px] text-rose-600">{error}</p>}
+          {error && <p role="alert" className="text-[11px] text-rose-700 font-semibold">{error}</p>}
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div>
               <label htmlFor="proveedorm-tipo-identificacion" className="block text-slate-600 text-xs font-medium mb-1">Tipo Identificación</label>
@@ -112,15 +118,15 @@ export default function ProveedorManager({ proveedores, onSaveProveedor }: Prove
                 onChange={(e) => setTipoIdentificacion(e.target.value as '01' | '02' | '03' | '04')}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
               >
-                <option value="01">Física</option>
-                <option value="02">Jurídica</option>
-                <option value="03">DIMEX</option>
-                <option value="04">NITE</option>
+                <option value="01">Física (9 dígitos)</option>
+                <option value="02">Jurídica (10 dígitos)</option>
+                <option value="03">DIMEX (11-12 dígitos)</option>
+                <option value="04">NITE (10 dígitos)</option>
               </select>
             </div>
             <div>
               <label htmlFor="proveedorm-identificacion" className="block text-slate-600 text-xs font-medium mb-1">Identificación *</label>
-              <input id="proveedorm-identificacion" type="text" value={identificacion} onChange={(e) => setIdentificacion(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
+              <input id="proveedorm-identificacion" type="text" inputMode="numeric" value={identificacion} onChange={(e) => setIdentificacion(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800" />
             </div>
             <div className="sm:col-span-2">
               <label htmlFor="proveedorm-nombre" className="block text-slate-600 text-xs font-medium mb-1">Nombre *</label>
@@ -140,16 +146,16 @@ export default function ProveedorManager({ proveedores, onSaveProveedor }: Prove
             </div>
           </div>
           <div className="flex gap-2 justify-end">
-            <button type="button" onClick={() => setFormAbierto(false)} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100">Cancelar</button>
-            <button type="submit" disabled={guardando} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60">
+            <button type="button" onClick={() => setFormAbierto(false)} className="min-h-10 px-3 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100">Cancelar</button>
+            <button type="submit" disabled={guardando} className="min-h-10 px-3 rounded-lg text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60">
               {guardando ? 'Guardando…' : editId != null ? 'Guardar Cambios' : 'Guardar Proveedor'}
             </button>
           </div>
         </form>
       )}
 
-      <label className="flex items-center gap-1.5 text-[11px] text-slate-500 mb-2">
-        <input type="checkbox" checked={mostrarInactivos} onChange={(e) => setMostrarInactivos(e.target.checked)} />
+      <label className="inline-flex items-center gap-1.5 min-h-9 text-[11px] text-slate-600 mb-2 cursor-pointer">
+        <input type="checkbox" className="w-4 h-4" checked={mostrarInactivos} onChange={(e) => setMostrarInactivos(e.target.checked)} />
         Mostrar inactivos
       </label>
 
@@ -159,19 +165,19 @@ export default function ProveedorManager({ proveedores, onSaveProveedor }: Prove
         )}
         {visibles.map(p => (
           <div key={p.id} className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg">
-            <div>
+            <div className="min-w-0">
               <span className="font-semibold text-slate-800 text-xs block">{p.nombre}</span>
-              <span className="text-[11px] text-slate-500">{p.identificacion}{p.telefono ? ` · ${p.telefono}` : ''}{p.correo ? ` · ${p.correo}` : ''}</span>
+              <span className="text-[11px] text-slate-600 break-words">{p.identificacion}{p.telefono ? ` · ${p.telefono}` : ''}{p.correo ? ` · ${p.correo}` : ''}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${p.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
                 {p.activo ? 'Activo' : 'Inactivo'}
               </span>
-              <button onClick={() => abrirEditar(p)} title="Editar" className="p-2.5 rounded-lg text-slate-500 hover:bg-slate-100" aria-label="Editar">
-                <Edit className="w-3.5 h-3.5" />
+              <button type="button" onClick={() => abrirEditar(p)} title="Editar" className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100" aria-label={`Editar ${p.nombre}`}>
+                <Edit className="w-4 h-4" aria-hidden="true" />
               </button>
-              <button onClick={() => handleToggleActivo(p)} title={p.activo ? 'Desactivar' : 'Activar'} className="p-2.5 rounded-lg text-slate-500 hover:bg-slate-100" aria-label={p.activo ? 'Desactivar' : 'Activar'}>
-                <Power className="w-3.5 h-3.5" />
+              <button type="button" onClick={() => handleToggleActivo(p)} title={p.activo ? 'Desactivar' : 'Activar'} className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100" aria-label={`${p.activo ? 'Desactivar' : 'Activar'} ${p.nombre}`}>
+                <Power className="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
           </div>

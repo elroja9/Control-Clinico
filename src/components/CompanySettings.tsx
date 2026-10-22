@@ -142,6 +142,8 @@ export default function CompanySettings({
   const [editPerfil, setEditPerfil] = useState<PerfilCompania>(currentCompany.perfilCompania || 'Ambas');
   const [editRequiereConfirmacion, setEditRequiereConfirmacion] = useState(currentCompany.requiereConfirmacionCitas || false);
   const [editRegimenSimplificado, setEditRegimenSimplificado] = useState(currentCompany.regimenSimplificado || false);
+  const [editPlazoClientes, setEditPlazoClientes] = useState(String(currentCompany.plazoCreditoClientesDias ?? ''));
+  const [editPlazoProveedores, setEditPlazoProveedores] = useState(String(currentCompany.plazoCreditoProveedoresDias ?? ''));
   const [editProvincia, setEditProvincia] = useState(currentCompany.provincia || '');
   const [editCanton, setEditCanton] = useState(currentCompany.canton || '');
   const [editDistrito, setEditDistrito] = useState(currentCompany.distrito || '');
@@ -376,6 +378,8 @@ export default function CompanySettings({
       setEditPerfil(comp.perfilCompania || 'Ambas');
       setEditRequiereConfirmacion(comp.requiereConfirmacionCitas || false);
       setEditRegimenSimplificado(comp.regimenSimplificado || false);
+      setEditPlazoClientes(String(comp.plazoCreditoClientesDias ?? ''));
+      setEditPlazoProveedores(String(comp.plazoCreditoProveedoresDias ?? ''));
       setEditProvincia(comp.provincia || '');
       setEditCanton(comp.canton || '');
       setEditDistrito(comp.distrito || '');
@@ -411,6 +415,12 @@ export default function CompanySettings({
   };
 
   const saveEdit = () => {
+    const plazoClientes = Number(editPlazoClientes);
+    const plazoProveedores = Number(editPlazoProveedores);
+    if (![plazoClientes, plazoProveedores].every(v => Number.isInteger(v) && v > 0)) {
+      notify.error('Los plazos de crédito deben ser un número entero de días mayor que cero.');
+      return;
+    }
     onUpdateCompany({
       ...currentCompany,
       nombreComercial: editName,
@@ -425,6 +435,8 @@ export default function CompanySettings({
       perfilCompania: editPerfil,
       requiereConfirmacionCitas: editRequiereConfirmacion,
       regimenSimplificado: editRegimenSimplificado,
+      plazoCreditoClientesDias: plazoClientes,
+      plazoCreditoProveedoresDias: plazoProveedores,
       provincia: editProvincia,
       canton: editCanton,
       distrito: editDistrito,
@@ -817,6 +829,12 @@ export default function CompanySettings({
               <span className="text-slate-500 block">Citas en Línea:</span>
               <span className="font-medium text-slate-800 block">
                 {currentCompany.requiereConfirmacionCitas ? 'Requieren confirmación manual' : 'Se auto-confirman'}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-500 block">Plazos de crédito:</span>
+              <span className="font-medium text-slate-800 block">
+                Clientes {currentCompany.plazoCreditoClientesDias ?? '—'} días · Proveedores {currentCompany.plazoCreditoProveedoresDias ?? '—'} días
               </span>
             </div>
           </div>
@@ -1829,6 +1847,22 @@ export default function CompanySettings({
               </label>
             </div>
           </div>
+
+          <fieldset className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+            <legend className="px-1 text-[11px] font-bold text-slate-700 uppercase">Parámetros contables</legend>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="companyset-plazo-clientes" className="block text-slate-600 mb-1">Plazo de crédito a clientes (días)</label>
+                <input id="companyset-plazo-clientes" type="number" min="1" step="1" inputMode="numeric" value={editPlazoClientes} onChange={(e) => setEditPlazoClientes(e.target.value)} className="w-full min-h-10 bg-white border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500" />
+                <p className="text-[11px] text-slate-500 mt-0.5">Valor sugerido al facturar a crédito; se puede cambiar en cada factura. Va en el XML y define el vencimiento de la cuenta por cobrar.</p>
+              </div>
+              <div>
+                <label htmlFor="companyset-plazo-proveedores" className="block text-slate-600 mb-1">Plazo de pago a proveedores (días)</label>
+                <input id="companyset-plazo-proveedores" type="number" min="1" step="1" inputMode="numeric" value={editPlazoProveedores} onChange={(e) => setEditPlazoProveedores(e.target.value)} className="w-full min-h-10 bg-white border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500" />
+                <p className="text-[11px] text-slate-500 mt-0.5">Valor sugerido al registrar una compra en Cuentas por Pagar, y el que se usa si el XML de crédito del proveedor no trae plazo.</p>
+              </div>
+            </div>
+          </fieldset>
 
           <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
             <p className="text-[11px] font-bold text-amber-800 uppercase mb-2">Ubicación Fiscal (requerida para Facturar)</p>

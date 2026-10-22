@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Servicio, Factura, FacturaLinea } from '../data/mockData';
 import { FileMinus, FilePlus, X, AlertCircle, Check, Loader2 } from 'lucide-react';
 import { useDialog } from '../hooks/useDialog';
+import { MEDIO_PAGO_HACIENDA, colones } from '../utils/facturacion';
 
 interface AjusteFacturaModalProps {
   tipo: 'CREDITO' | 'DEBITO';
@@ -26,6 +27,8 @@ interface AjusteFacturaModalProps {
  * cubrir el total, según cuánto seleccione el usuario. */
 export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDefecto, yaAcreditado, motivoMax, onEmitir, onClose, themeColor }: AjusteFacturaModalProps) {
   const esCredito = tipo === 'CREDITO';
+  // La nota hereda la condición de la factura: sobre una venta a crédito no se cobra en el acto.
+  const pideMedioPago = !esCredito && factura.condicionVenta !== '02';
   const [cantidades, setCantidades] = useState<Record<number, number>>({});
   const [motivo, setMotivo] = useState('');
   const [medioPago, setMedioPago] = useState('01');
@@ -84,7 +87,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
       const nota = await onEmitir(factura.id, {
         motivo: motivo.trim(),
         lineas,
-        ...(esCredito ? {} : { medioPago })
+        ...(pideMedioPago ? { medioPago } : {})
       });
       setResultado(nota);
     } catch (err: any) {
@@ -104,8 +107,8 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
             <Icono className="w-5 h-5 text-white/80 shrink-0" aria-hidden="true" />
             <h3 id="titulo-ajuste-factura" className="text-sm font-bold">Nota de {esCredito ? 'crédito' : 'débito'} · Factura {factura.consecutivo}</h3>
           </div>
-          <button type="button" onClick={onClose} disabled={enviando} className="text-white hover:bg-white/15 w-9 h-9 -m-1.5 flex items-center justify-center rounded-lg transition-colors disabled:opacity-50" aria-label="Cerrar">
-            <X className="w-5 h-5" />
+          <button type="button" onClick={onClose} disabled={enviando} className="text-white hover:bg-white/15 w-10 h-10 -m-1.5 flex items-center justify-center rounded-lg transition-colors disabled:opacity-50" aria-label="Cerrar">
+            <X className="w-5 h-5" aria-hidden="true" />
           </button>
         </div>
 
@@ -129,13 +132,13 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                 <p className="font-bold uppercase">{resultado.estado}</p>
                 <p>Consecutivo: {resultado.consecutivo}</p>
                 <p className="break-all">Clave: {resultado.clave}</p>
-                <p>Total: ₡{resultado.total.toLocaleString('es-CR', { maximumFractionDigits: 2 })}</p>
+                <p>Total: {colones(resultado.total)}</p>
                 {resultado.mensajeError && <p className="mt-1">{resultado.mensajeError}</p>}
               </div>
               <button
                 type="button"
                 onClick={onClose}
-                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 rounded-xl"
+                className="w-full min-h-11 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl"
               >
                 Cerrar
               </button>
@@ -159,11 +162,11 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
               ) : (
                 <div className="space-y-1.5 max-h-64 overflow-y-auto">
                   {opciones.map(o => (
-                    <div key={o.key} className="flex items-center justify-between p-2 bg-slate-50 border border-slate-200 rounded-lg">
+                    <div key={o.key} className="flex items-center justify-between gap-2 p-2 bg-slate-50 border border-slate-200 rounded-lg">
                       <div className="min-w-0">
                         <span className="text-xs font-semibold text-slate-800 block truncate">{o.nombre}</span>
                         <span id={`ajuste-detalle-${o.key}`} className="text-[11px] text-slate-500">
-                          ₡{o.precio.toLocaleString('es-CR')}
+                          {colones(o.precio)} + IVA {o.porcentajeIva}%
                           {esCredito && ` · facturado: ${o.cantidadFacturada} · disponible: ${o.cantidadMaxima}`}
                           {o.sinCabys && <span className="text-amber-600 font-bold"> (sin CABYS)</span>}
                         </span>
@@ -184,26 +187,27 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                           setCantidades(prev => ({ ...prev, [o.key]: cantidad }));
                         }}
                         disabled={o.sinCabys || o.cantidadMaxima === 0}
-                        className="w-16 bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-center disabled:opacity-40"
+                        className="w-20 min-h-10 shrink-0 bg-white border border-slate-200 rounded-lg px-2 text-sm text-center disabled:opacity-40"
                       />
                     </div>
                   ))}
                 </div>
               )}
 
-              {!esCredito && (
+              {pideMedioPago && (
                 <div>
-                  <label htmlFor="ajustefact-medio-de-pago" className="block text-slate-600 text-xs font-bold mb-1.5">Medio de Pago</label>
+                  <label htmlFor="ajustefact-medio-de-pago" className="block text-slate-600 text-xs font-bold mb-1.5">Medio de pago</label>
                   <select id="ajustefact-medio-de-pago"
                     value={medioPago}
                     onChange={(e) => setMedioPago(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                    className="w-full min-h-10 bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
                   >
-                    <option value="01">Efectivo</option>
-                    <option value="02">Tarjeta</option>
-                    <option value="06">SINPE Móvil</option>
+                    {Object.entries(MEDIO_PAGO_HACIENDA).map(([codigo, nombre]) => <option key={codigo} value={codigo}>{nombre}</option>)}
                   </select>
                 </div>
+              )}
+              {!esCredito && factura.condicionVenta === '02' && (
+                <p className="text-[11px] text-slate-600">La factura fue a crédito: el cargo se suma a su saldo en Cuentas por Cobrar.</p>
               )}
 
               <div>
@@ -214,22 +218,22 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                   value={motivo}
                   onChange={(e) => setMotivo(e.target.value)}
                   placeholder={esCredito ? 'ej: Se cobró de más en una sesión' : 'ej: Sesión adicional no facturada'}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                  className="w-full min-h-10 bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
                 />
               </div>
 
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="text-slate-500">Subtotal</span>
-                  <span className="font-semibold text-slate-700">₡{desglose.subtotal.toLocaleString('es-CR', { maximumFractionDigits: 2 })}</span>
+                  <span className="font-semibold text-slate-700">{colones(desglose.subtotal)}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-slate-500">IVA</span>
-                  <span className="font-semibold text-slate-700">₡{desglose.iva.toLocaleString('es-CR', { maximumFractionDigits: 2 })}</span>
+                  <span className="font-semibold text-slate-700">{colones(desglose.iva)}</span>
                 </div>
                 <div className="flex items-center justify-between border-t border-slate-200 pt-1">
                   <span className="text-slate-600 font-bold">Total</span>
-                  <span className="font-bold text-slate-800">₡{desglose.total.toLocaleString('es-CR', { maximumFractionDigits: 2 })}</span>
+                  <span className="font-bold text-slate-800">{colones(desglose.total)}</span>
                 </div>
               </div>
 
@@ -243,7 +247,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                 <button
                   type="button"
                   onClick={onClose}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-4 py-2 rounded-xl"
+                  className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-4 rounded-xl"
                 >
                   Cancelar
                 </button>
@@ -251,7 +255,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                   type="button"
                   disabled={enviando || yaAcreditadaCompleta}
                   onClick={handleEmitir}
-                  className="text-white text-xs font-extrabold px-4 py-2 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-60"
+                  className="min-h-10 text-white text-xs font-extrabold px-4 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-60"
                   style={{ backgroundColor: themeColor }}
                 >
                   {enviando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
