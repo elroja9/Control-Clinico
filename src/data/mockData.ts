@@ -16,6 +16,16 @@ export interface HorarioAtencion {
   domingo: HorarioDia;
 }
 
+export type DiaSemana = keyof HorarioAtencion;
+
+export interface TramoHorario {
+  abre: string;   // 'HH:MM'
+  cierra: string; // 'HH:MM'
+}
+
+// Horario propio (fraccionado) para citas a domicilio: varios tramos por día.
+export type HorarioDomicilio = Record<DiaSemana, TramoHorario[]>;
+
 export const DEFAULT_HORARIO_ATENCION: HorarioAtencion = {
   lunes: { abre: '08:00', cierra: '18:00' },
   martes: { abre: '08:00', cierra: '18:00' },
@@ -46,6 +56,7 @@ export interface Company {
   montoMensual: number | null;
   proximoVencimiento: string | null; // 'YYYY-MM-DD'
   horarioAtencion: HorarioAtencion;
+  horarioDomicilio?: HorarioDomicilio | null; // null o sin tramos = usar horarioAtencion para citas a domicilio
   requiereConfirmacionCitas: boolean; // si es true, las citas creadas por el cliente quedan PROGRAMADA (pendiente de confirmar) en vez de CONFIRMADA
   plazoCreditoClientesDias?: number; // plazo por defecto de las ventas a crédito (editable en cada factura)
   plazoCreditoProveedoresDias?: number; // plazo por defecto de las compras a crédito en CxP

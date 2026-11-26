@@ -1,10 +1,40 @@
-import React, { useState } from 'react';
+import React, { useState, type CSSProperties, type ReactNode } from 'react';
 import { Company, User, DEFAULT_HORARIO_ATENCION, PerfilCompania } from '../data/mockData';
-import { Building, Key, User as UserIcon, Shield, Sparkles, AlertCircle, ArrowRight, ArrowLeft, Clipboard, CheckCircle2, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Building, Key, User as UserIcon, Shield, Sparkles, AlertCircle, ArrowRight, ArrowLeft, Clipboard, CheckCircle2, Eye, EyeOff, CalendarCheck, FileText, ShieldCheck } from 'lucide-react';
+import { Button } from './ui/Button';
+import { Card, CardBody } from './ui/Card';
+import { Field } from './ui/Field';
+import { Input } from './ui/Input';
+import { Select } from './ui/Select';
 
 interface LoginViewProps {
   onLoginSuccess: (user: User, company: Company | undefined) => void;
   onRegisterCompany: (company: Company, adminUser: User) => Promise<{ ok: boolean; error?: string }>;
+}
+
+const BENEFICIOS: { icon: typeof CalendarCheck; titulo: string; texto: string }[] = [
+  { icon: CalendarCheck, titulo: 'Agenda y reservas en línea', texto: 'Citas, bloqueos y recordatorios en un solo calendario.' },
+  { icon: FileText, titulo: 'Expedientes y facturación', texto: 'Historia clínica y comprobantes electrónicos de Hacienda.' },
+  { icon: ShieldCheck, titulo: 'Seguro y por clínica', texto: 'Cada centro con su marca, su equipo y sus datos separados.' }
+];
+
+// Marca visual de la pantalla de acceso: sin clínica activa se usa el teal/esmeralda clínico por defecto
+const panelStyle: CSSProperties = {
+  backgroundImage:
+    'radial-gradient(60% 50% at 85% 0%, color-mix(in oklab, var(--brand) 55%, white) 0%, transparent 70%), linear-gradient(155deg, color-mix(in oklab, var(--brand) 70%, black) 0%, color-mix(in oklab, var(--brand) 88%, black) 100%)'
+};
+
+function Alert({ tone, children }: { tone: 'error' | 'success'; children: ReactNode }) {
+  const error = tone === 'error';
+  return (
+    <div
+      role={error ? 'alert' : 'status'}
+      className={`p-3.5 rounded-control border text-sm flex items-start gap-2.5 ${error ? 'bg-danger-soft border-danger/25 text-danger' : 'bg-success-soft border-success/25 text-success'}`}
+    >
+      {error ? <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" /> : <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />}
+      <span>{children}</span>
+    </div>
+  );
 }
 
 export default function LoginView({
@@ -159,429 +189,375 @@ export default function LoginView({
     }
   };
 
-  const inputBase = 'w-full min-h-11 bg-slate-950 border border-slate-700 rounded-xl text-sm text-white placeholder:text-slate-500 hover:border-slate-600 focus:border-teal-400 transition-colors';
-  const labelBase = 'block text-slate-300 text-xs font-semibold mb-1.5';
-  const primaryBtn = 'w-full min-h-12 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 disabled:opacity-60 text-white font-bold text-sm rounded-xl transition-colors shadow-md flex items-center justify-center gap-2';
+  const passwordToggle = (
+    <button
+      type="button"
+      onClick={() => setShowPassword(v => !v)}
+      className="w-11 h-11 flex items-center justify-center text-fg-subtle hover:text-fg rounded-r-control transition-colors"
+      aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+      aria-pressed={showPassword}
+    >
+      {showPassword ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
+    </button>
+  );
+
+  const tabClass = (activa: boolean) =>
+    `min-h-10 rounded-lg text-sm font-semibold transition-colors ${activa ? 'bg-surface text-fg shadow-sm' : 'text-fg-muted hover:text-fg'}`;
 
   return (
-    <div className="surface-dark min-h-screen bg-slate-900 flex flex-col justify-center items-center px-4 py-8 relative overflow-hidden font-sans">
+    <div className="min-h-screen bg-bg font-sans text-fg lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
 
-      {/* Decorative gradient background */}
-      <div className="absolute top-0 left-0 w-full h-full bg-linear-to-b from-teal-950/20 to-slate-950/90 pointer-events-none z-0" aria-hidden="true" />
-      <div className="absolute -top-40 -left-40 w-96 h-96 rounded-full bg-teal-500/10 blur-3xl pointer-events-none" aria-hidden="true" />
-      <div className="absolute -bottom-40 -right-40 w-96 h-96 rounded-full bg-amber-500/10 blur-3xl pointer-events-none" aria-hidden="true" />
-
-      {/* Main card */}
-      <main className="w-full max-w-xl bg-slate-900/80 backdrop-blur-md rounded-3xl border border-slate-800 shadow-2xl relative z-10 p-6 sm:p-8">
-
-        {/* Logo and header */}
-        <div className="text-center mb-6">
-          <img src="/logo-tuanis-192.webp" alt="" width={80} height={80} className="w-20 h-20 mx-auto mb-3 drop-shadow-lg" />
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">TuanisBooking</h1>
-          <p className="text-sm text-slate-400 mt-1.5 max-w-sm mx-auto leading-relaxed">
-            Agenda, expedientes clínicos y facturación electrónica para clínicas y centros de bienestar en Costa Rica.
-          </p>
+      {/* Panel de marca (solo lg+) */}
+      <aside className="hidden lg:flex relative overflow-hidden flex-col justify-between p-12 xl:p-16 text-white" style={panelStyle}>
+        <div className="flex items-center gap-3">
+          <img src="/logo-tuanis-192.webp" alt="" width={48} height={48} className="w-12 h-12 rounded-card bg-white/10 p-1" />
+          <span className="text-xl font-semibold tracking-tight">TuanisBooking</span>
         </div>
 
-        {view === 'pendiente' ? (
-          <div className="text-center py-6 space-y-4" role="status">
-            <div className="inline-flex p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
-              <Clipboard className="w-8 h-8" aria-hidden="true" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-white">Registro recibido</h2>
-              <p className="text-sm text-slate-300 mt-2 max-w-sm mx-auto">
-                Tu empresa fue registrada correctamente y está pendiente de aprobación.
-                Te contactaremos pronto para activar tu cuenta.
+        <div className="max-w-md">
+          <h2 className="text-display font-semibold tracking-tight">Toda su clínica, en un solo lugar.</h2>
+          <p className="mt-3 text-base text-white/85">
+            Agenda, expedientes clínicos y facturación electrónica para clínicas y centros de bienestar en Costa Rica.
+          </p>
+          <ul className="mt-10 space-y-5">
+            {BENEFICIOS.map(({ icon: Icon, titulo, texto }) => (
+              <li key={titulo} className="flex items-start gap-3.5">
+                <span className="w-10 h-10 shrink-0 rounded-control bg-white/15 flex items-center justify-center" aria-hidden="true">
+                  <Icon className="w-5 h-5" />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold">{titulo}</p>
+                  <p className="text-sm text-white/80">{texto}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <p className="text-xs text-white/75">TuanisBooking © {new Date().getFullYear()}</p>
+      </aside>
+
+      {/* Formulario */}
+      <main className="flex flex-col justify-center items-center px-4 py-8 sm:px-8">
+        <div className="w-full max-w-xl">
+
+          {/* Marca compacta en móvil */}
+          <div className="lg:hidden text-center mb-6">
+            <img src="/logo-tuanis-192.webp" alt="" width={64} height={64} className="w-16 h-16 mx-auto mb-3" />
+            <h1 className="text-title font-semibold tracking-tight">TuanisBooking</h1>
+            <p className="text-sm text-fg-muted mt-1.5 max-w-sm mx-auto">
+              Agenda, expedientes clínicos y facturación electrónica para clínicas y centros de bienestar en Costa Rica.
+            </p>
+          </div>
+
+          <Card className="shadow-md">
+            <CardBody className="sm:p-8">
+              {/* En lg+ el h1 vive aquí; en móvil lo lleva la marca compacta */}
+              <h1 className="sr-only lg:not-sr-only lg:text-title lg:font-semibold lg:tracking-tight lg:mb-1">
+                {view === 'register' ? 'Registre su clínica' : view === 'olvide' ? 'Restablecer contraseña' : view === 'pendiente' ? 'Registro recibido' : 'Bienvenido de nuevo'}
+              </h1>
+              <p className="hidden lg:block text-sm text-fg-muted mb-6">
+                {view === 'register'
+                  ? 'Cree la cuenta de su empresa y su usuario administrador.'
+                  : view === 'login'
+                  ? 'Ingrese sus credenciales para continuar.'
+                  : ''}
               </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => { setView('login'); setUsername(''); setPassword(''); }}
-              className={primaryBtn}
-            >
-              Volver al inicio de sesión
-            </button>
-          </div>
-        ) : (
-          <>
-        {/* View switcher tab buttons */}
-        {view !== 'olvide' && (
-          <div className="grid grid-cols-2 p-1 bg-slate-950/80 border border-slate-800/80 rounded-xl mb-6" role="group" aria-label="Elegir acción">
-            <button
-              type="button"
-              aria-pressed={view === 'login'}
-              onClick={() => { setView('login'); setLoginError(''); }}
-              className={`min-h-10 rounded-lg text-sm font-bold transition-colors ${
-                view === 'login'
-                  ? 'bg-slate-800 text-white shadow-xs'
-                  : 'text-slate-400 hover:text-slate-100'
-              }`}
-            >
-              Iniciar sesión
-            </button>
-            <button
-              type="button"
-              aria-pressed={view === 'register'}
-              onClick={() => { setView('register'); setRegisterError(''); }}
-              className={`min-h-10 rounded-lg text-sm font-bold transition-colors ${
-                view === 'register'
-                  ? 'bg-slate-800 text-white shadow-xs'
-                  : 'text-slate-400 hover:text-slate-100'
-              }`}
-            >
-              Registrar empresa
-            </button>
-          </div>
-        )}
 
-        {/* 1. LOGIN VIEW */}
-        {view === 'login' && (
-          <form onSubmit={handleLoginSubmit} className="space-y-4" noValidate={false}>
-            {loginError && (
-              <div role="alert" className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-center gap-2.5">
-                <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>{loginError}</span>
-              </div>
-            )}
-
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="login-usuario" className={labelBase}>Usuario</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500" aria-hidden="true">
-                    <UserIcon className="w-4 h-4" />
+              {view === 'pendiente' ? (
+                <div className="text-center py-6 space-y-4" role="status">
+                  <div className="inline-flex p-3.5 rounded-card bg-warning-soft border border-warning/20 text-warning">
+                    <Clipboard className="w-8 h-8" aria-hidden="true" />
                   </div>
-                  <input
-                    id="login-usuario"
-                    type="text"
-                    required
-                    autoFocus
-                    autoComplete="username"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="ej: admin_escazu"
-                    aria-invalid={!!loginError}
-                    className={`${inputBase} pl-9 pr-4`}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label htmlFor="login-password" className="block text-slate-300 text-xs font-semibold">Contraseña</label>
-                  <button
-                    type="button"
-                    onClick={() => { setView('olvide'); setForgotMessage(''); setForgotUsuario(username); }}
-                    className="text-xs text-teal-300 hover:text-teal-200 hover:underline underline-offset-2 transition-colors"
+                  <div>
+                    <h2 className="text-heading font-semibold">Registro recibido</h2>
+                    <p className="text-sm text-fg-muted mt-2 max-w-sm mx-auto">
+                      Tu empresa fue registrada correctamente y está pendiente de aprobación.
+                      Te contactaremos pronto para activar tu cuenta.
+                    </p>
+                  </div>
+                  <Button
+                    size="lg"
+                    fullWidth
+                    onClick={() => { setView('login'); setUsername(''); setPassword(''); }}
                   >
-                    ¿Olvidó su contraseña?
-                  </button>
+                    Volver al inicio de sesión
+                  </Button>
                 </div>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500" aria-hidden="true">
-                    <Key className="w-4 h-4" />
-                  </div>
-                  <input
-                    id="login-password"
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••"
-                    aria-invalid={!!loginError}
-                    className={`${inputBase} pl-9 pr-12`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(v => !v)}
-                    className="absolute inset-y-0 right-0 w-11 flex items-center justify-center text-slate-400 hover:text-white rounded-r-xl transition-colors"
-                    aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                    aria-pressed={showPassword}
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-            </div>
+              ) : (
+                <>
+                  {/* Cambio entre iniciar sesión y registrar */}
+                  {view !== 'olvide' && (
+                    <div className="grid grid-cols-2 p-1 bg-surface-muted rounded-control mb-6" role="group" aria-label="Elegir acción">
+                      <button
+                        type="button"
+                        aria-pressed={view === 'login'}
+                        onClick={() => { setView('login'); setLoginError(''); }}
+                        className={tabClass(view === 'login')}
+                      >
+                        Iniciar sesión
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={view === 'register'}
+                        onClick={() => { setView('register'); setRegisterError(''); }}
+                        className={tabClass(view === 'register')}
+                      >
+                        Registrar empresa
+                      </button>
+                    </div>
+                  )}
 
-            <button type="submit" disabled={loginSubmitting} className={primaryBtn}>
-              {loginSubmitting ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : null}
-              {loginSubmitting ? 'Ingresando…' : 'Iniciar sesión'}
-              {!loginSubmitting && <ArrowRight className="w-4 h-4" aria-hidden="true" />}
-            </button>
-          </form>
-        )}
+                  {/* 1. LOGIN */}
+                  {view === 'login' && (
+                    <form onSubmit={handleLoginSubmit} className="space-y-4" noValidate={false}>
+                      {loginError && <Alert tone="error">{loginError}</Alert>}
 
-        {/* 3. FORGOT PASSWORD VIEW */}
-        {view === 'olvide' && (
-          <div className="space-y-4">
-            <button
-              type="button"
-              onClick={() => { setView('login'); setForgotMessage(''); }}
-              className="min-h-10 -ml-2 px-2 rounded-lg text-sm text-slate-300 hover:text-white hover:bg-slate-800/60 flex items-center gap-1.5 transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-              Volver al inicio de sesión
-            </button>
-            <div>
-              <h2 className="text-base font-bold text-white">Restablecer contraseña</h2>
-              <p className="text-sm text-slate-400 mt-1">
-                Indique su usuario o correo. Si la cuenta existe, le enviaremos una contraseña temporal de 8 dígitos.
-              </p>
-            </div>
+                      <Field label="Usuario">
+                        {(p) => (
+                          <Input
+                            {...p}
+                            type="text"
+                            required
+                            autoFocus
+                            autoComplete="username"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            placeholder="ej: admin_escazu"
+                            leadingIcon={<UserIcon />}
+                            invalid={!!loginError}
+                            aria-invalid={!!loginError}
+                          />
+                        )}
+                      </Field>
 
-            {forgotMessage && (
-              <div
-                role={forgotOk ? 'status' : 'alert'}
-                className={`p-3.5 rounded-xl text-sm flex items-center gap-2.5 border ${forgotOk ? 'bg-teal-500/10 border-teal-500/30 text-teal-200' : 'bg-rose-500/10 border-rose-500/30 text-rose-300'}`}
-              >
-                {forgotOk ? <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" /> : <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />}
-                <span>{forgotMessage}</span>
-              </div>
-            )}
+                      <Field
+                        label="Contraseña"
+                        labelAction={
+                          <button
+                            type="button"
+                            onClick={() => { setView('olvide'); setForgotMessage(''); setForgotUsuario(username); }}
+                            className="min-h-10 -my-2.5 px-1 text-xs font-medium text-brand-ink hover:underline underline-offset-2"
+                          >
+                            ¿Olvidó su contraseña?
+                          </button>
+                        }
+                      >
+                        {(p) => (
+                          <Input
+                            {...p}
+                            type={showPassword ? 'text' : 'password'}
+                            required
+                            autoComplete="current-password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="••••••"
+                            leadingIcon={<Key />}
+                            trailing={passwordToggle}
+                            invalid={!!loginError}
+                            aria-invalid={!!loginError}
+                          />
+                        )}
+                      </Field>
 
-            <form onSubmit={handleForgotSubmit} className="space-y-4">
-              <div>
-                <label htmlFor="olvide-usuario" className={labelBase}>Usuario o correo</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500" aria-hidden="true">
-                    <UserIcon className="w-4 h-4" />
-                  </div>
-                  <input
-                    id="olvide-usuario"
-                    type="text"
-                    required
-                    autoFocus
-                    autoComplete="username"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    value={forgotUsuario}
-                    onChange={(e) => setForgotUsuario(e.target.value)}
-                    placeholder="ej: admin_escazu"
-                    className={`${inputBase} pl-9 pr-4`}
-                  />
-                </div>
-              </div>
-              <button type="submit" disabled={forgotSubmitting} className={primaryBtn}>
-                {forgotSubmitting && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
-                {forgotSubmitting ? 'Enviando…' : 'Enviar contraseña temporal'}
-              </button>
-            </form>
-          </div>
-        )}
+                      <Button
+                        type="submit"
+                        size="lg"
+                        fullWidth
+                        loading={loginSubmitting}
+                        disabled={loginSubmitting}
+                      >
+                        {loginSubmitting ? 'Ingresando…' : 'Iniciar sesión'}
+                        {!loginSubmitting && <ArrowRight className="w-4 h-4" aria-hidden="true" />}
+                      </Button>
+                    </form>
+                  )}
 
-        {/* 2. REGISTER NEW COMPANY / SIGNUP VIEW */}
-        {view === 'register' && (
-          <form onSubmit={handleRegisterSubmit} className="space-y-5">
-            <p className="text-xs text-slate-400">Los campos marcados con <span className="text-slate-200 font-semibold">*</span> son obligatorios.</p>
+                  {/* 3. OLVIDÉ MI CONTRASEÑA */}
+                  {view === 'olvide' && (
+                    <div className="space-y-4">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="-ml-2"
+                        icon={<ArrowLeft className="w-4 h-4" aria-hidden="true" />}
+                        onClick={() => { setView('login'); setForgotMessage(''); }}
+                      >
+                        Volver al inicio de sesión
+                      </Button>
+                      <div>
+                        <h2 className="text-heading font-semibold">Restablecer contraseña</h2>
+                        <p className="text-sm text-fg-muted mt-1.5">
+                          Indique su usuario o correo. Si la cuenta existe, enviaremos una contraseña temporal de 8 dígitos al correo registrado.
+                        </p>
+                        <p className="text-sm text-fg-muted mt-1.5">
+                          Si no la ve en unos minutos, revise también las carpetas de Spam y Promociones.
+                        </p>
+                      </div>
 
-            {/* A. COMPANY DATA */}
-            <fieldset className="space-y-3">
-              <legend className="flex items-center gap-1.5 text-xs font-bold text-teal-300 uppercase tracking-wider mb-3">
-                <Building className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Información de la clínica / empresa</span>
-              </legend>
+                      {forgotMessage && <Alert tone={forgotOk ? 'success' : 'error'}>{forgotMessage}</Alert>}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="reg-nombre-comercial" className={labelBase}>Nombre comercial *</label>
-                  <input
-                    id="reg-nombre-comercial"
-                    type="text"
-                    required
-                    autoComplete="organization"
-                    value={compName}
-                    onChange={(e) => setCompName(e.target.value)}
-                    placeholder="ej: Clínica FisioMas"
-                    className={`${inputBase} px-3`}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="reg-razon-social" className={labelBase}>Razón social *</label>
-                  <input
-                    id="reg-razon-social"
-                    type="text"
-                    required
-                    value={compRazon}
-                    onChange={(e) => setCompRazon(e.target.value)}
-                    placeholder="ej: Rehab S.A."
-                    className={`${inputBase} px-3`}
-                  />
-                </div>
-              </div>
+                      <form onSubmit={handleForgotSubmit} className="space-y-4">
+                        <Field label="Usuario o correo">
+                          {(p) => (
+                            <Input
+                              {...p}
+                              type="text"
+                              required
+                              autoFocus
+                              autoComplete="username"
+                              autoCapitalize="none"
+                              spellCheck={false}
+                              value={forgotUsuario}
+                              onChange={(e) => setForgotUsuario(e.target.value)}
+                              placeholder="ej: admin_escazu"
+                              leadingIcon={<UserIcon />}
+                            />
+                          )}
+                        </Field>
+                        <Button type="submit" size="lg" fullWidth loading={forgotSubmitting}>
+                          {forgotSubmitting ? 'Enviando…' : 'Enviar contraseña temporal'}
+                        </Button>
+                      </form>
+                    </div>
+                  )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="reg-cedula" className={labelBase}>Cédula física o jurídica *</label>
-                  <input
-                    id="reg-cedula"
-                    type="text"
-                    required
-                    inputMode="numeric"
-                    value={compIdent}
-                    onChange={(e) => setCompIdent(e.target.value)}
-                    placeholder="ej: 3-102-345678"
-                    className={`${inputBase} px-3`}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="reg-correo-emisor" className={labelBase}>Correo emisor de facturas *</label>
-                  <input
-                    id="reg-correo-emisor"
-                    type="email"
-                    required
-                    autoComplete="email"
-                    value={compCorreo}
-                    onChange={(e) => setCompCorreo(e.target.value)}
-                    placeholder="ej: facturacion@clinica.com"
-                    className={`${inputBase} px-3`}
-                  />
-                </div>
-              </div>
+                  {/* 2. REGISTRO DE EMPRESA */}
+                  {view === 'register' && (
+                    <form onSubmit={handleRegisterSubmit} className="space-y-6">
+                      <p className="text-xs text-fg-muted">Los campos marcados con <span className="text-danger font-semibold">*</span> son obligatorios.</p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="reg-perfil" className={labelBase}>Tipo de servicios *</label>
-                  <select
-                    id="reg-perfil"
-                    value={compPerfil}
-                    onChange={(e) => setCompPerfil(e.target.value as PerfilCompania)}
-                    className={`${inputBase} px-3`}
-                  >
-                    <option value="Ambas">Fisioterapia y nutrición</option>
-                    <option value="Fisioterapia">Solo fisioterapia</option>
-                    <option value="Nutrición">Solo nutrición</option>
-                    <option value="Spa">Spa / bienestar (sauna, cold plunge, masajes…)</option>
-                    <option value="Legal">Despacho de abogados</option>
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="reg-color" className={labelBase}>Color de la marca *</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="color"
-                      value={compColor}
-                      onChange={(e) => setCompColor(e.target.value)}
-                      aria-label="Elegir un color personalizado"
-                      className="w-11 h-11 shrink-0 rounded-xl bg-transparent border border-slate-700 p-1"
-                    />
-                    <select
-                      id="reg-color"
-                      value={compColor}
-                      onChange={(e) => setCompColor(e.target.value)}
-                      className={`${inputBase} px-3 flex-1`}
-                    >
-                      <option value="#0f766e">Verde azulado</option>
-                      <option value="#d97706">Ámbar</option>
-                      <option value="#2563eb">Azul clínico</option>
-                      <option value="#9333ea">Púrpura</option>
-                      {!['#0f766e', '#d97706', '#2563eb', '#9333ea'].includes(compColor) && (
-                        <option value={compColor}>Personalizado ({compColor})</option>
-                      )}
-                    </select>
-                  </div>
-                </div>
-              </div>
-            </fieldset>
+                      {/* A. Datos de la empresa */}
+                      <fieldset className="space-y-4">
+                        <legend className="flex items-center gap-1.5 text-xs font-semibold text-brand-ink uppercase tracking-widest mb-4">
+                          <Building className="w-3.5 h-3.5" aria-hidden="true" />
+                          <span>Información de la clínica / empresa</span>
+                        </legend>
 
-            {/* B. ADMIN USER DATA */}
-            <fieldset className="space-y-3 pt-4 border-t border-slate-800/60">
-              <legend className="flex items-center gap-1.5 text-xs font-bold text-amber-300 uppercase tracking-wider mb-3 pt-4">
-                <Shield className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Usuario administrador</span>
-              </legend>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <Field label="Nombre comercial" required>
+                            {(p) => <Input {...p} type="text" required autoComplete="organization" value={compName} onChange={(e) => setCompName(e.target.value)} placeholder="ej: Clínica FisioMas" />}
+                          </Field>
+                          <Field label="Razón social" required>
+                            {(p) => <Input {...p} type="text" required value={compRazon} onChange={(e) => setCompRazon(e.target.value)} placeholder="ej: Rehab S.A." />}
+                          </Field>
+                        </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="reg-admin-nombre" className={labelBase}>Nombre completo *</label>
-                  <input
-                    id="reg-admin-nombre"
-                    type="text"
-                    required
-                    autoComplete="name"
-                    value={adminNombre}
-                    onChange={(e) => setAdminNombre(e.target.value)}
-                    placeholder="ej: Dra. Sofía Blanco"
-                    className={`${inputBase} px-3`}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="reg-admin-correo" className={labelBase}>Correo profesional *</label>
-                  <input
-                    id="reg-admin-correo"
-                    type="email"
-                    required
-                    autoComplete="email"
-                    value={adminCorreo}
-                    onChange={(e) => setAdminCorreo(e.target.value)}
-                    placeholder="ej: s.blanco@clinica.com"
-                    className={`${inputBase} px-3`}
-                  />
-                </div>
-              </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <Field label="Cédula física o jurídica" required>
+                            {(p) => <Input {...p} type="text" required inputMode="numeric" value={compIdent} onChange={(e) => setCompIdent(e.target.value)} placeholder="ej: 3-102-345678" />}
+                          </Field>
+                          <Field label="Correo emisor de facturas" required>
+                            {(p) => <Input {...p} type="email" required autoComplete="email" value={compCorreo} onChange={(e) => setCompCorreo(e.target.value)} placeholder="ej: facturacion@clinica.com" />}
+                          </Field>
+                        </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="reg-admin-usuario" className={labelBase}>Nombre de usuario *</label>
-                  <input
-                    id="reg-admin-usuario"
-                    type="text"
-                    required
-                    autoComplete="username"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    value={adminUser}
-                    onChange={(e) => setAdminUser(e.target.value)}
-                    placeholder="ej: s_blanco"
-                    className={`${inputBase} px-3`}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="reg-admin-password" className={labelBase}>Contraseña *</label>
-                  <div className="relative">
-                    <input
-                      id="reg-admin-password"
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      autoComplete="new-password"
-                      value={adminPass}
-                      onChange={(e) => setAdminPass(e.target.value)}
-                      placeholder="Contraseña segura"
-                      className={`${inputBase} pl-3 pr-12`}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(v => !v)}
-                      className="absolute inset-y-0 right-0 w-11 flex items-center justify-center text-slate-400 hover:text-white rounded-r-xl transition-colors"
-                      aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                      aria-pressed={showPassword}
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </fieldset>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <Field label="Tipo de servicios" required>
+                            {(p) => (
+                              <Select {...p} value={compPerfil} onChange={(e) => setCompPerfil(e.target.value as PerfilCompania)}>
+                                <option value="Ambas">Fisioterapia y nutrición</option>
+                                <option value="Fisioterapia">Solo fisioterapia</option>
+                                <option value="Nutrición">Solo nutrición</option>
+                                <option value="Spa">Spa / bienestar (sauna, cold plunge, masajes…)</option>
+                                <option value="Legal">Despacho de abogados</option>
+                              </Select>
+                            )}
+                          </Field>
+                          <Field label="Color de la marca" required>
+                            {(p) => (
+                              <div className="flex gap-2">
+                                <input
+                                  type="color"
+                                  value={compColor}
+                                  onChange={(e) => setCompColor(e.target.value)}
+                                  aria-label="Elegir un color personalizado"
+                                  className="w-11 h-11 shrink-0 rounded-control bg-surface border border-border-strong p-1"
+                                />
+                                <Select {...p} value={compColor} onChange={(e) => setCompColor(e.target.value)} wrapperClassName="flex-1 min-w-0">
+                                  <option value="#0f766e">Verde azulado</option>
+                                  <option value="#d97706">Ámbar</option>
+                                  <option value="#2563eb">Azul clínico</option>
+                                  <option value="#9333ea">Púrpura</option>
+                                  {!['#0f766e', '#d97706', '#2563eb', '#9333ea'].includes(compColor) && (
+                                    <option value={compColor}>Personalizado ({compColor})</option>
+                                  )}
+                                </Select>
+                              </div>
+                            )}
+                          </Field>
+                        </div>
+                      </fieldset>
 
-            {registerError && (
-              <div role="alert" className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-sm flex items-center gap-2.5">
-                <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>{registerError}</span>
-              </div>
-            )}
+                      {/* B. Usuario administrador */}
+                      <fieldset className="space-y-4 pt-6 border-t border-border">
+                        <legend className="flex items-center gap-1.5 text-xs font-semibold text-brand-ink uppercase tracking-widest mb-4 pt-6">
+                          <Shield className="w-3.5 h-3.5" aria-hidden="true" />
+                          <span>Usuario administrador</span>
+                        </legend>
 
-            <button type="submit" disabled={registerSubmitting} className={primaryBtn}>
-              {registerSubmitting ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Sparkles className="w-4 h-4 text-amber-300" aria-hidden="true" />}
-              {registerSubmitting ? 'Registrando…' : 'Registrar empresa y cuenta'}
-            </button>
-          </form>
-        )}
-          </>
-        )}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <Field label="Nombre completo" required>
+                            {(p) => <Input {...p} type="text" required autoComplete="name" value={adminNombre} onChange={(e) => setAdminNombre(e.target.value)} placeholder="ej: Dra. Sofía Blanco" />}
+                          </Field>
+                          <Field label="Correo profesional" required>
+                            {(p) => <Input {...p} type="email" required autoComplete="email" value={adminCorreo} onChange={(e) => setAdminCorreo(e.target.value)} placeholder="ej: s.blanco@clinica.com" />}
+                          </Field>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <Field label="Nombre de usuario" required>
+                            {(p) => (
+                              <Input
+                                {...p}
+                                type="text"
+                                required
+                                autoComplete="username"
+                                autoCapitalize="none"
+                                spellCheck={false}
+                                value={adminUser}
+                                onChange={(e) => setAdminUser(e.target.value)}
+                                placeholder="ej: s_blanco"
+                              />
+                            )}
+                          </Field>
+                          <Field label="Contraseña" required>
+                            {(p) => (
+                              <Input
+                                {...p}
+                                type={showPassword ? 'text' : 'password'}
+                                required
+                                autoComplete="new-password"
+                                value={adminPass}
+                                onChange={(e) => setAdminPass(e.target.value)}
+                                placeholder="Contraseña segura"
+                                trailing={passwordToggle}
+                              />
+                            )}
+                          </Field>
+                        </div>
+                      </fieldset>
+
+                      {registerError && <Alert tone="error">{registerError}</Alert>}
+
+                      <Button
+                        type="submit"
+                        size="lg"
+                        fullWidth
+                        loading={registerSubmitting}
+                        icon={!registerSubmitting ? <Sparkles className="w-4 h-4" aria-hidden="true" /> : undefined}
+                      >
+                        {registerSubmitting ? 'Registrando…' : 'Registrar empresa y cuenta'}
+                      </Button>
+                    </form>
+                  )}
+                </>
+              )}
+            </CardBody>
+          </Card>
+        </div>
       </main>
     </div>
   );

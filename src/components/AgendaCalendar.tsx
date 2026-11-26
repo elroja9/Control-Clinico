@@ -4,6 +4,7 @@ import FacturarModal from './FacturarModal';
 import { notify, confirmar } from './ui/Feedback';
 import { useDialog } from '../hooks/useDialog';
 import { terminoPersona } from '../utils/terminoPersona';
+import { formatearColones, ivaEfectivo, precioConIva } from '../utils/precios';
 import {
   Calendar as CalendarIcon,
   Clock,
@@ -1210,7 +1211,7 @@ export default function AgendaCalendar({
                   >
                     <option value="">-- Sin servicio específico (duración manual) --</option>
                     {companyServicios.map(s => (
-                      <option key={s.id} value={s.id}>{s.nombre} ({s.duracionMinutos} min)</option>
+                      <option key={s.id} value={s.id}>{s.nombre} ({s.duracionMinutos} min) · {formatearColones(precioConIva(s.precio, ivaEfectivo(s, ivaPorDefecto)))} IVA incl.</option>
                     ))}
                   </select>
                 </div>

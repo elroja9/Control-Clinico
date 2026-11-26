@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import PlantillaDietaManager from './PlantillaDietaManager';
-import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, DEFAULT_HORARIO_ATENCION, Servicio, PorcentajeDieta, PlantillaDieta, PerfilCompania } from '../data/mockData';
+import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, HorarioDomicilio, DiaSemana, DEFAULT_HORARIO_ATENCION, Servicio, PorcentajeDieta, PlantillaDieta, PerfilCompania } from '../data/mockData';
 import CorreoEntranteSettings from './CorreoEntranteSettings';
 import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
-import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X } from 'lucide-react';
+import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X, Loader2 } from 'lucide-react';
 import { notify, confirmar } from './ui/Feedback';
+import { baseDesdePrecioConIva, formatearColones, ivaEfectivo, precioConIva } from '../utils/precios';
 
 // Contadores de consecutivo que el Administrador puede corregir (ver POST /api/hacienda-config).
 const CAMPOS_CONSECUTIVO = [
@@ -12,6 +13,45 @@ const CAMPOS_CONSECUTIVO = [
   { campo: 'ultimoConsecutivoNc', etiqueta: 'Notas de Crédito' },
   { campo: 'ultimoConsecutivoNd', etiqueta: 'Notas de Débito' }
 ] as const;
+
+const MAX_TRAMOS_DOMICILIO = 4;
+const DIAS_HORARIO: DiaSemana[] = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
+
+function horarioDomicilioVacio(): HorarioDomicilio {
+  return { lunes: [], martes: [], miercoles: [], jueves: [], viernes: [], sabado: [], domingo: [] };
+}
+
+// Normaliza lo que llega de la empresa (puede ser null o venir incompleto).
+function horarioDomicilioDesdeEmpresa(h: HorarioDomicilio | null | undefined): HorarioDomicilio {
+  const base = horarioDomicilioVacio();
+  if (!h) return base;
+  for (const dia of DIAS_HORARIO) base[dia] = (h[dia] || []).map(t => ({ abre: t.abre, cierra: t.cierra }));
+  return base;
+}
+
+function tramosDesdeHorarioAtencion(horario: HorarioAtencion): HorarioDomicilio {
+  const resultado = horarioDomicilioVacio();
+  for (const dia of DIAS_HORARIO) {
+    const { abre, cierra } = horario[dia];
+    if (abre && cierra) resultado[dia] = [{ abre, cierra }];
+  }
+  return resultado;
+}
+
+// Devuelve un mensaje de error por día con tramos inválidos (abre < cierra, sin solapes).
+function validarHorarioDomicilio(h: HorarioDomicilio): Partial<Record<DiaSemana, string>> {
+  const errores: Partial<Record<DiaSemana, string>> = {};
+  for (const dia of DIAS_HORARIO) {
+    const tramos = h[dia];
+    if (tramos.some(t => !t.abre || !t.cierra)) { errores[dia] = 'Complete la hora de apertura y de cierre de cada tramo.'; continue; }
+    if (tramos.some(t => t.abre >= t.cierra)) { errores[dia] = 'La hora de apertura debe ser menor que la de cierre.'; continue; }
+    const ordenados = [...tramos].sort((a, b) => (a.abre < b.abre ? -1 : a.abre > b.abre ? 1 : 0));
+    for (let i = 1; i < ordenados.length; i++) {
+      if (ordenados[i].abre < ordenados[i - 1].cierra) { errores[dia] = 'Los tramos no pueden solaparse.'; break; }
+    }
+  }
+  return errores;
+}
 
 interface CompanySettingsProps {
   companies: Company[];
@@ -74,6 +114,10 @@ export default function CompanySettings({
 
   const [horario, setHorario] = useState<HorarioAtencion>(currentCompany.horarioAtencion || DEFAULT_HORARIO_ATENCION);
   const [horarioGuardado, setHorarioGuardado] = useState(false);
+  const [domicilioActivo, setDomicilioActivo] = useState<boolean>(
+    DIAS_HORARIO.some(d => (currentCompany.horarioDomicilio?.[d]?.length ?? 0) > 0)
+  );
+  const [horarioDom, setHorarioDom] = useState<HorarioDomicilio>(horarioDomicilioDesdeEmpresa(currentCompany.horarioDomicilio));
 
   // Porcentajes de Déficit/Superávit para Dietas
   const [nuevoPorcentaje, setNuevoPorcentaje] = useState('');
@@ -99,6 +143,8 @@ export default function CompanySettings({
   const [servicioTipo, setServicioTipo] = useState<'SERVICIO' | 'ARTICULO'>('SERVICIO');
   const [servicioNombre, setServicioNombre] = useState('');
   const [servicioPrecio, setServicioPrecio] = useState('');
+  const [servicioPrecioConIva, setServicioPrecioConIva] = useState('');
+  const [servicioPrecioEditado, setServicioPrecioEditado] = useState<'base' | 'total'>('base');
   const [servicioIva, setServicioIva] = useState('');
   const [servicioDuracion, setServicioDuracion] = useState('30');
   const [servicioCabys, setServicioCabys] = useState('');
@@ -124,6 +170,8 @@ export default function CompanySettings({
     setNewUserContrasena('');
     setNewUserRol('Profesional');
     setHorario(currentCompany.horarioAtencion || DEFAULT_HORARIO_ATENCION);
+    setDomicilioActivo(DIAS_HORARIO.some(d => (currentCompany.horarioDomicilio?.[d]?.length ?? 0) > 0));
+    setHorarioDom(horarioDomicilioDesdeEmpresa(currentCompany.horarioDomicilio));
     setIsServicioFormOpen(false);
     setMensajeServiciosDefecto('');
   }, [selectedCompanyId]);
@@ -178,6 +226,7 @@ export default function CompanySettings({
   const [smtpRemitenteCorreo, setSmtpRemitenteCorreo] = useState('');
   const [smtpRecordatorioHoras, setSmtpRecordatorioHoras] = useState(24);
   const [smtpActivo, setSmtpActivo] = useState(false);
+  const [smtpProbando, setSmtpProbando] = useState(false);
 
   // --- Hacienda Digital Signature State ---
   const [haciendaAmbiente, setHaciendaAmbiente] = useState<'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL'>('SANDBOX');
@@ -338,6 +387,29 @@ export default function CompanySettings({
       setHaciendaMensaje({ tipo: 'error', texto: err.message });
     } finally {
       setHaciendaGuardando(false);
+    }
+  };
+
+  // Prueba el SMTP guardado: el servidor envía el correo solo al correo del usuario en sesión.
+  const handleProbarSmtp = async () => {
+    setSmtpProbando(true);
+    try {
+      const res = await fetch('/api/smtp-configs/probar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idCompania: selectedCompanyId })
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        const destino = Array.isArray(data.accepted) && data.accepted.length > 0 ? data.accepted.join(', ') : 'su correo';
+        notify.success(`Correo de prueba enviado a ${destino}.`);
+      } else {
+        notify.error(data.error || 'No se pudo enviar el correo de prueba.');
+      }
+    } catch (err: any) {
+      notify.error(err.message || 'No se pudo enviar el correo de prueba.');
+    } finally {
+      setSmtpProbando(false);
     }
   };
 
@@ -554,11 +626,46 @@ export default function CompanySettings({
 
   const companyServicios = servicios.filter(s => s.idCompania === currentCompany.id);
 
+  // Precio sin IVA y precio con IVA van sincronizados: se recalcula el campo que NO se editó
+  // por última vez. `precio` se guarda como la base (hasta 5 decimales).
+  const ivaDelFormulario = (ivaTexto: string): number => {
+    const parsed = ivaTexto.trim() === '' ? NaN : parseFloat(ivaTexto);
+    return ivaEfectivo({ porcentajeIva: Number.isFinite(parsed) ? parsed : null }, currentCompany.ivaPorDefecto);
+  };
+
+  const handlePrecioBaseChange = (valor: string) => {
+    setServicioPrecio(valor);
+    setServicioPrecioEditado('base');
+    const base = parseFloat(valor);
+    setServicioPrecioConIva(Number.isFinite(base) ? String(precioConIva(base, ivaDelFormulario(servicioIva))) : '');
+  };
+
+  const handlePrecioConIvaChange = (valor: string) => {
+    setServicioPrecioConIva(valor);
+    setServicioPrecioEditado('total');
+    const total = parseFloat(valor);
+    setServicioPrecio(Number.isFinite(total) ? String(baseDesdePrecioConIva(total, ivaDelFormulario(servicioIva))) : '');
+  };
+
+  const handleServicioIvaChange = (valor: string) => {
+    setServicioIva(valor);
+    const iva = ivaDelFormulario(valor);
+    if (servicioPrecioEditado === 'total') {
+      const total = parseFloat(servicioPrecioConIva);
+      if (Number.isFinite(total)) setServicioPrecio(String(baseDesdePrecioConIva(total, iva)));
+    } else {
+      const base = parseFloat(servicioPrecio);
+      if (Number.isFinite(base)) setServicioPrecioConIva(String(precioConIva(base, iva)));
+    }
+  };
+
   const openNewServicioForm = () => {
     setServicioEditId(null);
     setServicioTipo('SERVICIO');
     setServicioNombre('');
     setServicioPrecio('');
+    setServicioPrecioConIva('');
+    setServicioPrecioEditado('base');
     setServicioIva('');
     setServicioDuracion('30');
     setServicioCabys('');
@@ -575,7 +682,9 @@ export default function CompanySettings({
     setServicioEditId(s.id);
     setServicioTipo(s.tipo || 'SERVICIO');
     setServicioNombre(s.nombre);
-    setServicioPrecio(s.precio.toString());
+    setServicioPrecio(String(Number(s.precio)));
+    setServicioPrecioConIva(String(precioConIva(s.precio, ivaEfectivo(s, currentCompany.ivaPorDefecto))));
+    setServicioPrecioEditado('base');
     setServicioIva(s.porcentajeIva != null ? s.porcentajeIva.toString() : '');
     setServicioDuracion(s.duracionMinutos.toString());
     setServicioCabys(s.codigoCabys || '');
@@ -704,8 +813,43 @@ export default function CompanySettings({
     viernes: 'Viernes', sabado: 'Sábado', domingo: 'Domingo'
   };
 
+  // --- Horario de citas a domicilio (tramos fraccionados por día) ---
+  const DIAS_ORDEN = Object.keys(diasLabel) as DiaSemana[];
+
+  const handleToggleDomicilio = (activo: boolean) => {
+    setDomicilioActivo(activo);
+    // Al activarlo por primera vez se precarga con el horario de atención.
+    if (activo && DIAS_ORDEN.every(d => horarioDom[d].length === 0)) setHorarioDom(tramosDesdeHorarioAtencion(horario));
+  };
+
+  const handleCopiarHorarioAtencion = () => setHorarioDom(tramosDesdeHorarioAtencion(horario));
+
+  const handleAgregarTramo = (dia: DiaSemana) => {
+    setHorarioDom(prev => prev[dia].length >= MAX_TRAMOS_DOMICILIO
+      ? prev
+      : { ...prev, [dia]: [...prev[dia], { abre: '08:00', cierra: '12:00' }] });
+  };
+
+  const handleQuitarTramo = (dia: DiaSemana, indice: number) => {
+    setHorarioDom(prev => ({ ...prev, [dia]: prev[dia].filter((_, i) => i !== indice) }));
+  };
+
+  const handleCambiarTramo = (dia: DiaSemana, indice: number, campo: 'abre' | 'cierra', valor: string) => {
+    setHorarioDom(prev => ({ ...prev, [dia]: prev[dia].map((t, i) => i === indice ? { ...t, [campo]: valor } : t) }));
+  };
+
+  const erroresDomicilio = domicilioActivo ? validarHorarioDomicilio(horarioDom) : {};
+  const hayErroresDomicilio = Object.keys(erroresDomicilio).length > 0;
+
   const handleGuardarHorario = () => {
-    onUpdateCompany({ ...currentCompany, horarioAtencion: horario });
+    if (hayErroresDomicilio) return;
+    const hayTramos = DIAS_ORDEN.some(d => horarioDom[d].length > 0);
+    onUpdateCompany({
+      ...currentCompany,
+      horarioAtencion: horario,
+      // Apagado (o sin ningún tramo) = null: se usa el horario de atención.
+      horarioDomicilio: domicilioActivo && hayTramos ? horarioDom : null
+    });
     setHorarioGuardado(true);
     setTimeout(() => setHorarioGuardado(false), 2500);
   };
@@ -996,7 +1140,16 @@ export default function CompanySettings({
             </div>
           </div>
 
-          <div className="flex justify-end pt-1">
+          <div className="flex justify-end items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={handleProbarSmtp}
+              disabled={smtpProbando}
+              className="px-5 py-2 rounded-xl font-bold flex items-center gap-1.5 border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {smtpProbando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+              Enviar correo de prueba
+            </button>
             <button
               type="submit"
               className="text-white px-5 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
@@ -1358,13 +1511,24 @@ export default function CompanySettings({
                   />
                 </div>
                 <div>
-                  <label htmlFor="companyset-precio" className="block text-slate-600 font-medium mb-1">Precio (₡) *</label>
+                  <label htmlFor="companyset-precio" className="block text-slate-600 font-medium mb-1">Precio sin IVA (₡) *</label>
                   <input id="companyset-precio"
                     type="number"
                     min="0"
-                    step="0.01"
+                    step="any"
                     value={servicioPrecio}
-                    onChange={(e) => setServicioPrecio(e.target.value)}
+                    onChange={(e) => handlePrecioBaseChange(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="companyset-precio-con-iva" className="block text-slate-600 font-medium mb-1">Precio con IVA (precio final) (₡)</label>
+                  <input id="companyset-precio-con-iva"
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={servicioPrecioConIva}
+                    onChange={(e) => handlePrecioConIvaChange(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
                   />
                 </div>
@@ -1389,7 +1553,7 @@ export default function CompanySettings({
                     max="100"
                     step="0.01"
                     value={servicioIva}
-                    onChange={(e) => setServicioIva(e.target.value)}
+                    onChange={(e) => handleServicioIvaChange(e.target.value)}
                     placeholder={`${currentCompany.ivaPorDefecto}%`}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
                   />
@@ -1531,9 +1695,11 @@ export default function CompanySettings({
                         </span>
                       </span>
                       <span className="text-[11px] text-slate-500 block">
-                        ₡{s.precio.toLocaleString('es-CR')}
+                        <span className="text-xs font-bold text-slate-800">{formatearColones(precioConIva(s.precio, ivaEfectivo(s, currentCompany.ivaPorDefecto)))}</span>
                         {esArticulo ? ` · Existencia: ${s.stock ?? 0}` : ` · ${s.duracionMinutos} min`}
-                        {' · IVA '}{s.porcentajeIva != null ? `${s.porcentajeIva}%` : `${currentCompany.ivaPorDefecto}% (por defecto)`}
+                      </span>
+                      <span className="text-[11px] text-slate-500 block">
+                        sin IVA {formatearColones(Number(s.precio))} · IVA {ivaEfectivo(s, currentCompany.ivaPorDefecto)}%{s.porcentajeIva == null ? ' (por defecto)' : ''}
                       </span>
                       <div className="flex items-center gap-1.5 mt-1">
                         {!s.codigoCabys && (
@@ -1667,7 +1833,8 @@ export default function CompanySettings({
           <div className="flex items-center gap-2.5">
             <button
               onClick={handleGuardarHorario}
-              className="text-white px-3 py-1.5 rounded-lg font-semibold"
+              disabled={hayErroresDomicilio}
+              className="text-white px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ backgroundColor: currentCompany.colorPrimario }}
             >
               Guardar Horario
@@ -1677,6 +1844,104 @@ export default function CompanySettings({
                 <Check className="w-3.5 h-3.5" /> Horario guardado
               </span>
             )}
+          </div>
+        </div>
+      )}
+
+      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
+        <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-xs">
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
+            <Clock className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
+            <div>
+              <h4 className="font-bold text-slate-800">Horario de citas a domicilio</h4>
+              <p className="text-[11px] text-slate-500">Ej.: 08:00–12:00 y 14:00–18:00. Se usa para las horas disponibles de citas a domicilio en la página pública.</p>
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 text-slate-700 font-semibold">
+            <input type="checkbox" checked={domicilioActivo} onChange={(e) => handleToggleDomicilio(e.target.checked)} />
+            Usar un horario distinto para citas a domicilio
+          </label>
+
+          {domicilioActivo && (
+            <>
+              <div>
+                <button
+                  type="button"
+                  onClick={handleCopiarHorarioAtencion}
+                  className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  Copiar horario de atención
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                {DIAS_ORDEN.map(dia => {
+                  const tramos = horarioDom[dia];
+                  const error = erroresDomicilio[dia];
+                  return (
+                    <div key={dia} className="p-2 bg-white border border-slate-200 rounded-lg space-y-1.5">
+                      <div className="flex items-start gap-2.5">
+                        <span className="w-20 pt-1 font-semibold text-slate-700">{diasLabel[dia]}</span>
+                        <div className="flex-1 space-y-1.5">
+                          {tramos.length === 0 && <p className="pt-1 text-slate-500">Sin atención a domicilio</p>}
+                          {tramos.map((t, i) => (
+                            <div key={i} className="flex items-center gap-2">
+                              <input
+                                type="time"
+                                value={t.abre}
+                                aria-label={`${diasLabel[dia]} tramo ${i + 1}: abre`}
+                                onChange={(e) => handleCambiarTramo(dia, i, 'abre', e.target.value)}
+                                className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1"
+                              />
+                              <span className="text-slate-500">a</span>
+                              <input
+                                type="time"
+                                value={t.cierra}
+                                aria-label={`${diasLabel[dia]} tramo ${i + 1}: cierra`}
+                                onChange={(e) => handleCambiarTramo(dia, i, 'cierra', e.target.value)}
+                                className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleQuitarTramo(dia, i)}
+                                aria-label={`Quitar tramo ${i + 1} de ${diasLabel[dia]}`}
+                                className="p-1 rounded-lg text-slate-500 hover:text-red-600 hover:bg-red-50"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                          {tramos.length < MAX_TRAMOS_DOMICILIO && (
+                            <button
+                              type="button"
+                              onClick={() => handleAgregarTramo(dia)}
+                              className="font-semibold"
+                              style={{ color: currentCompany.colorPrimario }}
+                            >
+                              + Agregar tramo
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {error && <p className="text-red-600 font-semibold" role="alert">{error}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={handleGuardarHorario}
+              disabled={hayErroresDomicilio}
+              className="text-white px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ backgroundColor: currentCompany.colorPrimario }}
+            >
+              Guardar Horario
+            </button>
+            {hayErroresDomicilio && <span className="text-red-600 font-semibold">Corrija los tramos marcados para guardar.</span>}
           </div>
         </div>
       )}

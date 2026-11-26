@@ -439,6 +439,25 @@ export function renderNuevaEmpresaEmail(params: {
   return { subject, html: emailShell(platformCompany, title, bodyHtml), text };
 }
 
+// Correo de prueba de la configuración SMTP: no lleva datos clínicos ni de pacientes.
+export function renderSmtpTestEmail(params: {
+  company: Company;
+}): RenderedEmail {
+  const { company } = params;
+  const title = "Prueba de Correo SMTP";
+  const subject = `${title} - ${company.nombreComercial}`;
+
+  const bodyHtml = `
+    <p>Este es un correo de prueba enviado desde la configuración SMTP de su empresa.</p>
+    <p>Si usted lo está leyendo, el servidor de correo saliente funciona correctamente. No es necesario responder.</p>
+    <p style="margin-top:16px;font-weight:bold;">${escapeHtml(company.nombreComercial)}</p>
+  `;
+
+  const text = `${title}\n\nEste es un correo de prueba enviado desde la configuración SMTP de su empresa.\nSi usted lo está leyendo, el servidor de correo saliente funciona correctamente. No es necesario responder.\n\n${company.nombreComercial}`;
+
+  return { subject, html: emailShell(company, title, bodyHtml), text };
+}
+
 export function renderPasswordResetEmail(params: {
   company: Company;
   user: User;

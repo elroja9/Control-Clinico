@@ -17,10 +17,18 @@ export interface OutgoingEmail {
   attachments?: AdjuntoEmail[];
 }
 
-export async function sendMail(config: CompaniaSmtpConfig, message: OutgoingEmail): Promise<void> {
+/** Resultado resumido del envío (messageId y destinatarios aceptados/rechazados por el SMTP). */
+export interface ResultadoEnvio {
+  messageId: string;
+  accepted: string[];
+  rejected: string[];
+}
+
+/** Crea el transporte nodemailer a partir de la configuración SMTP guardada de una empresa. */
+export function createTransportFromConfig(config: CompaniaSmtpConfig) {
   const password = decryptSecret(config.smtpPasswordCifrado);
 
-  const transporter = nodemailer.createTransport({
+  return nodemailer.createTransport({
     host: config.smtpHost,
     port: config.smtpPort,
     secure: config.smtpSeguridad === "SSL",
@@ -31,8 +39,12 @@ export async function sendMail(config: CompaniaSmtpConfig, message: OutgoingEmai
       pass: password,
     },
   });
+}
 
-  await transporter.sendMail({
+export async function sendMail(config: CompaniaSmtpConfig, message: OutgoingEmail): Promise<ResultadoEnvio> {
+  const transporter = createTransportFromConfig(config);
+
+  const info = await transporter.sendMail({
     from: `"${config.remitenteNombre}" <${config.remitenteCorreo}>`,
     to: message.to,
     subject: message.subject,
@@ -40,4 +52,7 @@ export async function sendMail(config: CompaniaSmtpConfig, message: OutgoingEmai
     text: message.text,
     attachments: message.attachments,
   });
+
+  const comoLista = (v: unknown): string[] => (Array.isArray(v) ? v.map(d => (typeof d === "string" ? d : (d as any)?.address ?? String(d))) : []);
+  return { messageId: info.messageId, accepted: comoLista(info.accepted), rejected: comoLista(info.rejected) };
 }

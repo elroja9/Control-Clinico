@@ -37,21 +37,22 @@ import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda, e
 import type { AmbienteHacienda, EstadoHaciendaResultado } from "./server/haciendaApi";
 import { fechaCR, sumarDiasCR } from "./src/utils/fechaCR";
 import { errorIdentificacion } from "./src/utils/identificacion";
+import { ivaEfectivo, precioConIva } from "./src/utils/precios";
 import { serviciosDefectoParaPerfil } from "./server/serviciosDefecto";
 import { parsearFacturaProveedorXML } from "./server/xmlProveedorParser";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
-import { sendMail } from "./server/mailer";
+import { sendMail, createTransportFromConfig } from "./server/mailer";
 import type { AdjuntoEmail } from "./server/mailer";
 import { generarPdfDesdeHtml } from "./server/pdf";
 import { renderFacturaPdf, renderConsultaPacientePdf } from "./server/pdfTemplates";
-import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderFacturaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail, renderRecordatorioDocumentosEmail } from "./server/emailTemplates";
+import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderFacturaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail, renderRecordatorioDocumentosEmail, renderSmtpTestEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
 import { tocaRecordatorio } from "./server/recordatoriosCasos";
 import { calcularImpuestoRenta, validarParametrosRenta } from "./server/impuestoRenta";
 import type { ParametrosRenta } from "./server/impuestoRenta";
 import { recolectarComprobantes, verificarConexionImap, listarCarpetas, carpetasDe } from "./server/correoProveedores";
 import type { ConfigImap, AvanceCarpeta } from "./server/correoProveedores";
-import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales, PorcentajeDieta, PlantillaDieta, CasoLegal, DocumentoCaso, NotificationLog, CompaniaImapConfig } from "./src/data/mockData";
+import type { Company, Patient, Cita, Consultation, CalendarBlock, CompanyPayment, HorarioAtencion, HorarioDomicilio, DiaSemana, Servicio, Factura, CuentaCobrar, PagoCuentaCobrar, Proveedor, CuentaPagar, PagoCuentaPagar, ReporteD104, ReporteD101, GastosManualesAnuales, PorcentajeDieta, PlantillaDieta, CasoLegal, DocumentoCaso, NotificationLog, CompaniaImapConfig } from "./src/data/mockData";
 import { DEFAULT_HORARIO_ATENCION } from "./src/data/mockData";
 import { createServer as createViteServer } from "vite";
 import {
@@ -339,16 +340,35 @@ function horarioDelDia(horario: HorarioAtencion | string | null | undefined, fec
   return efectivo[diaSemana];
 }
 
-function generarSlotsCandidatos(abre: string, cierra: string): string[] {
-  const slots: string[] = [];
-  let [h, m] = abre.split(":").map(Number);
-  const [hFin, mFin] = cierra.split(":").map(Number);
-  while (h < hFin || (h === hFin && m < mFin)) {
-    slots.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
-    m += 30;
-    if (m >= 60) { m -= 60; h += 1; }
+// Tramos de atención de un día para un tipo de visita. Para DOMICILIO, si la empresa configuró un
+// horario propio (algún tramo en la semana) se usa ese (puede ser [] = sin atención ese día); en
+// cualquier otro caso se usa el horario de atención general (un único tramo, o [] si cerrado).
+function tramosDelDia(
+  company: { horarioAtencion?: HorarioAtencion | string | null; horarioDomicilio?: HorarioDomicilio | null } | undefined,
+  fecha: string,
+  tipoVisita: "CONSULTORIO" | "DOMICILIO"
+): Array<{ abre: string; cierra: string }> {
+  const hd = company?.horarioDomicilio;
+  if (tipoVisita === "DOMICILIO" && hd && HORARIO_DIAS.some(d => (hd[d]?.length ?? 0) > 0)) {
+    const diaSemana = DIAS_SEMANA[new Date(`${fecha}T00:00:00`).getDay()];
+    return [...(hd[diaSemana] ?? [])].sort((a, b) => (a.abre < b.abre ? -1 : a.abre > b.abre ? 1 : 0));
   }
-  return slots;
+  const { abre, cierra } = horarioDelDia(company?.horarioAtencion, fecha);
+  return abre && cierra ? [{ abre, cierra }] : [];
+}
+
+function generarSlotsCandidatos(tramos: Array<{ abre: string; cierra: string }>): string[] {
+  const slots = new Set<string>();
+  for (const { abre, cierra } of tramos) {
+    let [h, m] = abre.split(":").map(Number);
+    const [hFin, mFin] = cierra.split(":").map(Number);
+    while (h < hFin || (h === hFin && m < mFin)) {
+      slots.add(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+      m += 30;
+      if (m >= 60) { m -= 60; h += 1; }
+    }
+  }
+  return [...slots].sort();
 }
 
 function minutosDesdeMedianoche(hhmm: string): number {
@@ -368,10 +388,9 @@ function slotLibre(params: {
   bloqueosDelDia: CalendarBlock[];
   fecha: string;
   horaCandidato: string;
-  abreMin: number;
-  cierraMin: number;
+  tramos: Array<{ abre: string; cierra: string }>;
 }): boolean {
-  const { candidatoInicioMin, duracionMin, citasDelDia, bloqueosDelDia, fecha, horaCandidato, abreMin, cierraMin } = params;
+  const { candidatoInicioMin, duracionMin, citasDelDia, bloqueosDelDia, fecha, horaCandidato, tramos } = params;
   const candidatoFinMin = candidatoInicioMin + duracionMin;
 
   // generarSlotsCandidatos() solo genera horas de INICIO anteriores al cierre — no garantiza
@@ -379,12 +398,16 @@ function slotLibre(params: {
   // ofrecía como "libre" un inicio a las 17:30 con cierre a las 18:00 (terminaría a las 18:30,
   // media hora después de cerrado). Verificado contra datos reales: la cita #15 de ELRONUTRI
   // quedó agendada viernes 17:30–18:30 con horario de cierre 18:00.
-  if (candidatoFinMin > cierraMin) return false;
+  // Con horario fraccionado, la cita completa debe caber dentro de UN solo tramo.
+  const cabeEnUnTramo = tramos.some(t =>
+    candidatoInicioMin >= minutosDesdeMedianoche(t.abre) && candidatoFinMin <= minutosDesdeMedianoche(t.cierra)
+  );
+  if (!cabeEnUnTramo) return false;
   // El listado de disponibilidad (generarSlotsCandidatos) nunca ofrece horas antes de la
   // apertura, pero POST /api/public/citas reutiliza esta misma función para re-verificar el
   // horario justo antes de guardar — sin este límite inferior, una llamada directa al API (sin
-  // pasar por el listado) podía agendar antes de que abra el negocio.
-  if (candidatoInicioMin < abreMin) return false;
+  // pasar por el listado) podía agendar antes de que abra el negocio (cubierto arriba por el
+  // límite inferior de cabeEnUnTramo).
 
   for (const b of bloqueosDelDia) {
     if (fecha < b.fechaInicio || fecha > b.fechaFin) continue;
@@ -750,6 +773,91 @@ async function guardarHorarioAtencionCompania(connection: any, idCompania: numbe
   );
 }
 
+// --- Horario propio (fraccionado) para citas a domicilio: compania_horario_domicilio ---
+// Una fila por tramo (id_compania, dia, abre, cierra). Si la tabla aún no existe (migración sin
+// aplicar), la lectura devuelve null y la escritura se omite sin romper el guardado de la empresa.
+class HorarioDomicilioInvalidoError extends Error {}
+
+const HHMM_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function normalizarHorarioDomicilio(h: any): HorarioDomicilio | null {
+  if (h == null) return null;
+  if (typeof h !== "object" || Array.isArray(h)) throw new HorarioDomicilioInvalidoError("Horario a domicilio inválido.");
+  const resultado = {} as HorarioDomicilio;
+  for (const dia of HORARIO_DIAS) {
+    const tramosEntrada = h[dia] ?? [];
+    if (!Array.isArray(tramosEntrada)) throw new HorarioDomicilioInvalidoError(`Horario a domicilio inválido para ${dia}.`);
+    const tramos = tramosEntrada.map((t: any) => ({ abre: String(t?.abre ?? ""), cierra: String(t?.cierra ?? "") }));
+    for (const t of tramos) {
+      if (!HHMM_REGEX.test(t.abre) || !HHMM_REGEX.test(t.cierra)) {
+        throw new HorarioDomicilioInvalidoError(`Horario a domicilio (${dia}): use el formato HH:MM.`);
+      }
+      if (t.abre >= t.cierra) {
+        throw new HorarioDomicilioInvalidoError(`Horario a domicilio (${dia}): la hora de apertura debe ser menor que la de cierre.`);
+      }
+    }
+    tramos.sort((a: any, b: any) => (a.abre < b.abre ? -1 : a.abre > b.abre ? 1 : 0));
+    for (let i = 1; i < tramos.length; i++) {
+      if (tramos[i].abre < tramos[i - 1].cierra) {
+        throw new HorarioDomicilioInvalidoError(`Horario a domicilio (${dia}): los tramos no pueden solaparse.`);
+      }
+    }
+    resultado[dia] = tramos;
+  }
+  return resultado;
+}
+
+async function fetchHorarioDomicilioCompania(idCompania: number): Promise<HorarioDomicilio | null> {
+  if (!pool) return null;
+  let rows: any[];
+  try {
+    [rows] = (await pool.query("SELECT dia, abre, cierra FROM compania_horario_domicilio WHERE id_compania = ? ORDER BY abre", [idCompania])) as any;
+  } catch (err: any) {
+    if (err?.code === "ER_NO_SUCH_TABLE") return null;
+    throw err;
+  }
+  if (rows.length === 0) return null;
+  const horario = {} as HorarioDomicilio;
+  for (const dia of HORARIO_DIAS) horario[dia] = [];
+  for (const row of rows) {
+    if ((HORARIO_DIAS as readonly string[]).includes(row.dia)) {
+      horario[row.dia as DiaSemana].push({ abre: row.abre, cierra: row.cierra });
+    }
+  }
+  return horario;
+}
+
+// `horario` ya debe venir validado con normalizarHorarioDomicilio. null = borrar (usar horario de atención).
+async function guardarHorarioDomicilioCompania(idCompania: number, horario: HorarioDomicilio | null): Promise<void> {
+  if (!pool) return;
+  let connection: any;
+  try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+    await connection.query("DELETE FROM compania_horario_domicilio WHERE id_compania = ?", [idCompania]);
+    if (horario) {
+      for (const dia of HORARIO_DIAS) {
+        for (const t of horario[dia] ?? []) {
+          await connection.query(
+            "INSERT INTO compania_horario_domicilio (id_compania, dia, abre, cierra) VALUES (?, ?, ?, ?)",
+            [idCompania, dia, t.abre, t.cierra]
+          );
+        }
+      }
+    }
+    await connection.commit();
+  } catch (err: any) {
+    if (connection) { try { await connection.rollback(); } catch { /* sin transacción activa */ } }
+    if (err?.code === "ER_NO_SUCH_TABLE") {
+      console.warn("[horario-domicilio] La tabla compania_horario_domicilio no existe; se omite el guardado del horario a domicilio. Aplique la migración SQL.");
+      return;
+    }
+    throw err;
+  } finally {
+    if (connection) connection.release();
+  }
+}
+
 // --- Normalización Fase 2: factura_lineas ---
 // A diferencia de las 3 evaluaciones, varios campos que la app guardaba en el JSON son alias
 // exactos de otro (verificado en server/haciendaFactura.ts::calcularLineas: subTotal === montoTotal,
@@ -1069,7 +1177,10 @@ async function startServer() {
     if (dbConnected && pool) {
       const [rows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [id]);
       const company = (rows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
-      if (company) company.horarioAtencion = await fetchHorarioAtencionCompania(company.id);
+      if (company) {
+        company.horarioAtencion = await fetchHorarioAtencionCompania(company.id);
+        company.horarioDomicilio = await fetchHorarioDomicilioCompania(company.id);
+      }
       return company;
     }
     return localCompanies.find(c => c.id === id);
@@ -1175,6 +1286,60 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // --- Utilidades de "olvidé mi contraseña" (límite de frecuencia en memoria y enmascarado) ---
+  const FORGOT_USUARIO_VENTANA_MS = 5 * 60 * 1000;   // 1 envío por usuario cada 5 minutos
+  const FORGOT_IP_VENTANA_MS = 15 * 60 * 1000;       // 10 solicitudes por IP cada 15 minutos
+  const FORGOT_IP_MAX = 10;
+  const forgotUsuarioUltimoEnvio = new Map<number | string, number>();
+  const forgotIpSolicitudes = new Map<string, number[]>();
+
+  // Elimina entradas vencidas para que los Map no crezcan indefinidamente.
+  function limpiarForgotPassword(ahora: number) {
+    for (const [id, t] of forgotUsuarioUltimoEnvio) {
+      if (ahora - t >= FORGOT_USUARIO_VENTANA_MS) forgotUsuarioUltimoEnvio.delete(id);
+    }
+    for (const [ip, marcas] of forgotIpSolicitudes) {
+      const vigentes = marcas.filter(t => ahora - t < FORGOT_IP_VENTANA_MS);
+      if (vigentes.length === 0) forgotIpSolicitudes.delete(ip);
+      else forgotIpSolicitudes.set(ip, vigentes);
+    }
+  }
+
+  // Registra la solicitud de la IP y devuelve true si ya superó el máximo de la ventana.
+  function forgotPasswordIpLimitada(ip: string): boolean {
+    const ahora = Date.now();
+    limpiarForgotPassword(ahora);
+    const marcas = forgotIpSolicitudes.get(ip) || [];
+    if (marcas.length >= FORGOT_IP_MAX) return true;
+    marcas.push(ahora);
+    forgotIpSolicitudes.set(ip, marcas);
+    return false;
+  }
+
+  // Devuelve true si a este usuario ya se le envió una clave hace menos de 5 minutos; si no,
+  // reserva el cupo (así dos solicitudes simultáneas no envían dos correos).
+  function forgotPasswordUsuarioLimitado(idUsuario: number | string): boolean {
+    const ahora = Date.now();
+    const ultimo = forgotUsuarioUltimoEnvio.get(idUsuario);
+    if (ultimo !== undefined && ahora - ultimo < FORGOT_USUARIO_VENTANA_MS) return true;
+    forgotUsuarioUltimoEnvio.set(idUsuario, ahora);
+    return false;
+  }
+
+  // Enmascara un correo para los registros: el***@gmail.com
+  function enmascararCorreo(correo: string): string {
+    const [local, dominio] = String(correo).split("@");
+    if (!dominio) return "***";
+    return `${local.slice(0, 2)}***@${dominio}`;
+  }
+
+  // Identificador (usuario o correo) truncado para los registros.
+  function truncarIdentificador(identificador: string): string {
+    return identificador.includes("@")
+      ? enmascararCorreo(identificador)
+      : `${identificador.slice(0, 3)}${identificador.length > 3 ? "***" : ""}`;
+  }
+
   // Restablecimiento de contraseña — pública (sin sesión) por definición: el usuario que la pide
   // no puede iniciar sesión. Genera una contraseña temporal de 8 dígitos y la envía SOLO al
   // correo ya registrado para esa cuenta (nunca a uno que mande el cliente en el body, para que
@@ -1186,6 +1351,12 @@ async function startServer() {
       const identificador = String(req.body?.usuario || "").trim().toLowerCase();
       if (!identificador) {
         return res.status(400).json({ error: "Indique su usuario o correo." });
+      }
+
+      // Límite por IP: cuenta toda solicitud, exista o no el usuario.
+      if (forgotPasswordIpLimitada(req.ip || "desconocida")) {
+        console.warn(`[ForgotPassword] Límite por IP superado (ip=${req.ip}); no se procesa la solicitud.`);
+        return res.json(respuestaGenerica);
       }
 
       let user: any;
@@ -1200,6 +1371,13 @@ async function startServer() {
       }
 
       if (!user || !user.correo) {
+        console.warn(`[ForgotPassword] ${!user ? "Sin coincidencia de usuario" : `Usuario id=${user.id} sin correo registrado`} para el identificador "${truncarIdentificador(identificador)}".`);
+        return res.json(respuestaGenerica);
+      }
+
+      // Límite por usuario: se responde igual de genérico (sin enviar ni cambiar nada).
+      if (forgotPasswordUsuarioLimitado(user.id)) {
+        console.warn(`[ForgotPassword] Límite por usuario superado (usuario id=${user.id}, ip=${req.ip}); no se envía nada.`);
         return res.json(respuestaGenerica);
       }
 
@@ -1225,8 +1403,22 @@ async function startServer() {
         return res.json(respuestaGenerica);
       }
 
+      // Primero se envía el correo y SOLO si el SMTP lo acepta se guarda el hash: si el envío
+      // falla, la contraseña actual del usuario queda intacta (no se bloquea la cuenta con una
+      // clave que nunca recibió).
       const nuevaContrasena = generateNumericPassword(8);
       const hash = hashPassword(nuevaContrasena);
+
+      const rendered = renderPasswordResetEmail({ company, user, nuevaContrasena });
+      let envio;
+      try {
+        envio = await sendMail(smtpConfig, { to: user.correo, subject: rendered.subject, html: rendered.html, text: rendered.text });
+      } catch (err: any) {
+        console.error("[ForgotPassword] Fallo SMTP al enviar a usuario id=" + user.id + ":", err.code, err.responseCode, err.message);
+        // El envío falló: se libera el cupo para que pueda reintentar sin esperar 5 minutos.
+        forgotUsuarioUltimoEnvio.delete(user.id);
+        return res.json(respuestaGenerica);
+      }
 
       if (dbConnected && pool) {
         await pool.query("UPDATE usuarios SET contrasena = ? WHERE id_usuario = ?", [hash, user.id]);
@@ -1234,8 +1426,7 @@ async function startServer() {
         localUsers = localUsers.map(u => u.id === user.id ? { ...u, contrasena: hash } : u);
       }
 
-      const rendered = renderPasswordResetEmail({ company, user, nuevaContrasena });
-      await sendMail(smtpConfig, { to: user.correo, subject: rendered.subject, html: rendered.html, text: rendered.text });
+      console.log(`[ForgotPassword] Contraseña temporal enviada: usuario id=${user.id}, destinatario=${enmascararCorreo(user.correo)}, messageId=${envio.messageId}, accepted=${JSON.stringify(envio.accepted.map(enmascararCorreo))}, rejected=${JSON.stringify(envio.rejected.map(enmascararCorreo))}`);
 
       res.json(respuestaGenerica);
     } catch (err: any) {
@@ -1278,7 +1469,10 @@ async function startServer() {
           ? await pool.query("SELECT * FROM companias")
           : await pool.query("SELECT * FROM companias WHERE id_compania = ?", [session.idCompania]);
         const companias = (rows as any[]).map(row => normalizeRow(row, 'id_compania'));
-        await Promise.all(companias.map(async c => { c.horarioAtencion = await fetchHorarioAtencionCompania(c.id); }));
+        await Promise.all(companias.map(async c => {
+          c.horarioAtencion = await fetchHorarioAtencionCompania(c.id);
+          c.horarioDomicilio = await fetchHorarioDomicilioCompania(c.id);
+        }));
         res.json(companias);
       } else {
         res.json(isSaasAdmin(session) ? localCompanies : localCompanies.filter(c => c.id === session.idCompania));
@@ -1310,6 +1504,15 @@ async function startServer() {
         return res.status(400).json({ error: "Los plazos de crédito deben ser un número entero de días mayor que cero." });
       }
 
+      // Horario de citas a domicilio: undefined = no viene (se conserva), null = usar horario de atención.
+      let horarioDomicilioNormalizado: HorarioDomicilio | null | undefined;
+      try {
+        horarioDomicilioNormalizado = c.horarioDomicilio === undefined ? undefined : normalizarHorarioDomicilio(c.horarioDomicilio);
+      } catch (err: any) {
+        if (err instanceof HorarioDomicilioInvalidoError) return res.status(400).json({ error: err.message });
+        throw err;
+      }
+
       if (dbConnected && pool) {
         if (c.id) {
           const [exists] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [c.id]);
@@ -1325,6 +1528,7 @@ async function startServer() {
               ]
             );
             await guardarHorarioAtencionCompania(pool, c.id, c.horarioAtencion);
+            if (horarioDomicilioNormalizado !== undefined) await guardarHorarioDomicilioCompania(c.id, horarioDomicilioNormalizado);
             return res.json(c);
           }
         }
@@ -1339,6 +1543,7 @@ async function startServer() {
         );
         c.id = (result as any).insertId;
         await guardarHorarioAtencionCompania(pool, c.id, c.horarioAtencion);
+        if (horarioDomicilioNormalizado !== undefined) await guardarHorarioDomicilioCompania(c.id, horarioDomicilioNormalizado);
 
         // Servicios por defecto según el colegio profesional correspondiente
         // (Fisioterapia/Nutrición/Ambas únicamente — Spa no aplica).
@@ -1379,6 +1584,7 @@ async function startServer() {
 
         res.json(c);
       } else {
+        if (horarioDomicilioNormalizado !== undefined) c.horarioDomicilio = horarioDomicilioNormalizado;
         if (c.id) {
           localCompanies = localCompanies.map(item => item.id === c.id ? c : item);
         } else {
@@ -5573,6 +5779,67 @@ async function startServer() {
     }
   });
 
+  // Prueba de la configuración SMTP: verifica la conexión/credenciales y envía un correo de
+  // prueba ÚNICAMENTE al correo del usuario de la sesión (leído de la BD, nunca del body),
+  // para que el endpoint no pueda usarse como relay de correo.
+  app.post("/api/smtp-configs/probar", requireAuth, async (req, res) => {
+    try {
+      const session = sessionOf(req);
+      const idCompania = parseInt(req.body?.idCompania);
+      if (!Number.isInteger(idCompania)) {
+        return res.status(400).json({ ok: false, error: "Indique la empresa a probar." });
+      }
+      if (!isSaasAdmin(session) && !(session.rol === "Administrador" && canAccessCompany(session, idCompania))) {
+        return res.status(403).json({ ok: false, error: "No autorizado." });
+      }
+
+      let smtpConfig: CompaniaSmtpConfig | undefined;
+      let correoDestino = "";
+      if (dbConnected && pool) {
+        const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [idCompania]);
+        const smtpRow = (smtpRows as any[])[0];
+        smtpConfig = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
+        const [userRows] = await pool.query("SELECT correo FROM usuarios WHERE id_usuario = ?", [session.userId]);
+        correoDestino = String((userRows as any[])[0]?.correo || "").trim();
+      } else {
+        smtpConfig = localSmtpConfigs.find(s => s.idCompania === idCompania);
+        correoDestino = String(localUsers.find(u => u.id === session.userId)?.correo || "").trim();
+      }
+
+      if (!smtpConfig || !smtpConfig.smtpHost || !smtpConfig.smtpPasswordCifrado) {
+        return res.status(400).json({ ok: false, error: "Guarde primero la configuración SMTP (servidor, usuario y contraseña) de esta empresa." });
+      }
+      if (!correoDestino) {
+        return res.status(400).json({ ok: false, error: "Su usuario no tiene un correo registrado para recibir la prueba." });
+      }
+      const company = await fetchCompanyById(idCompania);
+      if (!company) {
+        return res.status(404).json({ ok: false, error: "Empresa no encontrada." });
+      }
+
+      const detalleError = (err: any) =>
+        [err?.code, err?.responseCode, err?.response || err?.message].filter(Boolean).join(" ");
+
+      try {
+        await createTransportFromConfig(smtpConfig).verify();
+      } catch (err: any) {
+        console.error("[SmtpProbar] Fallo verify:", err.code, err.responseCode, err.message);
+        return res.json({ ok: false, error: `No se pudo conectar/autenticar con el servidor SMTP: ${detalleError(err)}` });
+      }
+
+      try {
+        const rendered = renderSmtpTestEmail({ company });
+        const envio = await sendMail(smtpConfig, { to: correoDestino, subject: rendered.subject, html: rendered.html, text: rendered.text });
+        res.json({ ok: true, messageId: envio.messageId, accepted: envio.accepted, rejected: envio.rejected });
+      } catch (err: any) {
+        console.error("[SmtpProbar] Fallo envío:", err.code, err.responseCode, err.message);
+        res.json({ ok: false, error: `El servidor SMTP rechazó el envío: ${detalleError(err)}` });
+      }
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // --- CxP: facturas de proveedor recibidas por correo (spec 2026-10-19-cxp-lectura-correo) ---
   // Portado del ERP-Elrotech. La bandeja no crea cuentas por pagar: Importar reutiliza
   // POST /api/cxp/importar-xml con el XML guardado y luego marca el comprobante como IMPORTADA.
@@ -6130,10 +6397,14 @@ async function startServer() {
       } else {
         servicios = localServicios.filter(s => s.idCompania === idCompania && s.activo);
       }
+      // El IVA de la empresa no se expone: solo el precio final calculado por servicio.
+      const compania = await fetchCompanyById(idCompania);
+      const ivaDefecto = compania ? compania.ivaPorDefecto : 0;
       res.json(servicios.map(s => ({
         id: s.id,
         nombre: s.nombre,
         precio: s.precio,
+        precioConIva: precioConIva(s.precio, ivaEfectivo(s, ivaDefecto)),
         duracionMinutos: s.duracionMinutos
       })));
     } catch (err: any) {
@@ -6183,7 +6454,10 @@ async function startServer() {
 
         const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [user.idCompania]);
         company = (companyRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
-        if (company) company.horarioAtencion = await fetchHorarioAtencionCompania(company.id);
+        if (company) {
+          company.horarioAtencion = await fetchHorarioAtencionCompania(company.id);
+          company.horarioDomicilio = await fetchHorarioDomicilioCompania(company.id);
+        }
 
         const [citaRows] = await pool.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ?", [idUsuario, `${fecha}%`]);
         citasDelDia = citaRows as any[];
@@ -6198,8 +6472,8 @@ async function startServer() {
         bloqueosDelDia = localCalendarBlocks.filter(b => b.idUsuarioNutricionista === idUsuario);
       }
 
-      const { abre, cierra } = horarioDelDia(company?.horarioAtencion, fecha);
-      if (!abre || !cierra) return res.json([]);
+      const tramos = tramosDelDia(company, fecha, tipoVisita);
+      if (tramos.length === 0) return res.json([]);
 
       let duracionMin = DURACION_POR_TIPO_VISITA[tipoVisita];
       if (req.query.idServicio) {
@@ -6213,9 +6487,7 @@ async function startServer() {
         }
         if (servicio) duracionMin = servicio.duracionMinutos;
       }
-      const candidatos = generarSlotsCandidatos(abre, cierra);
-      const abreMin = minutosDesdeMedianoche(abre);
-      const cierraMin = minutosDesdeMedianoche(cierra);
+      const candidatos = generarSlotsCandidatos(tramos);
       const libres = candidatos.filter(hora => slotLibre({
         candidatoInicioMin: minutosDesdeMedianoche(hora),
         duracionMin,
@@ -6223,8 +6495,7 @@ async function startServer() {
         bloqueosDelDia,
         fecha,
         horaCandidato: hora,
-        abreMin,
-        cierraMin
+        tramos
       }));
 
       res.json(libres);
@@ -6250,7 +6521,10 @@ async function startServer() {
         user = (userRows as any[]).map(row => normalizeRow(row, 'id_usuario'))[0];
         const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
         company = (companyRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
-        if (company) company.horarioAtencion = await fetchHorarioAtencionCompania(company.id);
+        if (company) {
+          company.horarioAtencion = await fetchHorarioAtencionCompania(company.id);
+          company.horarioDomicilio = await fetchHorarioDomicilioCompania(company.id);
+        }
       } else {
         user = localUsers.find(u => u.id === idUsuarioNutricionista);
         company = localCompanies.find(c => c.id === idCompania);
@@ -6356,16 +6630,14 @@ async function startServer() {
           const [blockRows] = await connection.query("SELECT * FROM calendar_blocks WHERE idUsuarioNutricionista = ?", [idUsuarioNutricionista]);
           const bloqueosDelDia = blockRows as any[];
 
-          const { abre: abreDelDia, cierra: cierraDelDia } = horarioDelDia(company?.horarioAtencion, fecha);
-          const libre = !!abreDelDia && !!cierraDelDia && slotLibre({
+          const libre = slotLibre({
             candidatoInicioMin: minutosDesdeMedianoche(hora),
             duracionMin: duracionMinutos,
             citasDelDia,
             bloqueosDelDia,
             fecha,
             horaCandidato: hora,
-            abreMin: minutosDesdeMedianoche(abreDelDia),
-            cierraMin: minutosDesdeMedianoche(cierraDelDia)
+            tramos: tramosDelDia(company, fecha, tipoVisita)
           });
           if (!libre) {
             await connection.rollback();
@@ -6484,16 +6756,14 @@ async function startServer() {
         const citasDelDia: any[] = localCitas.filter(c => c.idUsuarioNutricionista === idUsuarioNutricionista && c.fechaHora.startsWith(fecha));
         const bloqueosDelDia = localCalendarBlocks.filter(b => b.idUsuarioNutricionista === idUsuarioNutricionista);
 
-        const { abre: abreDelDia, cierra: cierraDelDia } = horarioDelDia(company?.horarioAtencion, fecha);
-        const libre = !!abreDelDia && !!cierraDelDia && slotLibre({
+        const libre = slotLibre({
           candidatoInicioMin: minutosDesdeMedianoche(hora),
           duracionMin: duracionMinutos,
           citasDelDia,
           bloqueosDelDia,
           fecha,
           horaCandidato: hora,
-          abreMin: minutosDesdeMedianoche(abreDelDia),
-          cierraMin: minutosDesdeMedianoche(cierraDelDia)
+          tramos: tramosDelDia(company, fecha, tipoVisita)
         });
         if (!libre) {
           return res.status(409).json({ error: "Ese horario ya no está disponible. Por favor escoja otro." });

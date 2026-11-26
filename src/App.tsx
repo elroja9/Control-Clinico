@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type CSSProperties } from 'react';
 import {
   Users,
   Activity,
@@ -28,6 +28,9 @@ import {
   type LucideIcon
 } from 'lucide-react';
 import { notify, confirmar } from './components/ui/Feedback';
+import { Avatar } from './components/ui/Avatar';
+import { Badge } from './components/ui/Badge';
+import { Skeleton } from './components/ui/Skeleton';
 import {
   LineChart,
   Line,
@@ -1162,11 +1165,19 @@ export default function App() {
     // pantalla de login un instante y luego saltar al dashboard si ya había una sesión válida.
     if (!authChecked) {
       return (
-        <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4" role="status">
-          <img src="/logo-tuanis-192.webp" alt="" width={64} height={64} className="w-16 h-16" />
-          <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
-            <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-            Cargando TuanisBooking…
+        <div className="min-h-screen bg-bg flex flex-col items-center justify-center gap-6 px-6" role="status">
+          <img src="/logo-tuanis-192.webp" alt="" width={72} height={72} className="w-18 h-18 drop-shadow-sm" />
+          <div className="text-center">
+            <p className="text-heading font-semibold tracking-tight text-fg">TuanisBooking</p>
+            <div className="mt-1.5 flex items-center justify-center gap-2 text-sm font-medium text-fg-muted">
+              <Loader2 className="w-4 h-4 animate-spin text-brand" aria-hidden="true" />
+              Cargando TuanisBooking…
+            </div>
+          </div>
+          <div className="w-full max-w-xs space-y-2.5" aria-hidden="true">
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-4/5" />
+            <Skeleton className="h-3 w-3/5" />
           </div>
         </div>
       );
@@ -1278,10 +1289,10 @@ export default function App() {
   const vistaSecundariaAbierta = hayFormularioAbierto || !!selectedReportConsultation;
 
   const renderNav = () => (
-    <nav aria-label="Secciones de la aplicación" className="space-y-4">
+    <nav aria-label="Secciones de la aplicación" className="space-y-5">
       {navGroups.map(group => (
         <div key={group.label}>
-          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider px-3 block mb-1.5">{group.label}</span>
+          <span className="text-caption font-semibold text-fg-subtle uppercase tracking-widest px-3 block mb-1.5">{group.label}</span>
           <ul className="space-y-0.5">
             {group.items.map(item => {
               const active = activeTab === item.id && !vistaSecundariaAbierta;
@@ -1292,16 +1303,17 @@ export default function App() {
                     type="button"
                     onClick={() => navigateTo(item.id)}
                     aria-current={active ? 'page' : undefined}
-                    className={`w-full min-h-10 flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-sm font-semibold transition-colors duration-150 ${
-                      active ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900'
+                    className={`relative w-full min-h-10 flex items-center justify-between gap-2 pl-4 pr-3 py-2 rounded-control text-sm font-medium transition-colors duration-150 ${
+                      active ? 'bg-brand/10 text-brand-ink font-semibold' : 'text-fg-muted hover:bg-surface-muted hover:text-fg'
                     }`}
                   >
+                    {active && <span className="absolute left-0 top-2 bottom-2 w-1 rounded-full bg-brand" aria-hidden="true" />}
                     <span className="flex items-center gap-2.5 min-w-0">
-                      <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-white' : item.iconClass ?? 'text-slate-500'}`} aria-hidden="true" />
+                      <Icon className={`w-4.5 h-4.5 shrink-0 ${active ? 'text-brand' : item.iconClass ?? 'text-fg-subtle'}`} aria-hidden="true" />
                       <span className="truncate">{item.label}</span>
                     </span>
                     {item.badge !== undefined && (
-                      <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full font-bold tabular-nums ${active ? 'bg-white/20 text-white' : item.badgeClass ?? 'bg-slate-100 text-slate-700'}`}>
+                      <span className={`shrink-0 text-caption px-2 py-0.5 rounded-full font-semibold tabular-nums ${active ? 'bg-brand/15 text-brand-ink' : item.badgeClass ?? 'bg-surface-muted text-fg-muted'}`}>
                         {item.badge}
                         <span className="sr-only"> {badgeLabel(item.id)}</span>
                       </span>
@@ -1321,119 +1333,151 @@ export default function App() {
     labelStyle: { fontWeight: 700, color: '#0f172a' }
   };
 
+  // Título de la sección actual para el encabezado
+  const tituloSeccion = selectedReportConsultation
+    ? 'Informe clínico'
+    : activeConsultationPatient
+    ? 'Consulta'
+    : isAddingPatient || editingPatient
+    ? (editingPatient ? 'Editar expediente' : 'Nuevo expediente')
+    : navGroups.flatMap(g => g.items).find(i => i.id === activeTab)?.label ?? activeCompany.nombreComercial;
+
+  // Color de marca de la clínica expuesto como variable CSS (los tonos se derivan con color-mix en index.css)
+  const brandStyle = { '--brand': activeCompany.colorPrimario || activeCompany.colorSidebar || '#0f766e' } as CSSProperties;
+
+  // Contenido de la barra lateral (escritorio) y del drawer móvil: marca, navegación y usuario
+  const renderSidebarContent = (mobile: boolean) => (
+    <>
+      <div className="flex items-center gap-3 px-5 h-16 shrink-0 border-b border-border">
+        <img
+          src={activeCompany.logoUrl}
+          alt=""
+          width={36}
+          height={36}
+          className="w-9 h-9 shrink-0 object-cover rounded-control border border-border bg-surface-muted"
+          referrerPolicy="no-referrer"
+        />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold text-sm tracking-tight text-fg truncate">{activeCompany.nombreComercial}</p>
+          <p className="text-caption text-fg-subtle truncate">Cédula {activeCompany.identificacion}</p>
+        </div>
+        {mobile && (
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="shrink-0 w-10 h-10 -mr-2 rounded-control text-fg-muted hover:bg-surface-muted hover:text-fg flex items-center justify-center transition-colors"
+            aria-label="Cerrar menú"
+          >
+            <X className="w-5 h-5" aria-hidden="true" />
+          </button>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto scrollbar-thin px-3 py-5">
+        {renderNav()}
+      </div>
+
+      <div className="shrink-0 border-t border-border p-3">
+        <div className="flex items-center gap-3 px-2 py-2">
+          <Avatar name={currentUser.nombre} size="md" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-fg truncate">{currentUser.nombre}</p>
+            <p className="text-xs text-fg-muted truncate">{currentUser.rol}</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="mt-1 w-full min-h-10 px-3 rounded-control flex items-center gap-2.5 text-sm font-medium text-fg-muted hover:bg-danger-soft hover:text-danger transition-colors"
+          aria-label="Cerrar sesión"
+        >
+          <LogOut className="w-4.5 h-4.5" aria-hidden="true" />
+          Cerrar sesión
+        </button>
+      </div>
+    </>
+  );
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans antialiased flex flex-col print:bg-white print:p-0">
+    <div style={brandStyle} className="min-h-screen bg-bg text-fg font-sans antialiased flex print:bg-white print:p-0">
 
       <a
         href="#contenido"
         onClick={(e) => { e.preventDefault(); document.getElementById('contenido')?.focus(); }}
-        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[90] focus:bg-white focus:text-slate-900 focus:px-4 focus:py-2.5 focus:rounded-xl focus:shadow-lg focus:text-sm focus:font-bold"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[90] focus:bg-surface focus:text-fg focus:px-4 focus:py-2.5 focus:rounded-control focus:shadow-lg focus:text-sm focus:font-semibold"
       >
         Saltar al contenido
       </a>
 
-      {/* Fondo del menú móvil: tocar fuera lo cierra */}
+      {/* Barra lateral fija (escritorio) */}
+      <aside className="hidden lg:flex flex-col w-64 shrink-0 sticky top-0 h-screen bg-surface border-r border-border print:hidden">
+        {renderSidebarContent(false)}
+      </aside>
+
+      {/* Menú móvil: fondo (tocar fuera lo cierra) y drawer lateral con la misma estética */}
       {isMobileMenuOpen && (
-        <div
-          className="lg:hidden fixed inset-0 z-30 bg-slate-900/30 animate-fade-in print:hidden"
-          onClick={() => setIsMobileMenuOpen(false)}
-          aria-hidden="true"
-        />
-      )}
-
-      {/* Top Brand Stripe */}
-      <header className="surface-dark sticky top-0 z-40 text-white py-3 px-4 shadow-sm transition-colors duration-500 print:hidden" style={{ backgroundColor: activeCompany.colorSidebar }}>
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            {/* Burger menu button for mobile/tablet */}
-            <button
-              type="button"
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="lg:hidden shrink-0 bg-white/10 hover:bg-white/20 text-white w-11 h-11 rounded-xl border border-white/15 transition-colors flex items-center justify-center"
-              aria-label={isMobileMenuOpen ? 'Cerrar menú' : 'Abrir menú'}
-              aria-expanded={isMobileMenuOpen}
-              aria-controls="menu-movil"
-            >
-              {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </button>
-
-            <img
-              src={activeCompany.logoUrl}
-              alt=""
-              width={40}
-              height={40}
-              className="w-10 h-10 shrink-0 object-cover rounded-xl border border-white/20 shadow-xs bg-white/10"
-              referrerPolicy="no-referrer"
-            />
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <h1 className="font-extrabold text-sm sm:text-base tracking-tight truncate">{activeCompany.nombreComercial}</h1>
-                <span className="hidden sm:inline shrink-0 bg-white/20 text-[11px] px-2 py-0.5 rounded-full font-semibold text-white">
-                  Hacienda CR
-                </span>
-              </div>
-              <p className="text-xs text-white/85 truncate">
-                Cédula {activeCompany.identificacion}<span className="hidden sm:inline"> · IVA salud {activeCompany.ivaPorDefecto}%</span>
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            {/* Quick Stats Toolbar (hidden on mobile/tablet) */}
-            <div className="hidden xl:flex items-center gap-4 text-xs font-semibold text-white/95 bg-black/10 px-3.5 py-2 rounded-xl border border-white/10">
-              <div className="flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>{filteredPatientsByCompany.length} expedientes</span>
-              </div>
-              <div className="w-px h-3.5 bg-white/25" aria-hidden="true"></div>
-              <div className="flex items-center gap-1.5">
-                <Activity className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>{filteredConsultationsByCompany.length} consultas</span>
-              </div>
-            </div>
-
-            {/* Database connection status badge */}
-            {dbStatus && (
-              <div
-                className="flex items-center gap-1.5 text-xs font-semibold text-white/95 bg-black/10 px-2.5 sm:px-3 py-2 rounded-xl border border-white/10"
-                title={dbStatus.connected ? `Conectado a la base de datos (${dbStatus.server}:${dbStatus.port})` : `Sin conexión a la base de datos: ${dbStatus.error || 'no se pudo establecer la conexión'}. Los cambios se guardan solo en este equipo.`}
-              >
-                <span className={`w-2 h-2 rounded-full ${dbStatus.connected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} aria-hidden="true" />
-                <span className="sr-only sm:not-sr-only">
-                  {dbStatus.connected ? 'En línea' : 'Modo local'}
-                </span>
-              </div>
-            )}
-
-            {/* User Badge & Logout */}
-            <div className="flex items-center gap-2 sm:gap-3 sm:border-l sm:border-white/15 sm:pl-3">
-              <div className="text-right hidden sm:block max-w-40">
-                <span className="text-xs font-bold text-white block truncate">{currentUser.nombre}</span>
-                <span className="text-[11px] text-white/80 block font-medium">{currentUser.rol}</span>
-              </div>
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="bg-white/10 hover:bg-white/20 text-white h-11 min-w-11 px-3 rounded-xl border border-white/15 transition-colors flex items-center justify-center gap-1.5 text-xs font-bold"
-                aria-label="Cerrar sesión"
-                title="Cerrar sesión"
-              >
-                <LogOut className="w-4 h-4" aria-hidden="true" />
-                <span className="hidden md:inline">Salir</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Mobile Navigation Menu Drawer */}
-        {isMobileMenuOpen && (
+        <>
+          <div
+            className="lg:hidden fixed inset-0 z-40 bg-fg/30 backdrop-blur-xs animate-fade-in print:hidden"
+            onClick={() => setIsMobileMenuOpen(false)}
+            aria-hidden="true"
+          />
           <div
             id="menu-movil"
-            className="surface-light lg:hidden absolute inset-x-0 top-full bg-white text-slate-800 border-b border-slate-200 shadow-lg p-4 max-h-[calc(100dvh-5rem)] overflow-y-auto animate-slide-down"
+            className="lg:hidden fixed inset-y-0 left-0 z-50 w-80 max-w-[85vw] flex flex-col bg-surface border-r border-border shadow-lg animate-fade-in print:hidden"
           >
-            {renderNav()}
+            {renderSidebarContent(true)}
           </div>
-        )}
+        </>
+      )}
+
+      <div className="flex-1 min-w-0 flex flex-col">
+
+      <header className="sticky top-0 z-30 h-16 px-4 sm:px-6 lg:px-8 bg-surface/80 backdrop-blur-md border-b border-border flex items-center justify-between gap-3 print:hidden">
+        <div className="flex items-center gap-3 min-w-0">
+          {/* Botón de menú para móvil/tablet */}
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className="lg:hidden shrink-0 w-11 h-11 -ml-2 rounded-control text-fg hover:bg-surface-muted transition-colors flex items-center justify-center"
+            aria-label={isMobileMenuOpen ? 'Cerrar menú' : 'Abrir menú'}
+            aria-expanded={isMobileMenuOpen}
+            aria-controls="menu-movil"
+          >
+            {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
+          <h1 className="text-heading font-semibold tracking-tight text-fg truncate">{tituloSeccion}</h1>
+        </div>
+
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          {/* Resumen rápido (oculto en móvil/tablet) */}
+          <div className="hidden xl:flex items-center gap-4 text-xs font-medium text-fg-muted bg-surface-muted px-3.5 py-2 rounded-control">
+            <div className="flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>{filteredPatientsByCompany.length} expedientes</span>
+            </div>
+            <div className="w-px h-3.5 bg-border-strong" aria-hidden="true"></div>
+            <div className="flex items-center gap-1.5">
+              <Activity className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>{filteredConsultationsByCompany.length} consultas</span>
+            </div>
+          </div>
+
+          <Badge tone="brand" className="hidden sm:inline-flex">Hacienda CR</Badge>
+
+          {/* Estado de la conexión con la base de datos */}
+          {dbStatus && (
+            <div
+              className="flex items-center gap-1.5 text-xs font-medium text-fg-muted bg-surface-muted px-2.5 sm:px-3 py-2 rounded-control"
+              title={dbStatus.connected ? `Conectado a la base de datos (${dbStatus.server}:${dbStatus.port})` : `Sin conexión a la base de datos: ${dbStatus.error || 'no se pudo establecer la conexión'}. Los cambios se guardan solo en este equipo.`}
+            >
+              <span className={`w-2 h-2 rounded-full ${dbStatus.connected ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} aria-hidden="true" />
+              <span className="sr-only sm:not-sr-only">
+                {dbStatus.connected ? 'En línea' : 'Modo local'}
+              </span>
+            </div>
+          )}
+        </div>
       </header>
 
       {/* Primary Layout Frame */}
@@ -1489,17 +1533,10 @@ export default function App() {
         />
       ) : (
         // Main Workspace Dashboard & Tab Controls
-        <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-6 print:hidden">
-
-          {/* Navigation Controls Sidebar (Left Column) - Hidden on Mobile/Tablet */}
-          <aside className="hidden lg:block lg:col-span-3">
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3 sticky top-24">
-              {renderNav()}
-            </div>
-          </aside>
+        <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 sm:px-6 lg:px-8 lg:py-8 print:hidden">
 
           {/* Core Content Region */}
-          <main className="col-span-12 lg:col-span-9 space-y-6 min-w-0">
+          <main className="space-y-6 min-w-0">
 
             {/* ================= 1. CLINICAL DASHBOARD ================= */}
             {activeTab === 'dashboard' && (
@@ -2194,11 +2231,12 @@ export default function App() {
       </div>
 
       {/* Persistent Page Footer */}
-      <footer className="mt-auto py-5 px-4 bg-slate-900 text-slate-400 text-xs text-center border-t border-slate-950 shrink-0 print:hidden">
-        <p className="font-semibold text-slate-200">TuanisBooking © {new Date().getFullYear()}</p>
-        <p className="text-xs text-slate-400 mt-1">Plataforma clínica para el control integral de pacientes con facturación digital autorizada</p>
+      <footer className="mt-auto py-5 px-4 bg-surface text-fg-subtle text-xs text-center border-t border-border shrink-0 print:hidden">
+        <p className="font-semibold text-fg-muted">TuanisBooking © {new Date().getFullYear()}</p>
+        <p className="text-xs mt-1">Plataforma clínica para el control integral de pacientes con facturación digital autorizada</p>
       </footer>
 
+      </div>
     </div>
   );
 }

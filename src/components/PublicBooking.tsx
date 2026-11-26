@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Building, User as UserIcon, Calendar, MapPin, Check, ArrowLeft, ArrowRight, Loader2, AlertCircle, ListChecks, Clock, Navigation } from 'lucide-react';
 import { loadGoogleMapsScript } from '../utils/loadGoogleMaps';
+import { formatearColones } from '../utils/precios';
 
 interface ClinicaPublica {
   id: number;
@@ -22,6 +23,7 @@ interface ServicioPublico {
   id: number;
   nombre: string;
   precio: number;
+  precioConIva: number;
   duracionMinutos: number;
 }
 
@@ -362,7 +364,10 @@ export default function PublicBooking() {
                   <span className="font-bold text-sm text-slate-900 block">{s.nombre}</span>
                   <span className="text-xs text-slate-600 flex items-center gap-1"><Clock className="w-3 h-3" aria-hidden="true" />{s.duracionMinutos} min</span>
                 </span>
-                <span className="text-sm font-bold text-slate-800 tabular-nums shrink-0">₡{s.precio.toLocaleString('es-CR')}</span>
+                <span className="shrink-0 text-right">
+                  <span className="text-sm font-bold text-slate-800 tabular-nums block">{formatearColones(s.precioConIva ?? s.precio)}</span>
+                  <span className="text-xs text-slate-600 block">IVA incluido</span>
+                </span>
               </button>
             ))}
           </section>
