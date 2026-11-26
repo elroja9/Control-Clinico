@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Patient, User, Cita, CompaniaSmtpConfig, NotificationLog, CalendarBlock, Servicio, Factura } from '../data/mockData';
 import FacturarModal from './FacturarModal';
 import { notify, confirmar } from './ui/Feedback';
-import { Button, Badge, Card, CardBody, EmptyState, Field, Input, PageHeader, Select, Textarea } from './ui';
-import { useDialog } from '../hooks/useDialog';
+import { Button, Badge, Card, CardBody, EmptyState, Field, Input, PageHeader, ResponsiveModal, SegmentedControl, Select, Textarea } from './ui';
 import { terminoPersona } from '../utils/terminoPersona';
 import { servicioCompatible } from '../utils/modalidad';
 import { formatearColones, ivaEfectivo, precioConIva } from '../utils/precios';
@@ -15,7 +14,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Check,
-  X,
   AlertCircle,
   Mail,
   Bell,
@@ -557,9 +555,6 @@ export default function AgendaCalendar({
     if (ok) guardarCita('CANCELADA');
   };
 
-  const citaFormRef = useDialog<HTMLDivElement>(isFormOpen, () => setIsFormOpen(false));
-  const blockFormRef = useDialog<HTMLDivElement>(isBlockFormOpen, () => setIsBlockFormOpen(false));
-
   const handleAbrirFacturar = (cita: Cita) => {
     setFacturaCita(cita);
   };
@@ -720,7 +715,11 @@ export default function AgendaCalendar({
 
     return (
       <div className="bg-surface rounded-card border border-border shadow-xs overflow-hidden">
-       <div className="overflow-x-auto">
+       {/* Pista visual: en pantallas angostas la semana se desplaza de lado */}
+       <p className="md:hidden flex items-center justify-end gap-1 px-3 py-1.5 text-caption font-medium text-fg-muted border-b border-border bg-surface-muted/60">
+         Deslice para ver toda la semana <ArrowRight className="w-3 h-3" aria-hidden="true" />
+       </p>
+       <div className="overflow-x-auto overscroll-x-contain">
         <div className="min-w-[760px]">
         <div className="grid grid-cols-8 bg-surface-muted border-b border-border text-center font-semibold text-xs py-2.5 text-fg-muted">
           <div className="border-r border-border flex items-center justify-center text-caption">Hora</div>
@@ -862,8 +861,8 @@ export default function AgendaCalendar({
             };
 
             return (
-              <div key={h} className="flex min-h-16">
-                <div className="w-16 sm:w-20 shrink-0 border-r border-border text-xs text-fg-muted font-semibold flex items-center justify-center bg-surface-muted/50 tabular-nums">
+              <div key={h} className="flex min-h-14 sm:min-h-16">
+                <div className="w-14 sm:w-20 shrink-0 border-r border-border text-xs text-fg-muted font-semibold flex items-start sm:items-center justify-center pt-3 sm:pt-0 bg-surface-muted/50 tabular-nums">
                   {timeStr}
                 </div>
                 <div
@@ -909,11 +908,11 @@ export default function AgendaCalendar({
                                 {esDomicilio ? 'Domicilio' : 'Consultorio'}
                               </span>
                             </div>
-                            <h4 className="text-sm font-semibold text-fg">{patient?.nombreCompleto || persona.singular}</h4>
+                            <h4 className="text-base sm:text-sm font-semibold text-fg break-words">{patient?.nombreCompleto || persona.singular}</h4>
                             {esDomicilio && (
-                              <p className="text-xs text-fg-muted font-medium truncate max-w-sm flex items-center gap-1">
+                              <p className="text-xs text-fg-muted font-medium max-w-sm flex flex-wrap items-center gap-x-1 gap-y-0.5">
                                 <MapPin className="w-3 h-3 shrink-0" aria-hidden="true" />
-                                <span className="truncate">
+                                <span className="min-w-0 break-words">
                                   {cita.direccionDomicilio || 'Dirección no especificada'}
                                   {cita.tiempoTrasladoMinutos != null && ` · ${cita.tiempoTrasladoMinutos} min de traslado`}
                                 </span>
@@ -932,10 +931,10 @@ export default function AgendaCalendar({
                                 )}
                               </p>
                             )}
-                            <p className="text-xs text-fg-muted truncate max-w-sm">{cita.notas || 'Sin notas internas'}</p>
+                            <p className="text-xs text-fg-muted line-clamp-2 sm:line-clamp-none sm:truncate max-w-sm">{cita.notas || 'Sin notas internas'}</p>
                           </div>
 
-                          <div className="flex items-center gap-2 mt-1 sm:mt-0">
+                          <div className="flex items-center gap-2 mt-1 sm:mt-0 [&>button]:w-full sm:[&>button]:w-auto">
                             {cita.idConsulta ? (
                               <Badge tone="success">
                                 <Check className="w-3 h-3" aria-hidden="true" />
@@ -968,8 +967,9 @@ export default function AgendaCalendar({
   };
 
   return (
-    <div className="space-y-6">
-      
+    // pb-24 en móvil: el botón flotante "Nueva cita" no tapa el final de la página
+    <div className="space-y-6 pb-24 md:pb-0">
+
       {/* Header toolbar */}
       <div className="-mb-2">
         <PageHeader
@@ -980,7 +980,8 @@ export default function AgendaCalendar({
               <Button variant="outline" onClick={handleOpenNewBlock} icon={<Lock className="w-4 h-4" aria-hidden="true" />}>
                 Bloquear horario
               </Button>
-              <Button onClick={() => handleOpenNewCita()} icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
+              {/* En móvil se usa el botón flotante (ver final del componente) */}
+              <Button onClick={() => handleOpenNewCita()} icon={<Plus className="w-4 h-4" aria-hidden="true" />} className="max-md:hidden">
                 Nueva cita
               </Button>
             </>
@@ -988,63 +989,59 @@ export default function AgendaCalendar({
         />
       </div>
 
-      {/* Toolbar: navegación, rango, vista y filtro de profesional */}
+      {/* Toolbar: navegación, rango, vista y filtro de profesional.
+          Móvil: fila 1 = anterior/hoy/siguiente + vista; fila 2 = rango; fila 3 = profesional. */}
       <Card className="p-3 sm:p-4 flex flex-col gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="flex items-center gap-1.5 shrink-0" role="group" aria-label="Navegación del calendario">
-              <Button
-                variant="outline"
-                onClick={handlePrev}
-                aria-label={view === 'month' ? 'Mes anterior' : view === 'week' ? 'Semana anterior' : 'Día anterior'}
-                className="w-11 px-0"
-              >
-                <ChevronLeft className="w-4 h-4" aria-hidden="true" />
-              </Button>
-              <Button variant="outline" onClick={handleToday}>Hoy</Button>
-              <Button
-                variant="outline"
-                onClick={handleNext}
-                aria-label={view === 'month' ? 'Mes siguiente' : view === 'week' ? 'Semana siguiente' : 'Día siguiente'}
-                className="w-11 px-0"
-              >
-                <ChevronRight className="w-4 h-4" aria-hidden="true" />
-              </Button>
-            </div>
-            <h3 className="text-base font-semibold tracking-tight text-fg first-letter:uppercase truncate" aria-live="polite">
-              {view === 'month' && currentDate.toLocaleDateString('es-CR', { month: 'long', year: 'numeric' })}
-              {view === 'week' && `Semana del ${currentDate.toLocaleDateString('es-CR', { day: 'numeric', month: 'short' })}`}
-              {view === 'day' && currentDate.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-            </h3>
+        <div className="flex flex-wrap items-center gap-2 md:gap-3">
+          <div className="order-1 flex items-center gap-1.5 shrink-0" role="group" aria-label="Navegación del calendario">
+            <Button
+              variant="outline"
+              onClick={handlePrev}
+              aria-label={view === 'month' ? 'Mes anterior' : view === 'week' ? 'Semana anterior' : 'Día anterior'}
+              className="w-11 px-0"
+            >
+              <ChevronLeft className="w-4 h-4" aria-hidden="true" />
+            </Button>
+            <Button variant="outline" onClick={handleToday} className="px-3">Hoy</Button>
+            <Button
+              variant="outline"
+              onClick={handleNext}
+              aria-label={view === 'month' ? 'Mes siguiente' : view === 'week' ? 'Semana siguiente' : 'Día siguiente'}
+              className="w-11 px-0"
+            >
+              <ChevronRight className="w-4 h-4" aria-hidden="true" />
+            </Button>
           </div>
+          <h3 className="order-3 w-full md:order-2 md:w-auto md:flex-1 min-w-0 text-base font-semibold tracking-tight text-fg first-letter:uppercase truncate" aria-live="polite">
+            {view === 'month' && currentDate.toLocaleDateString('es-CR', { month: 'long', year: 'numeric' })}
+            {view === 'week' && `Semana del ${currentDate.toLocaleDateString('es-CR', { day: 'numeric', month: 'short' })}`}
+            {view === 'day' && currentDate.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+          </h3>
 
-          {/* View Toggles (ocultos en móvil: allí se fuerza la vista 'day', que es una lista legible) */}
-          <div className="hidden md:flex bg-surface-muted p-1 rounded-control border border-border" role="group" aria-label="Vista del calendario">
-            {([['month', 'Mes'], ['week', 'Semana'], ['day', 'Día']] as const).map(([v, label]) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => setView(v)}
-                aria-pressed={view === v}
-                className={`min-h-9 px-3.5 rounded-lg text-sm font-semibold transition-colors ${
-                  view === v ? 'bg-surface text-fg shadow-xs' : 'text-fg-muted hover:text-fg'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+          <div className="order-2 w-full sm:w-auto sm:flex-1 min-w-0 md:order-3 md:flex-none md:w-72">
+            <SegmentedControl
+              ariaLabel="Vista del calendario"
+              size="sm"
+              value={view}
+              onChange={(v) => setView(v)}
+              options={[
+                { value: 'month', label: 'Mes' },
+                { value: 'week', label: 'Semana' },
+                { value: 'day', label: 'Día' }
+              ]}
+            />
           </div>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-border">
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 w-full sm:w-auto">
             <label htmlFor="filtro-profesional" className="text-xs font-semibold text-fg-muted shrink-0">Profesional</label>
             <Select
               id="filtro-profesional"
               value={selectedDoctorId}
               onChange={(e: any) => setSelectedDoctorId(parseInt(e.target.value))}
-              wrapperClassName="flex-1 sm:w-64"
-              className="min-h-10"
+              wrapperClassName="w-full sm:w-64"
+              className="min-h-11"
             >
               <option value={0}>Todos los especialistas</option>
               {users.filter(u => u.idCompania === activeCompanyId && u.rol !== 'Contador').map(doc => (
@@ -1166,29 +1163,36 @@ export default function AgendaCalendar({
       </Card>
 
       {/* SCHEDULING FORM MODAL */}
-      {isFormOpen && (
-        <div className="fixed inset-0 bg-fg/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
-          <div
-            ref={citaFormRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="titulo-form-cita"
-            tabIndex={-1}
-            className="bg-surface rounded-t-panel sm:rounded-panel w-full max-w-lg shadow-lg border border-border max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden"
-          >
-            <div className="sticky top-0 z-20 px-5 py-4 bg-surface border-b border-border flex justify-between items-center gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <span className="w-9 h-9 rounded-control bg-brand-soft text-brand-ink flex items-center justify-center shrink-0">
-                  <Clock className="w-4 h-4" aria-hidden="true" />
-                </span>
-                <h3 id="titulo-form-cita" className="text-base font-semibold tracking-tight text-fg truncate">{selectedCita ? 'Gestionar cita' : 'Nueva cita'}</h3>
-              </div>
-              <button type="button" onClick={() => setIsFormOpen(false)} className="text-fg-muted hover:text-fg hover:bg-surface-muted w-10 h-10 -mr-2 flex items-center justify-center rounded-control transition-colors focus-visible:outline-2 focus-visible:outline-brand" aria-label="Cerrar">
-                <X className="w-5 h-5" aria-hidden="true" />
-              </button>
+      <ResponsiveModal
+        open={isFormOpen}
+        onClose={() => setIsFormOpen(false)}
+        title={selectedCita ? 'Gestionar cita' : 'Nueva cita'}
+        icon={<Clock aria-hidden="true" />}
+        footer={
+          <>
+            {/* En móvil Facturar y Cerrar comparten fila; desde sm se integran a la fila de acciones */}
+            <div className="flex gap-2 [&>*]:flex-1 sm:contents sm:[&>*]:flex-none">
+              {selectedCita && (
+                <Button
+                  variant="outline"
+                  onClick={() => handleAbrirFacturar(selectedCita)}
+                  icon={<Receipt className="w-4 h-4" aria-hidden="true" />}
+                  className="sm:mr-auto"
+                >
+                  Facturar
+                </Button>
+              )}
+              <Button variant="secondary" onClick={() => setIsFormOpen(false)}>
+                Cerrar
+              </Button>
             </div>
-
-            <form onSubmit={handleFormSubmit} className="p-5 space-y-6">
+            <Button type="submit" form="form-cita-agenda" icon={<Check className="w-4 h-4" aria-hidden="true" />}>
+              {selectedCita ? 'Guardar cambios' : 'Crear cita'}
+            </Button>
+          </>
+        }
+      >
+            <form id="form-cita-agenda" onSubmit={handleFormSubmit} className="space-y-6">
               {formError && (
                 <div role="alert" className="p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-sm flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
@@ -1273,12 +1277,14 @@ export default function AgendaCalendar({
               {/* Sección: fecha, hora y duración */}
               <section aria-labelledby="cita-sec-fecha" className="space-y-3">
               <h4 id="cita-sec-fecha" className="text-caption font-semibold uppercase tracking-wider text-fg-subtle">Fecha, hora y duración</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <Field label="Fecha" required>
+              {/* minmax(0,1fr): las columnas pueden encoger sin que iOS recorte la fecha/hora */}
+              <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] sm:grid-cols-[repeat(3,minmax(0,1fr))] gap-3">
+                <Field label="Fecha" required className="col-span-2 sm:col-span-1">
                   <Input
                     id="agendacale-fecha"
                     type="date"
                     required
+                    className="px-2.5!"
                     value={formDate}
                     onChange={(e: any) => setFormDate(e.target.value)}
                   />
@@ -1288,6 +1294,7 @@ export default function AgendaCalendar({
                     id="agendacale-hora-inicio"
                     type="time"
                     required
+                    className="px-2.5!"
                     value={formTime}
                     onChange={(e: any) => setFormTime(e.target.value)}
                   />
@@ -1410,46 +1417,22 @@ export default function AgendaCalendar({
               </Field>
               </section>
 
-              {/* Actions Footer */}
-              <div className="pt-4 border-t border-border space-y-3">
-                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
-                  {selectedCita && (
-                    <Button
-                      variant="outline"
-                      onClick={() => handleAbrirFacturar(selectedCita)}
-                      icon={<Receipt className="w-4 h-4" aria-hidden="true" />}
-                      className="sm:mr-auto"
-                    >
-                      Facturar
-                    </Button>
-                  )}
-                  <Button variant="secondary" onClick={() => setIsFormOpen(false)}>
-                    Cerrar
-                  </Button>
-                  <Button type="submit" icon={<Check className="w-4 h-4" aria-hidden="true" />}>
-                    {selectedCita ? 'Guardar cambios' : 'Crear cita'}
-                  </Button>
+              {/* Acción destructiva separada de la barra de guardar */}
+              {selectedCita && selectedCita.estadoCita !== 'CANCELADA' && (
+                <div className="pt-3 border-t border-dashed border-danger/30 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-fg-muted">La cita no se elimina: queda en el historial como cancelada.</p>
+                  <button
+                    type="button"
+                    onClick={handleCancelarCita}
+                    className="min-h-11 px-3 rounded-control text-danger hover:bg-danger-soft text-sm font-semibold flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-danger"
+                  >
+                    <Ban className="w-4 h-4" aria-hidden="true" />
+                    Cancelar cita
+                  </button>
                 </div>
-
-                {/* Acción destructiva separada del resto */}
-                {selectedCita && selectedCita.estadoCita !== 'CANCELADA' && (
-                  <div className="pt-3 border-t border-dashed border-danger/30 flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-xs text-fg-muted">La cita no se elimina: queda en el historial como cancelada.</p>
-                    <button
-                      type="button"
-                      onClick={handleCancelarCita}
-                      className="min-h-10 px-3 rounded-control text-danger hover:bg-danger-soft text-sm font-semibold flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-danger"
-                    >
-                      <Ban className="w-4 h-4" aria-hidden="true" />
-                      Cancelar cita
-                    </button>
-                  </div>
-                )}
-              </div>
+              )}
             </form>
-          </div>
-        </div>
-      )}
+      </ResponsiveModal>
 
       {facturaCita && (
         <FacturarModal
@@ -1469,29 +1452,23 @@ export default function AgendaCalendar({
         />
       )}
 
-      {isBlockFormOpen && (
-        <div className="fixed inset-0 bg-fg/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
-          <div
-            ref={blockFormRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="titulo-form-bloqueo"
-            tabIndex={-1}
-            className="bg-surface rounded-t-panel sm:rounded-panel w-full max-w-lg shadow-lg border border-border max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden"
-          >
-            <div className="sticky top-0 z-20 px-5 py-4 bg-surface border-b border-border flex justify-between items-center gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <span className="w-9 h-9 rounded-control bg-brand-soft text-brand-ink flex items-center justify-center shrink-0">
-                  <Lock className="w-4 h-4" aria-hidden="true" />
-                </span>
-                <h3 id="titulo-form-bloqueo" className="text-base font-semibold tracking-tight text-fg truncate">{selectedBlock ? 'Editar bloqueo de agenda' : 'Bloquear horario'}</h3>
-              </div>
-              <button type="button" onClick={() => setIsBlockFormOpen(false)} className="text-fg-muted hover:text-fg hover:bg-surface-muted w-10 h-10 -mr-2 flex items-center justify-center rounded-control transition-colors focus-visible:outline-2 focus-visible:outline-brand" aria-label="Cerrar">
-                <X className="w-5 h-5" aria-hidden="true" />
-              </button>
-            </div>
-
-            <form onSubmit={handleBlockFormSubmit} className="p-5 space-y-4">
+      <ResponsiveModal
+        open={isBlockFormOpen}
+        onClose={() => setIsBlockFormOpen(false)}
+        title={selectedBlock ? 'Editar bloqueo de agenda' : 'Bloquear horario'}
+        icon={<Lock aria-hidden="true" />}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setIsBlockFormOpen(false)}>
+              Cerrar
+            </Button>
+            <Button type="submit" form="form-bloqueo-agenda" icon={<Check className="w-4 h-4" aria-hidden="true" />}>
+              {selectedBlock ? 'Guardar cambios' : 'Bloquear'}
+            </Button>
+          </>
+        }
+      >
+            <form id="form-bloqueo-agenda" onSubmit={handleBlockFormSubmit} className="space-y-4">
               {blockFormError && (
                 <div role="alert" className="p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-sm flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
@@ -1504,6 +1481,7 @@ export default function AgendaCalendar({
                   id="agendacale-fecha-de-inicio"
                   type="date"
                   required
+                  className="px-2.5!"
                   value={blockFechaInicio}
                   onChange={(e: any) => setBlockFechaInicio(e.target.value)}
                 />
@@ -1531,6 +1509,7 @@ export default function AgendaCalendar({
                     id="agendacale-fecha-de-fin"
                     type="date"
                     required
+                    className="px-2.5!"
                     value={blockFechaFin}
                     onChange={(e: any) => setBlockFechaFin(e.target.value)}
                   />
@@ -1551,12 +1530,13 @@ export default function AgendaCalendar({
               )}
 
               {!blockEsVariosDias && !blockEsTodoElDia && (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] gap-3">
                   <Field label="Hora de inicio" required>
                     <Input
                       id="agendacale-hora-inicio-2"
                       type="time"
                       required
+                      className="px-2.5!"
                       value={blockHoraInicio}
                       onChange={(e: any) => setBlockHoraInicio(e.target.value)}
                     />
@@ -1566,6 +1546,7 @@ export default function AgendaCalendar({
                       id="agendacale-hora-fin"
                       type="time"
                       required
+                      className="px-2.5!"
                       value={blockHoraFin}
                       onChange={(e: any) => setBlockHoraFin(e.target.value)}
                     />
@@ -1583,32 +1564,31 @@ export default function AgendaCalendar({
                 />
               </Field>
 
-              <div className="pt-4 border-t border-border space-y-3">
-                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
-                  <Button variant="secondary" onClick={() => setIsBlockFormOpen(false)}>
-                    Cerrar
-                  </Button>
-                  <Button type="submit" icon={<Check className="w-4 h-4" aria-hidden="true" />}>
-                    {selectedBlock ? 'Guardar cambios' : 'Bloquear'}
-                  </Button>
+              {/* Acción destructiva separada de la barra de guardar */}
+              {selectedBlock && (
+                <div className="pt-3 border-t border-dashed border-danger/30 flex justify-start">
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteBlock(selectedBlock.id)}
+                    className="min-h-11 px-3 -ml-3 rounded-control text-danger hover:bg-danger-soft text-sm font-semibold flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-danger"
+                  >
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                    Eliminar bloqueo
+                  </button>
                 </div>
-                {selectedBlock && (
-                  <div className="pt-3 border-t border-dashed border-danger/30 flex justify-start">
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteBlock(selectedBlock.id)}
-                      className="min-h-10 px-3 -ml-3 rounded-control text-danger hover:bg-danger-soft text-sm font-semibold flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-danger"
-                    >
-                      <Trash2 className="w-4 h-4" aria-hidden="true" />
-                      Eliminar bloqueo
-                    </button>
-                  </div>
-                )}
-              </div>
+              )}
             </form>
-          </div>
-        </div>
-      )}
+      </ResponsiveModal>
+
+      {/* Botón flotante "Nueva cita": solo en móvil (en escritorio queda el del encabezado) */}
+      <button
+        type="button"
+        onClick={() => handleOpenNewCita()}
+        className="md:hidden fixed right-4 bottom-safe z-30 inline-flex items-center gap-2 min-h-14 pl-4 pr-5 rounded-full bg-brand-solid text-brand-fg text-sm font-semibold shadow-lg active:brightness-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand print:hidden"
+      >
+        <Plus className="w-5 h-5" aria-hidden="true" />
+        Nueva cita
+      </button>
 
     </div>
   );

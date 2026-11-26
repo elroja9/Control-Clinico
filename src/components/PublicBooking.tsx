@@ -9,6 +9,7 @@ import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Field } from './ui/Field';
 import { Input } from './ui/Input';
+import { SegmentedControl } from './ui/SegmentedControl';
 import { cx } from './ui/cx';
 
 interface ClinicaPublica {
@@ -272,37 +273,21 @@ export default function PublicBooking() {
     || `Hola, quisiera solicitar un espacio para una cita ${tipoVisita === 'DOMICILIO' ? 'a domicilio' : 'en consultorio'}${servicio ? ` de ${servicio.nombre}` : ''}.${nombreCompleto.trim() ? ` Mi nombre es ${nombreCompleto.trim()}.` : ''}`;
   const enlaceSolicitud = enlaceWhatsapp(clinica?.whatsappReservas, mensajeSolicitud);
 
-  const opcionTipoVisita = (valor: 'CONSULTORIO' | 'DOMICILIO', etiqueta: string, icono: React.ReactNode, deshabilitado: boolean, titulo?: string) => {
-    const activo = tipoVisita === valor;
-    return (
-      <button
-        type="button"
-        onClick={() => cambiarTipoVisita(valor)}
-        disabled={deshabilitado}
-        aria-pressed={activo}
-        title={titulo}
-        className={cx(
-          'min-h-14 p-3 rounded-card border-2 text-sm font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-40',
-          activo ? 'border-brand bg-brand-soft text-brand-ink' : 'border-border bg-surface text-fg hover:border-border-strong hover:bg-surface-muted'
-        )}
-      >
-        {icono}
-        {etiqueta}
-      </button>
-    );
-  };
-
+  // Si la reserva a domicilio es por WhatsApp, no se exige que el profesional tenga ubicación configurada.
+  const domicilioDeshabilitado = clinica?.reservaAutoDomicilio !== false && !profesional?.aceptaDomicilio;
   const selectorTipoVisita = (
-    <div className="grid grid-cols-2 gap-3" role="group" aria-label="Tipo de visita">
-      {opcionTipoVisita('CONSULTORIO', 'En consultorio', <Building2 className="w-5 h-5" aria-hidden="true" />, false)}
-      {/* Si la reserva a domicilio es por WhatsApp, no se exige que el profesional tenga ubicación configurada. */}
-      {opcionTipoVisita(
-        'DOMICILIO',
-        'A domicilio',
-        <Home className="w-5 h-5" aria-hidden="true" />,
-        clinica?.reservaAutoDomicilio !== false && !profesional?.aceptaDomicilio,
-        clinica?.reservaAutoDomicilio !== false && !profesional?.aceptaDomicilio ? 'Este profesional no atiende a domicilio' : undefined
-      )}
+    <div className="space-y-1.5">
+      <SegmentedControl
+        ariaLabel="Tipo de visita"
+        value={tipoVisita}
+        onChange={(v) => cambiarTipoVisita(v)}
+        options={[
+          { value: 'CONSULTORIO', label: 'En consultorio', icon: <Building2 /> },
+          { value: 'DOMICILIO', label: 'A domicilio', icon: <Home />, disabled: domicilioDeshabilitado }
+        ]}
+        className="[&>button]:min-h-12"
+      />
+      {domicilioDeshabilitado && <p className="text-xs text-fg-muted">Este profesional no atiende a domicilio.</p>}
     </div>
   );
 
@@ -330,7 +315,7 @@ export default function PublicBooking() {
     };
   });
 
-  const backBtn = 'min-h-10 -ml-2 px-2 rounded-lg text-sm text-fg-muted hover:text-fg hover:bg-surface-muted inline-flex items-center gap-1.5 transition-colors';
+  const backBtn = 'min-h-11 -ml-2 px-2 rounded-lg text-sm text-fg-muted hover:text-fg hover:bg-surface-muted inline-flex items-center gap-1.5 transition-colors';
   const optionBtn = 'w-full flex items-center gap-3 p-4 rounded-card border-2 transition-colors text-left bg-surface';
   const optionIdle = 'border-border hover:border-brand/50 hover:bg-surface-muted';
   const optionActive = 'border-brand bg-brand-soft';
@@ -417,8 +402,9 @@ export default function PublicBooking() {
   );
 
   return (
-    <div className="min-h-screen bg-bg font-sans text-fg" style={{ '--brand': colorPrimario } as React.CSSProperties}>
-      <div className="w-full max-w-5xl mx-auto px-4 py-6 sm:py-10">
+    // pt-safe/px-safe: en la PWA de iOS el contenido no queda bajo el notch ni la isla dinámica
+    <div className="min-h-screen bg-bg font-sans text-fg pt-safe" style={{ '--brand': colorPrimario } as React.CSSProperties}>
+      <div className="w-full max-w-5xl mx-auto px-safe py-6 sm:py-10">
         <header className="flex items-center gap-3 mb-6 sm:mb-8">
           {clinica ? (
             <img src={clinica.logoUrl} alt="" width={48} height={48} className="w-12 h-12 rounded-card object-cover border border-border bg-surface" referrerPolicy="no-referrer" />
@@ -470,7 +456,7 @@ export default function PublicBooking() {
         )}
 
         <div className={cx(mostrarResumen && 'lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8 lg:items-start')}>
-          <main className={cx('min-w-0 bg-surface rounded-panel border border-border shadow-md p-5 sm:p-8', !mostrarResumen && 'max-w-xl mx-auto', mostrarResumen && 'pb-6')}>
+          <main className={cx('min-w-0 bg-surface rounded-panel border border-border shadow-md p-4 min-[400px]:p-5 sm:p-8', !mostrarResumen && 'max-w-xl mx-auto', mostrarResumen && 'pb-6')}>
             {paso === 1 && (
               <section className="space-y-4" aria-labelledby="paso-titulo">
                 {tituloPaso(<Building className="w-5 h-5" />, 'Escoja su clínica', 'Seleccione dónde desea ser atendido.')}
@@ -604,7 +590,7 @@ export default function PublicBooking() {
                   <>
                     <fieldset>
                       <legend className="block text-sm font-semibold text-fg mb-2">Fecha</legend>
-                      <div className="-mx-1 px-1 flex gap-2 overflow-x-auto snap-x pb-2 scrollbar-thin">
+                      <div className="-mx-1 px-1 flex gap-2 overflow-x-auto overscroll-x-contain snap-x snap-mandatory scroll-px-1 pb-2 scrollbar-thin">
                         {diasRapidos.map(d => {
                           const activo = fecha === d.iso;
                           return (
@@ -626,9 +612,9 @@ export default function PublicBooking() {
                           );
                         })}
                       </div>
-                      <div className="mt-3 max-w-xs">
+                      <div className="mt-3 w-full sm:max-w-xs">
                         <Field label="Otra fecha">
-                          <Input type="date" value={fecha} onChange={(e: any) => setFecha(e.target.value)} min={fechaLocalHoy()} />
+                          <Input type="date" value={fecha} onChange={(e: any) => setFecha(e.target.value)} min={fechaLocalHoy()} className="px-2.5!" />
                         </Field>
                       </div>
                     </fieldset>
@@ -696,7 +682,7 @@ export default function PublicBooking() {
                     Elija una sugerencia al escribir o use su ubicación actual: se necesita la ubicación exacta para calcular el tiempo de traslado.
                   </p>
                 </div>
-                <Button variant="outline" onClick={usarUbicacionActual} icon={<Navigation className="w-4 h-4" aria-hidden="true" />}>
+                <Button variant="outline" onClick={usarUbicacionActual} icon={<Navigation className="w-4 h-4" aria-hidden="true" />} className="w-full sm:w-auto">
                   Usar mi ubicación actual
                 </Button>
                 {pacienteLat != null && pacienteLng != null && (
@@ -747,7 +733,7 @@ export default function PublicBooking() {
                       <Input type="tel" required inputMode="tel" autoComplete="tel" value={telefono} onChange={(e: any) => setTelefono(e.target.value)} placeholder="8888-8888" />
                     </Field>
                     <Field label="Fecha de nacimiento">
-                      <Input type="date" autoComplete="bday" max={fechaLocalHoy()} value={fechaNacimiento} onChange={(e: any) => setFechaNacimiento(e.target.value)} />
+                      <Input type="date" autoComplete="bday" max={fechaLocalHoy()} value={fechaNacimiento} onChange={(e: any) => setFechaNacimiento(e.target.value)} className="px-2.5!" />
                     </Field>
                     <Field label="Correo electrónico" required className="sm:col-span-2">
                       <Input type="email" required autoComplete="email" value={correoElectronico} onChange={(e: any) => setCorreoElectronico(e.target.value)} placeholder="nombre@correo.com" />
@@ -797,7 +783,7 @@ export default function PublicBooking() {
                     Su cita queda pendiente hasta que el negocio la confirme. Le avisaremos por correo.
                   </p>
                 )}
-                <Button variant="outline" onClick={nuevaReserva}>
+                <Button variant="outline" onClick={nuevaReserva} className="w-full sm:w-auto">
                   Agendar otra cita
                 </Button>
               </section>
@@ -829,7 +815,8 @@ export default function PublicBooking() {
               className="fixed inset-0 -z-10 bg-fg/30 animate-fade-in cursor-default"
             />
           )}
-          <div className="bg-surface border-t border-border rounded-t-panel shadow-lg">
+          {/* pb-safe: la barra queda sobre el indicador de inicio del iPhone */}
+          <div className="bg-surface border-t border-border rounded-t-panel shadow-lg pb-safe">
             {resumenAbierto && (
               <div id="resumen-movil" className="px-5 pt-5 pb-2 max-h-[60vh] overflow-y-auto animate-slide-down">
                 {resumenContenido}
@@ -853,7 +840,7 @@ export default function PublicBooking() {
           </div>
         </div>
       )}
-      {mostrarResumen && <div className="lg:hidden h-16" aria-hidden="true" />}
+      {mostrarResumen && <div className="lg:hidden h-[calc(4rem+env(safe-area-inset-bottom,0px))]" aria-hidden="true" />}
     </div>
   );
 }

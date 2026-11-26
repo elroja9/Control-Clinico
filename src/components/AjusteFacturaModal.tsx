@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { Servicio, Factura, FacturaLinea } from '../data/mockData';
-import { FileMinus, FilePlus, X, AlertCircle, Check, Loader2 } from 'lucide-react';
-import { useDialog } from '../hooks/useDialog';
+import { FileMinus, FilePlus, AlertCircle, Check, Loader2 } from 'lucide-react';
 import { MEDIO_PAGO_HACIENDA, colones } from '../utils/facturacion';
 import { Button } from './ui/Button';
-import { IconButton } from './ui/IconButton';
+import { ResponsiveModal } from './ui/ResponsiveModal';
 import { Input } from './ui/Input';
 import { Select } from './ui/Select';
 
@@ -39,7 +38,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState('');
   const [resultado, setResultado] = useState<Factura | null>(null);
-  const dialogRef = useDialog<HTMLDivElement>(true, () => { if (!enviando) onClose(); });
+  const cerrarSiSePuede = () => { if (!enviando) onClose(); };
 
   // Para Nota de Crédito, las opciones son las propias líneas de la factura original (se acredita
   // al precio/IVA con que se facturó, no al precio vigente hoy). Para Nota de Débito, son el
@@ -104,22 +103,30 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
   const Icono = esCredito ? FileMinus : FilePlus;
 
   return (
-    <div className="fixed inset-0 bg-fg/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="titulo-ajuste-factura" tabIndex={-1} className="bg-surface rounded-t-panel sm:rounded-panel w-full max-w-lg shadow-lg border border-border max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden">
-        <div className="sticky top-0 z-10 bg-surface border-b border-border">
-          <div className="h-1" style={{ backgroundColor: themeColor }} aria-hidden="true" />
-          <div className="px-5 py-4 flex justify-between items-center gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <span className={`w-9 h-9 shrink-0 rounded-control flex items-center justify-center ${esCredito ? 'bg-danger-soft text-danger' : 'bg-warning-soft text-warning'}`} aria-hidden="true">
-                <Icono className="w-4.5 h-4.5" />
-              </span>
-              <h3 id="titulo-ajuste-factura" className="text-heading font-semibold text-fg">Nota de {esCredito ? 'crédito' : 'débito'} · Factura {factura.consecutivo}</h3>
-            </div>
-            <IconButton label="Cerrar" icon={<X className="w-5 h-5" aria-hidden="true" />} onClick={onClose} disabled={enviando} />
-          </div>
-        </div>
-
-        <div className="p-5 space-y-4">
+    <ResponsiveModal
+      open
+      onClose={cerrarSiSePuede}
+      title={`Nota de ${esCredito ? 'crédito' : 'débito'} · Factura ${factura.consecutivo}`}
+      icon={<Icono aria-hidden="true" />}
+      iconClassName={esCredito ? 'bg-danger-soft text-danger' : 'bg-warning-soft text-warning'}
+      accentColor={themeColor}
+      closeDisabled={enviando}
+      footer={resultado ? (
+        <Button variant="secondary" fullWidth onClick={onClose}>Cerrar</Button>
+      ) : (
+        <>
+          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button
+            disabled={enviando || yaAcreditadaCompleta}
+            onClick={handleEmitir}
+            icon={enviando ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Check className="w-4 h-4" aria-hidden="true" />}
+          >
+            Emitir Nota de {esCredito ? 'Crédito' : 'Débito'}
+          </Button>
+        </>
+      )}
+    >
+        <div className="space-y-4">
           {error && (
             <div role="alert" className="p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
@@ -142,7 +149,6 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                 <p className="tabular-nums">Total: <span className="font-semibold">{colones(resultado.total)}</span></p>
                 {resultado.mensajeError && <p className="mt-1">{resultado.mensajeError}</p>}
               </div>
-              <Button variant="secondary" fullWidth onClick={onClose}>Cerrar</Button>
             </div>
           ) : (
             <>
@@ -161,7 +167,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                   Esta factura ya fue acreditada por completo en Notas de Crédito anteriores: no queda nada por acreditar.
                 </p>
               ) : (
-                <div className="space-y-2 max-h-64 overflow-y-auto">
+                <div className="space-y-2 sm:max-h-64 sm:overflow-y-auto">
                   {opciones.map(o => (
                     <div key={o.key} className="flex items-center justify-between gap-3 p-3 bg-surface-muted border border-border rounded-control">
                       <div className="min-w-0">
@@ -238,21 +244,9 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
               <p className="text-xs text-fg-muted">
                 La nota se transmite a Hacienda. {esCredito ? 'Las existencias y el saldo por cobrar' : 'Las existencias y el saldo por cobrar (si la factura fue a crédito)'} se ajustan solo si Hacienda la recibe.
               </p>
-
-              <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-1">
-                <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-                <Button
-                  disabled={enviando || yaAcreditadaCompleta}
-                  onClick={handleEmitir}
-                  icon={enviando ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Check className="w-4 h-4" aria-hidden="true" />}
-                >
-                  Emitir Nota de {esCredito ? 'Crédito' : 'Débito'}
-                </Button>
-              </div>
             </>
           )}
         </div>
-      </div>
-    </div>
+    </ResponsiveModal>
   );
 }

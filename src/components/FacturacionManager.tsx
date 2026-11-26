@@ -190,7 +190,9 @@ export default function FacturacionManager({ facturas, patients, company, servic
     }
   };
 
-  const botonIcono = 'w-10 h-10 flex items-center justify-center rounded-control transition-colors disabled:opacity-50';
+  const botonIcono = 'w-11 h-11 flex items-center justify-center rounded-control transition-colors disabled:opacity-50';
+  // Tarjetas de resumen en móvil: menos relleno y monto que puede bajar de línea
+  const STAT_MOVIL = 'min-w-0 max-sm:p-3.5 [&_.text-title]:break-words max-sm:[&_.text-title]:text-heading';
 
   return (
     <div>
@@ -199,21 +201,22 @@ export default function FacturacionManager({ facturas, patients, company, servic
         description="Facturas y notas de crédito y débito transmitidas a Hacienda"
       />
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-        <StatCard label="Ventas netas" value={colones(resumen.ventas)} icon={<Receipt />} delta={{ value: 'sin IVA, aceptadas' }} />
-        <StatCard label="IVA cobrado" value={colones(resumen.iva)} icon={<FileText />} delta={{ value: 'débito fiscal' }} />
+      {/* minmax(0,1fr) + montos que pueden bajar de línea: sin scroll horizontal a 360px */}
+      <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] lg:grid-cols-4 gap-3 mb-5">
+        <StatCard label="Ventas netas" value={colones(resumen.ventas)} icon={<Receipt />} delta={{ value: 'sin IVA, aceptadas' }} className={STAT_MOVIL} />
+        <StatCard label="IVA cobrado" value={colones(resumen.iva)} icon={<FileText />} delta={{ value: 'débito fiscal' }} className={STAT_MOVIL} />
         <StatCard
           label="Por resolver"
           value={resumen.porResolver}
           icon={<Clock />}
-          className={resumen.porResolver ? 'bg-warning-soft border-warning/30' : undefined}
+          className={`${STAT_MOVIL} ${resumen.porResolver ? 'bg-warning-soft border-warning/30' : ''}`}
           delta={{ value: 'sin respuesta de Hacienda' }}
         />
         <StatCard
           label="Rechazadas"
           value={resumen.rechazadas}
           icon={<AlertCircle />}
-          className={resumen.rechazadas ? 'bg-danger-soft border-danger/30' : undefined}
+          className={`${STAT_MOVIL} ${resumen.rechazadas ? 'bg-danger-soft border-danger/30' : ''}`}
           delta={{ value: 'corregir y reemitir', trend: resumen.rechazadas ? 'down' : 'neutral' }}
         />
       </div>
@@ -255,7 +258,7 @@ export default function FacturacionManager({ facturas, patients, company, servic
                     {esNotaCredito ? <FileMinus className="w-4 h-4 text-danger" aria-hidden="true" /> : esNotaDebito ? <FilePlus className="w-4 h-4 text-warning" aria-hidden="true" /> : <Receipt className="w-4 h-4 text-fg-subtle" aria-hidden="true" />}
                     {tipoTexto} {f.consecutivo}
                   </span>
-                  <span className="text-xs text-fg-muted block truncate">
+                  <span className="text-xs text-fg-muted block break-words sm:truncate">
                     {nombrePaciente(f.idPaciente, f)} &middot; {new Date(f.fechaEmision).toLocaleString('es-CR')}
                     {f.condicionVenta === '02' ? ' · Crédito' : !esNotaCredito ? ` · ${MEDIO_PAGO_HACIENDA[f.medioPago] || f.medioPago}` : ''}
                     {!esNota && f.montoRecibido != null && ` · Vuelto ${colones(f.montoRecibido - f.total)}`}
@@ -270,10 +273,11 @@ export default function FacturacionManager({ facturas, patients, company, servic
                     <span className={`text-xs block truncate ${f.estado === 'ERROR' || f.estado === 'RECHAZADA' ? 'text-danger' : 'text-warning'}`} title={f.mensajeError}>{f.mensajeError}</span>
                   )}
                 </div>
-                <div className="flex items-center justify-between lg:justify-end gap-3 shrink-0">
+                {/* flex-wrap: en móvil los botones bajan a otra fila en vez de desbordar */}
+                <div className="flex flex-wrap items-center lg:justify-end gap-x-3 gap-y-1 lg:shrink-0">
                   <span className={`text-body font-semibold tabular-nums text-right lg:min-w-28 ${esNotaCredito ? 'text-danger' : 'text-fg'}`}>{esNotaCredito ? '−' : ''}{colones(f.total)}</span>
                   <Badge tone={ESTADO_TONO[f.estado] || 'neutral'}>{f.estado}</Badge>
-                  <div className="flex items-center gap-0.5">
+                  <div className="flex items-center gap-0.5 ml-auto lg:ml-0 -mr-2 lg:mr-0">
                   <button
                     type="button"
                     onClick={() => setViewingFactura(f)}
@@ -356,7 +360,7 @@ export default function FacturacionManager({ facturas, patients, company, servic
                         placeholder="ej: Error en el monto facturado"
                       />
                     </div>
-                    <div className="flex gap-2 justify-end">
+                    <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
                       <Button variant="ghost" onClick={() => setAnulandoId(null)}>Cancelar</Button>
                       <Button variant="danger" onClick={() => handleConfirmarAnular(f.id)} disabled={anulando}>
                         {anulando ? 'Anulando…' : 'Confirmar anulación'}

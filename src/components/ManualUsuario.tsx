@@ -472,8 +472,9 @@ export default function ManualUsuario({ perfil, nombreEmpresa, themeColor, onClo
   }, [perfil]);
 
   return (
-    <div className="bg-bg min-h-screen p-4 sm:p-6 print:bg-white print:p-0 text-fg" style={{ '--brand': themeColor } as CSSProperties}>
-      <div className="max-w-6xl mx-auto mb-6 bg-surface rounded-card border border-border shadow-xs p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
+    // El notch lo cubre el header de la app; abajo se respeta la barra de inicio de iOS. En impresión sin relleno.
+    <div className="bg-bg min-h-screen p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6 print:bg-white print:p-0 text-fg" style={{ '--brand': themeColor } as CSSProperties}>
+      <div className="max-w-6xl mx-auto mb-6 bg-surface rounded-card border border-border shadow-xs p-3 sm:p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
         <div className="flex items-center gap-3 min-w-0">
           <Button variant="secondary" onClick={onClose} aria-label="Volver al inicio" icon={<ArrowLeft className="w-4 h-4" aria-hidden="true" />}>
             <span className="hidden sm:inline">Volver</span>
@@ -483,7 +484,7 @@ export default function ManualUsuario({ perfil, nombreEmpresa, themeColor, onClo
             <p className="text-xs text-fg-muted">Para descargarlo, pulse "Descargar PDF" y elija "Guardar como PDF"</p>
           </div>
         </div>
-        <Button onClick={() => window.print()} icon={<Printer className="w-4 h-4" aria-hidden="true" />}>
+        <Button onClick={() => window.print()} icon={<Printer className="w-4 h-4" aria-hidden="true" />} className="w-full sm:w-auto">
           Descargar PDF
         </Button>
       </div>
@@ -516,7 +517,7 @@ export default function ManualUsuario({ perfil, nombreEmpresa, themeColor, onClo
           </nav>
         </aside>
 
-        <article className="min-w-0 bg-surface rounded-panel border border-border shadow-sm p-6 sm:p-10 space-y-10 print:border-none print:shadow-none print:p-0">
+        <article className="min-w-0 bg-surface rounded-panel border border-border shadow-sm p-4 min-[400px]:p-6 sm:p-10 space-y-10 print:border-none print:shadow-none print:p-0">
           <header className="border-b border-border pb-6">
             <p className="text-xs font-semibold text-brand-ink">TuanisBooking · {nombreEmpresa}</p>
             <h1 className="text-display font-semibold tracking-tight text-fg mt-1">Manual de usuario</h1>

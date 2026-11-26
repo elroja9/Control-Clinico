@@ -70,14 +70,15 @@ export default function FacturaDetailView({ factura, patient, company, referenci
   // recortado al alto de un solo viewport, o la página sale en blanco); un alto fijo/forzado
   // tiene el mismo problema. Con alto automático, la página crece y pagina con normalidad.
   return createPortal(
-    <div className="absolute top-0 left-0 right-0 z-50 bg-bg p-4 sm:p-6 print:bg-white print:p-0">
-      {/* Top action toolbar - hidden in Print */}
-      <div className="max-w-3xl mx-auto mb-5 bg-surface rounded-card border border-border shadow-sm p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
-        <div>
-          <h3 className="text-heading font-semibold text-fg">{esNotaCredito ? 'Nota de Crédito' : esNotaDebito ? 'Nota de Débito' : 'Factura'} {factura.consecutivo}</h3>
+    // Zonas seguras de iOS en móvil (notch arriba, barra de inicio abajo); en impresión sin relleno.
+    <div className="absolute top-0 left-0 right-0 z-50 bg-bg px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6 print:bg-white print:p-0">
+      {/* Top action toolbar - hidden in Print. En móvil queda fija arriba al desplazarse. */}
+      <div className="sticky top-[env(safe-area-inset-top,0px)] z-10 sm:static max-w-3xl mx-auto mb-5 bg-surface rounded-card border border-border shadow-sm p-3 sm:p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
+        <div className="min-w-0">
+          <h3 className="text-heading font-semibold text-fg break-words">{esNotaCredito ? 'Nota de Crédito' : esNotaDebito ? 'Nota de Débito' : 'Factura'} {factura.consecutivo}</h3>
           <p className="text-xs text-fg-muted">Imprima o reenvíe el comprobante al cliente</p>
         </div>
-        <div className="flex flex-wrap gap-2 items-center w-full sm:w-auto">
+        <div className="flex flex-wrap gap-2 items-center w-full sm:w-auto [&>*]:flex-1 sm:[&>*]:flex-none">
           <Button
             variant="outline"
             onClick={handleReenviar}
@@ -133,10 +134,10 @@ export default function FacturaDetailView({ factura, patient, company, referenci
 
         <div className="bg-surface-muted rounded-card p-4 text-sm print:bg-white print:border print:border-border">
           <span className="text-caption font-semibold text-fg-muted uppercase tracking-wider block mb-2">Receptor</span>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] sm:grid-cols-[repeat(4,minmax(0,1fr))] gap-4">
             <div>
               <span className="text-fg-muted block text-xs">Nombre</span>
-              <span className="font-semibold text-fg block">{patient.nombreCompleto || factura.receptorNombre || `Receptor #${factura.idPaciente}`}</span>
+              <span className="font-semibold text-fg block break-words">{patient.nombreCompleto || factura.receptorNombre || `Receptor #${factura.idPaciente}`}</span>
             </div>
             <div>
               <span className="text-fg-muted block text-xs">Identificación</span>
@@ -144,7 +145,7 @@ export default function FacturaDetailView({ factura, patient, company, referenci
             </div>
             <div>
               <span className="text-fg-muted block text-xs">Correo</span>
-              <span className="font-medium text-fg block truncate">{patient.correoElectronico || 'No registrado'}</span>
+              <span className="font-medium text-fg block break-all">{patient.correoElectronico || 'No registrado'}</span>
             </div>
             <div>
               <span className="text-fg-muted block text-xs">Condición de venta</span>
@@ -160,7 +161,29 @@ export default function FacturaDetailView({ factura, patient, company, referenci
           </div>
         )}
 
-        <div className="overflow-x-auto">
+        {/* Móvil: líneas como tarjetas apiladas (sin scroll horizontal). En impresión siempre la tabla. */}
+        <ul className="sm:hidden print:hidden space-y-2" aria-label="Líneas del comprobante">
+          {factura.lineas.map((l, idx) => (
+            <li key={idx} className="p-3 rounded-control border border-border bg-surface-muted/50 text-xs">
+              <span className="font-semibold text-fg block text-sm break-words">{l.detalle}</span>
+              <span className="text-caption text-fg-muted tabular-nums">CABYS {l.codigoCabys}</span>
+              <dl className="mt-2 grid grid-cols-[repeat(2,minmax(0,1fr))] gap-x-3 gap-y-1">
+                <dt className="text-fg-muted">Cantidad</dt>
+                <dd className="text-right text-fg tabular-nums">{l.cantidad}</dd>
+                <dt className="text-fg-muted">Precio unit.</dt>
+                <dd className="text-right text-fg tabular-nums">{colones(l.precioUnitario)}</dd>
+                <dt className="text-fg-muted">Subtotal</dt>
+                <dd className="text-right text-fg tabular-nums">{colones(l.subTotal)}</dd>
+                <dt className="text-fg-muted">IVA ({Number(l.porcentajeIva) > 0 ? `${l.porcentajeIva}%` : 'Exento'})</dt>
+                <dd className="text-right text-fg tabular-nums">{colones(l.montoIva)}</dd>
+                <dt className="font-semibold text-fg border-t border-border pt-1">Total</dt>
+                <dd className="text-right font-semibold text-fg tabular-nums border-t border-border pt-1">{colones(l.montoTotalLinea)}</dd>
+              </dl>
+            </li>
+          ))}
+        </ul>
+
+        <div className="hidden sm:block print:block overflow-x-auto">
           <table className="w-full text-xs min-w-[34rem]">
             <thead>
               <tr className="text-left text-fg-muted uppercase text-caption tracking-wider border-b border-border-strong">

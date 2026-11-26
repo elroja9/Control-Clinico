@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { Servicio, Factura } from '../data/mockData';
-import { Receipt, X, AlertCircle, Check, Loader2 } from 'lucide-react';
-import { useDialog } from '../hooks/useDialog';
+import { Receipt, AlertCircle, Check, Loader2 } from 'lucide-react';
 import { MEDIO_PAGO_HACIENDA, colones } from '../utils/facturacion';
 import { Button } from './ui/Button';
-import { IconButton } from './ui/IconButton';
+import { ResponsiveModal } from './ui/ResponsiveModal';
 import { Input } from './ui/Input';
 import { Select } from './ui/Select';
 
@@ -62,7 +61,7 @@ export default function FacturarModal({
   const [facturaError, setFacturaError] = useState('');
   const [facturaResultado, setFacturaResultado] = useState<Factura | null>(null);
   // Mientras se emite, Escape no cierra: la factura se está enviando a Hacienda
-  const dialogRef = useDialog<HTMLDivElement>(true, () => { if (!facturaEnviando) onClose(); });
+  const cerrarSiSePuede = () => { if (!facturaEnviando) onClose(); };
 
   const facturaDesglosePreview = (Object.entries(facturaCantidades) as [string, number][]).reduce((acc, [idServicio, cantidad]) => {
     if (!cantidad || cantidad <= 0) return acc;
@@ -136,22 +135,29 @@ export default function FacturarModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-fg/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="titulo-facturar" tabIndex={-1} className="bg-surface rounded-t-panel sm:rounded-panel w-full max-w-lg shadow-lg border border-border max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden">
-        <div className="sticky top-0 z-10 bg-surface border-b border-border">
-          <div className="h-1" style={{ backgroundColor: themeColor }} aria-hidden="true" />
-          <div className="px-5 py-4 flex justify-between items-center gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <span className="w-9 h-9 shrink-0 rounded-control bg-brand-soft text-brand-ink flex items-center justify-center" aria-hidden="true">
-                <Receipt className="w-4.5 h-4.5" />
-              </span>
-              <h3 id="titulo-facturar" className="text-heading font-semibold text-fg truncate">Facturar · {nombrePaciente}</h3>
-            </div>
-            <IconButton label="Cerrar" icon={<X className="w-5 h-5" aria-hidden="true" />} onClick={onClose} disabled={facturaEnviando} />
-          </div>
-        </div>
-
-        <div className="p-5 space-y-4">
+    <ResponsiveModal
+      open
+      onClose={cerrarSiSePuede}
+      title={`Facturar · ${nombrePaciente}`}
+      icon={<Receipt aria-hidden="true" />}
+      accentColor={themeColor}
+      closeDisabled={facturaEnviando}
+      footer={facturaResultado ? (
+        <Button variant="secondary" fullWidth onClick={onClose}>Cerrar</Button>
+      ) : (
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={facturaEnviando}>Cancelar</Button>
+          <Button
+            disabled={facturaEnviando}
+            onClick={handleEmitirFactura}
+            icon={facturaEnviando ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Check className="w-4 h-4" aria-hidden="true" />}
+          >
+            {facturaEnviando ? 'Emitiendo…' : facturaCondicion === '02' ? 'Emitir factura a crédito' : 'Emitir factura'}
+          </Button>
+        </>
+      )}
+    >
+        <div className="space-y-4">
           {facturaError && (
             <div role="alert" className="p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
@@ -174,7 +180,6 @@ export default function FacturarModal({
                 <p className="tabular-nums">Total: <span className="font-semibold">{colones(facturaResultado.total)}</span>{facturaResultado.condicionVenta === '02' ? ` · Crédito a ${facturaResultado.plazoCredito} días (queda en Cuentas por Cobrar)` : ''}</p>
                 {facturaResultado.mensajeError && <p className="mt-1">{facturaResultado.mensajeError}</p>}
               </div>
-              <Button variant="secondary" fullWidth onClick={onClose}>Cerrar</Button>
             </div>
           ) : (
             <>
@@ -185,7 +190,8 @@ export default function FacturarModal({
               {servicios.length === 0 ? (
                 <p className="text-sm text-fg-muted">Esta empresa no tiene servicios configurados. Agréguelos primero en Configuración de Empresa.</p>
               ) : (
-                <div className="space-y-2 max-h-64 overflow-y-auto">
+                // En móvil el modal ya tiene scroll propio: sin scroll anidado en la lista
+                <div className="space-y-2 sm:max-h-64 sm:overflow-y-auto">
                   {servicios.map(s => (
                     <div key={s.id} className="flex items-center justify-between gap-3 p-3 bg-surface-muted border border-border rounded-control">
                       <div className="min-w-0">
@@ -289,21 +295,9 @@ export default function FacturarModal({
                   Esta factura se numera y guarda igual que siempre, pero no se envía a Hacienda — queda marcada como SIMULADA. Útil para probar el flujo sin generar una presentación fiscal real.
                 </span>
               </label>
-
-              <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-1">
-                <Button variant="secondary" onClick={onClose} disabled={facturaEnviando}>Cancelar</Button>
-                <Button
-                  disabled={facturaEnviando}
-                  onClick={handleEmitirFactura}
-                  icon={facturaEnviando ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Check className="w-4 h-4" aria-hidden="true" />}
-                >
-                  {facturaEnviando ? 'Emitiendo…' : facturaCondicion === '02' ? 'Emitir factura a crédito' : 'Emitir factura'}
-                </Button>
-              </div>
             </>
           )}
         </div>
-      </div>
-    </div>
+    </ResponsiveModal>
   );
 }

@@ -46,21 +46,24 @@ const etiqueta = 'block text-xs font-semibold text-fg mb-1.5';
 function EditorEscala({ titulo, id, filas, onChange }: { titulo: string; id: string; filas: FilaForm[]; onChange: (f: FilaForm[]) => void }) {
   const cambiar = (i: number, k: keyof FilaForm, v: string) => onChange(filas.map((f, j) => (j === i ? { ...f, [k]: v } : f)));
   return (
-    <fieldset className="p-4 border border-border rounded-card bg-surface-muted/40 space-y-3">
-      <legend className="px-1.5 text-xs font-semibold uppercase tracking-wide text-fg-muted">{titulo}</legend>
+    // Grupo con fondo sutil; en móvil ocupa el ancho de la tarjeta (sin recuadro anidado).
+    // role="group" + título en lugar de fieldset/legend: la leyenda sin borde quedaba montada en el borde superior.
+    <div role="group" aria-labelledby={`${id}-titulo`} className="min-w-0 -mx-4 sm:mx-0 px-4 py-4 sm:p-4 bg-surface-muted/40 border-y sm:border border-border sm:rounded-card space-y-3">
+      <h4 id={`${id}-titulo`} className="text-xs font-semibold uppercase tracking-wide text-fg-muted">{titulo}</h4>
       {filas.map((f, i) => {
         const ultimo = i === filas.length - 1;
         return (
-          <div key={i} className="grid grid-cols-12 gap-2 items-end">
-            <div className="col-span-7">
-              <label htmlFor={`${id}-tope-${i}`} className={etiqueta}>{ultimo ? 'Tope (último tramo: sin tope)' : `Hasta (₡) — tramo ${i + 1}`}</label>
+          // Tope flexible, tasa fija y 44px para el botón de quitar (con 12 columnas el botón no cabía a 360px).
+          <div key={i} className="grid grid-cols-[minmax(0,1fr)_6.5rem_2.75rem] gap-2 items-end">
+            <div className="min-w-0">
+              <label htmlFor={`${id}-tope-${i}`} className={etiqueta}>{ultimo ? 'Último tramo (sin tope)' : `Hasta (₡) — tramo ${i + 1}`}</label>
               <Input id={`${id}-tope-${i}`} type="number" min="0" step="1" inputMode="numeric" disabled={ultimo} value={ultimo ? '' : f.tope} placeholder={ultimo ? 'Todo el exceso' : ''} onChange={(e) => cambiar(i, 'tope', e.target.value)} />
             </div>
-            <div className="col-span-3">
+            <div className="min-w-0">
               <label htmlFor={`${id}-tasa-${i}`} className={etiqueta}>Tasa (%)</label>
               <Input id={`${id}-tasa-${i}`} type="number" min="0" max="100" step="0.01" inputMode="decimal" value={f.tasa} onChange={(e) => cambiar(i, 'tasa', e.target.value)} />
             </div>
-            <div className="col-span-2 flex justify-end">
+            <div className="flex justify-end">
               {filas.length > 1 && (
                 <IconButton
                   label={`Quitar tramo ${i + 1} de ${titulo}`}
@@ -83,7 +86,7 @@ function EditorEscala({ titulo, id, filas, onChange }: { titulo: string; id: str
       >
         Agregar tramo intermedio
       </Button>
-    </fieldset>
+    </div>
   );
 }
 
@@ -169,27 +172,28 @@ export default function ParametrosRentaManager() {
       />
 
       <CardBody className="space-y-5">
-        <div className="flex flex-wrap items-end gap-4">
-          <div>
+        {/* En móvil cada control ocupa su fila (sin desbordar); desde sm van lado a lado. */}
+        <div className="flex flex-wrap items-end gap-3 sm:gap-4">
+          <div className="flex-1 min-w-36 sm:flex-none">
             <label htmlFor="renta-periodo" className={etiqueta}>Período fiscal</label>
             <Select id="renta-periodo" value={anio ?? ''} onChange={(e) => elegir(parseInt(e.target.value))} wrapperClassName="min-w-36">
               {anio != null && !periodos.some(p => p.anio === anio) && <option value={anio}>{anio} (nuevo, sin guardar)</option>}
               {periodos.map(p => <option key={p.anio} value={p.anio}>{p.anio}</option>)}
             </Select>
           </div>
-          <div>
-            <label htmlFor="renta-nuevo" className={etiqueta}>Registrar otro período</label>
+          <div className="flex-1 min-w-48 sm:flex-none">
+            <label htmlFor="renta-nuevo" className={etiqueta}>Nuevo período</label>
             <div className="flex gap-2">
-              <Input id="renta-nuevo" type="number" min="2000" max="2100" placeholder="Año" value={nuevoAnio} onChange={(e) => setNuevoAnio(e.target.value)} wrapperClassName="w-28" />
+              <Input id="renta-nuevo" type="number" min="2000" max="2100" inputMode="numeric" placeholder="Año" value={nuevoAnio} onChange={(e) => setNuevoAnio(e.target.value)} wrapperClassName="flex-1 min-w-0 sm:flex-none sm:w-28" />
               <Button variant="secondary" onClick={crearPeriodo}>Crear</Button>
             </div>
           </div>
         </div>
 
         {error && (
-          <div role="alert" className="p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-sm flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
-            <span>{error}</span>
+          <div role="alert" className="p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-sm flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+            <span className="min-w-0 break-words">{error}</span>
           </div>
         )}
 
@@ -201,18 +205,22 @@ export default function ParametrosRentaManager() {
               <EditorEscala titulo="Persona física con actividad lucrativa" id="renta-fisica" filas={form.escalaFisica} onChange={(f) => setForm(prev => ({ ...prev, escalaFisica: f }))} />
               <EditorEscala titulo="Persona jurídica — escala reducida" id="renta-juridica" filas={form.escalaJuridica} onChange={(f) => setForm(prev => ({ ...prev, escalaJuridica: f }))} />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <label htmlFor="renta-tope" className={etiqueta}>Tope de ingresos brutos para la escala reducida (₡)</label>
-                <Input id="renta-tope" type="number" min="1" step="1" inputMode="numeric" value={form.tope} onChange={(e) => setForm(prev => ({ ...prev, tope: e.target.value }))} />
+            {/* Tope y tarifa (números cortos) lado a lado en el iPhone; la referencia a ancho completo. */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+              <div className="min-w-0">
+                <label htmlFor="renta-tope" className={etiqueta}>Tope (₡)</label>
+                <Input id="renta-tope" aria-describedby="renta-tope-ayuda" type="number" min="1" step="1" inputMode="numeric" value={form.tope} onChange={(e) => setForm(prev => ({ ...prev, tope: e.target.value }))} />
+                <p id="renta-tope-ayuda" className="mt-1.5 text-xs text-fg-muted">Ingresos brutos máximos de la escala reducida.</p>
               </div>
-              <div>
-                <label htmlFor="renta-general" className={etiqueta}>Tarifa general persona jurídica sobre el tope (%)</label>
-                <Input id="renta-general" type="number" min="0" max="100" step="0.01" inputMode="decimal" value={form.tarifaGeneral} onChange={(e) => setForm(prev => ({ ...prev, tarifaGeneral: e.target.value }))} />
+              <div className="min-w-0">
+                <label htmlFor="renta-general" className={etiqueta}>Tarifa general (%)</label>
+                <Input id="renta-general" aria-describedby="renta-general-ayuda" type="number" min="0" max="100" step="0.01" inputMode="decimal" value={form.tarifaGeneral} onChange={(e) => setForm(prev => ({ ...prev, tarifaGeneral: e.target.value }))} />
+                <p id="renta-general-ayuda" className="mt-1.5 text-xs text-fg-muted">Persona jurídica, sobre el tope.</p>
               </div>
-              <div>
-                <label htmlFor="renta-referencia" className={etiqueta}>Referencia legal (decreto y publicación)</label>
-                <Input id="renta-referencia" type="text" maxLength={255} value={form.referencia} onChange={(e) => setForm(prev => ({ ...prev, referencia: e.target.value }))} placeholder="ej: Decreto Ejecutivo 45333-H" />
+              <div className="min-w-0 col-span-2 sm:col-span-1">
+                <label htmlFor="renta-referencia" className={etiqueta}>Referencia legal</label>
+                <Input id="renta-referencia" aria-describedby="renta-referencia-ayuda" type="text" maxLength={255} value={form.referencia} onChange={(e) => setForm(prev => ({ ...prev, referencia: e.target.value }))} placeholder="ej: Decreto Ejecutivo 45333-H" />
+                <p id="renta-referencia-ayuda" className="mt-1.5 text-xs text-fg-muted">Decreto y publicación.</p>
               </div>
             </div>
           </form>
@@ -220,10 +228,16 @@ export default function ParametrosRentaManager() {
       </CardBody>
 
       {anio != null && (
-        <CardFooter className="justify-between flex-wrap">
-          <span className="text-xs text-fg-muted">{actual?.actualizadoEn ? `Última actualización: ${new Date(actual.actualizadoEn).toLocaleString('es-CR')}` : 'Período aún no guardado.'}</span>
+        // En móvil el pie queda fijo abajo (sobre la barra de inicio de iOS) mientras se edita la tarjeta.
+        <CardFooter className="justify-between flex-wrap max-sm:sticky max-sm:bottom-0 max-sm:z-10 max-sm:bg-surface-muted! max-sm:pb-[calc(1rem+env(safe-area-inset-bottom,0px))]!">
+          <span className="min-w-0 text-xs text-fg-muted">{actual?.actualizadoEn ? `Última actualización: ${new Date(actual.actualizadoEn).toLocaleString('es-CR')}` : 'Período aún no guardado.'}</span>
           <Button type="submit" form="renta-form" loading={guardando}>
-            {guardando ? 'Guardando…' : `Guardar tramos ${anio}`}
+            {guardando ? 'Guardando…' : (
+              <>
+                <span className="sm:hidden">Guardar {anio}</span>
+                <span className="hidden sm:inline">Guardar tramos {anio}</span>
+              </>
+            )}
           </Button>
         </CardFooter>
       )}

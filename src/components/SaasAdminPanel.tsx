@@ -88,51 +88,72 @@ export default function SaasAdminPanel({
   const paymentsCompany = companies.find(c => c.id === paymentsCompanyId);
   const paymentsForCompany = payments.filter(p => p.idCompania === paymentsCompanyId);
 
-  // Acciones por empresa: se reutilizan en la tabla (escritorio) y en las tarjetas (móvil).
-  const renderAcciones = (company: Company) => (
-    <div className="flex flex-wrap items-center gap-2">
-      {company.estadoSaas === 'PENDIENTE' && (
-        <Button size="sm" onClick={() => onUpdateEstadoSaas(company.id, 'ACTIVA')} icon={<ShieldCheck className="w-4 h-4" aria-hidden="true" />}>
-          Aprobar
-        </Button>
-      )}
-      {company.estadoSaas === 'ACTIVA' && (
-        <Button size="sm" variant="danger" onClick={() => onUpdateEstadoSaas(company.id, 'SUSPENDIDA')} icon={<ShieldOff className="w-4 h-4" aria-hidden="true" />}>
-          Suspender
-        </Button>
-      )}
-      {company.estadoSaas === 'SUSPENDIDA' && (
-        <Button size="sm" onClick={() => onUpdateEstadoSaas(company.id, 'ACTIVA')} icon={<ShieldAlert className="w-4 h-4" aria-hidden="true" />}>
-          Reactivar
-        </Button>
-      )}
-
-      {editingLimitId === company.id ? (
-        <div className="flex items-center gap-2">
-          <Input
-            type="number"
-            min={0}
-            inputMode="numeric"
-            aria-label={`Límite de usuarios de ${company.nombreComercial}`}
-            value={limitDraft}
-            onChange={(e) => setLimitDraft(parseInt(e.target.value) || 0)}
-            wrapperClassName="w-24"
-          />
-          <Button size="sm" variant="secondary" onClick={() => saveLimitEditor(company.id)}>
-            Guardar
+  // Acciones por empresa: se reutilizan en la tabla (escritorio) y en la lista (móvil). En la lista
+  // compacta el cambio de estado conserva su texto y "Editar límite" / "Ver pagos" son IconButton de 44px.
+  const renderAcciones = (company: Company, compacto = false) => {
+    const tamano = compacto ? 'md' : 'sm';
+    const anchoEstado = compacto ? 'flex-1 min-w-0' : undefined;
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        {company.estadoSaas === 'PENDIENTE' && (
+          <Button size={tamano} className={anchoEstado} onClick={() => onUpdateEstadoSaas(company.id, 'ACTIVA')} icon={<ShieldCheck className="w-4 h-4" aria-hidden="true" />}>
+            Aprobar
           </Button>
-        </div>
-      ) : (
-        <Button size="sm" variant="outline" onClick={() => openLimitEditor(company)} icon={<Users className="w-4 h-4" aria-hidden="true" />}>
-          Editar límite
-        </Button>
-      )}
+        )}
+        {company.estadoSaas === 'ACTIVA' && (
+          <Button size={tamano} className={anchoEstado} variant="danger" onClick={() => onUpdateEstadoSaas(company.id, 'SUSPENDIDA')} icon={<ShieldOff className="w-4 h-4" aria-hidden="true" />}>
+            Suspender
+          </Button>
+        )}
+        {company.estadoSaas === 'SUSPENDIDA' && (
+          <Button size={tamano} className={anchoEstado} onClick={() => onUpdateEstadoSaas(company.id, 'ACTIVA')} icon={<ShieldAlert className="w-4 h-4" aria-hidden="true" />}>
+            Reactivar
+          </Button>
+        )}
 
-      <Button size="sm" variant="outline" onClick={() => openPayments(company)} icon={<DollarSign className="w-4 h-4" aria-hidden="true" />}>
-        Ver pagos
-      </Button>
-    </div>
-  );
+        {editingLimitId === company.id ? (
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={0}
+              inputMode="numeric"
+              aria-label={`Límite de usuarios de ${company.nombreComercial}`}
+              value={limitDraft}
+              onChange={(e) => setLimitDraft(parseInt(e.target.value) || 0)}
+              wrapperClassName="w-24"
+            />
+            <Button size={tamano} variant="secondary" onClick={() => saveLimitEditor(company.id)}>
+              Guardar
+            </Button>
+          </div>
+        ) : compacto ? (
+          <IconButton
+            variant="outline"
+            label={`Editar límite de usuarios de ${company.nombreComercial}`}
+            icon={<Users className="w-4 h-4" aria-hidden="true" />}
+            onClick={() => openLimitEditor(company)}
+          />
+        ) : (
+          <Button size="sm" variant="outline" onClick={() => openLimitEditor(company)} icon={<Users className="w-4 h-4" aria-hidden="true" />}>
+            Editar límite
+          </Button>
+        )}
+
+        {compacto ? (
+          <IconButton
+            variant="outline"
+            label={`Ver pagos de ${company.nombreComercial}`}
+            icon={<DollarSign className="w-4 h-4" aria-hidden="true" />}
+            onClick={() => openPayments(company)}
+          />
+        ) : (
+          <Button size="sm" variant="outline" onClick={() => openPayments(company)} icon={<DollarSign className="w-4 h-4" aria-hidden="true" />}>
+            Ver pagos
+          </Button>
+        )}
+      </div>
+    );
+  };
 
   const activos = (company: Company) => users.filter(u => u.idCompania === company.id && u.activo).length;
 
@@ -188,32 +209,30 @@ export default function SaasAdminPanel({
             </table>
           </div>
 
-          {/* Móvil y tablet: tarjetas */}
+          {/* Móvil y tablet: filas compactas con divisores (sin tarjetas dentro de la tarjeta) */}
           <ul className="lg:hidden divide-y divide-border">
             {companies.map(company => (
-              <li key={company.id} className="p-5 space-y-4">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <span className="block font-semibold text-fg">{company.nombreComercial}</span>
-                    <span className="block text-xs text-fg-muted">{company.identificacion}</span>
-                  </div>
-                  <Badge tone={ESTADO_TONE[company.estadoSaas]}>{ESTADO_LABEL[company.estadoSaas]}</Badge>
+              <li key={company.id} className="px-4 sm:px-6 py-4 space-y-3">
+                <div className="min-w-0">
+                  <span className="block font-semibold text-fg break-words">{company.nombreComercial}</span>
+                  <span className="block text-xs text-fg-muted break-words">{company.identificacion}</span>
+                  <Badge tone={ESTADO_TONE[company.estadoSaas]} className="mt-1.5">{ESTADO_LABEL[company.estadoSaas]}</Badge>
                 </div>
-                <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-                  <div className="bg-surface-muted rounded-control p-3">
+                <dl className="grid grid-cols-3 gap-3 text-sm">
+                  <div className="min-w-0">
                     <dt className="text-xs text-fg-muted">Usuarios</dt>
                     <dd className="font-semibold text-fg">{activos(company)} / {company.maxUsuarios}</dd>
                   </div>
-                  <div className="bg-surface-muted rounded-control p-3">
-                    <dt className="text-xs text-fg-muted">Monto mensual</dt>
-                    <dd className="font-semibold text-fg">{company.montoMensual != null ? `₡${company.montoMensual}` : '—'}</dd>
+                  <div className="min-w-0">
+                    <dt className="text-xs text-fg-muted">Mensual</dt>
+                    <dd className="font-semibold text-fg break-words">{company.montoMensual != null ? `₡${company.montoMensual}` : '—'}</dd>
                   </div>
-                  <div className="bg-surface-muted rounded-control p-3 col-span-2 sm:col-span-1">
-                    <dt className="text-xs text-fg-muted">Próximo vencimiento</dt>
-                    <dd className="font-semibold text-fg">{company.proximoVencimiento || '—'}</dd>
+                  <div className="min-w-0">
+                    <dt className="text-xs text-fg-muted">Vence</dt>
+                    <dd className="font-semibold text-fg break-words">{company.proximoVencimiento || '—'}</dd>
                   </div>
                 </dl>
-                {renderAcciones(company)}
+                {renderAcciones(company, true)}
               </li>
             ))}
           </ul>
@@ -228,46 +247,45 @@ export default function SaasAdminPanel({
             aria-modal="true"
             aria-labelledby="titulo-pagos-saas"
             tabIndex={-1}
-            className="bg-surface rounded-t-panel sm:rounded-panel border border-border shadow-lg max-w-lg w-full p-5 sm:p-6 max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden"
+            className="bg-surface rounded-t-panel sm:rounded-panel border border-border shadow-lg max-w-lg w-full p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] sm:p-6 max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden"
           >
-            <div className="flex items-center justify-between gap-2 mb-4 border-b border-border pb-3">
-              <h4 id="titulo-pagos-saas" className="text-heading font-semibold text-fg">Historial de pagos · {paymentsCompany.nombreComercial}</h4>
+            <div className="flex items-start justify-between gap-2 mb-4 border-b border-border pb-3">
+              <h4 id="titulo-pagos-saas" className="min-w-0 pt-2 text-heading font-semibold text-fg break-words">Historial de pagos · {paymentsCompany.nombreComercial}</h4>
               <IconButton label="Cerrar" icon={<X className="w-4 h-4" aria-hidden="true" />} onClick={() => setPaymentsCompanyId(null)} />
             </div>
 
-            <form onSubmit={(e) => handleAddPaymentSubmit(e, paymentsCompany)} className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+            {/* Fecha y montos (cortos) en 2 columnas también en el iPhone; las notas a ancho completo. */}
+            <form onSubmit={(e) => handleAddPaymentSubmit(e, paymentsCompany)} className="grid grid-cols-2 gap-3 mb-5">
               <Field label="Fecha del pago">
                 <Input type="date" value={newPaymentFecha} onChange={(e) => setNewPaymentFecha(e.target.value)} />
               </Field>
               <Field label="Monto (₡)">
                 <Input type="number" inputMode="decimal" placeholder="Monto" value={newPaymentMonto || ''} onChange={(e) => setNewPaymentMonto(parseFloat(e.target.value) || 0)} />
               </Field>
-              <Field label="Notas (opcional)" className="sm:col-span-2">
+              <Field label="Notas (opcional)" className="col-span-2">
                 <Input type="text" placeholder="Notas (opcional)" value={newPaymentNotas} onChange={(e) => setNewPaymentNotas(e.target.value)} />
               </Field>
-              <Field label="Monto mensual (opcional)">
+              <Field label="Monto mensual (₡)" hint="Opcional">
                 <Input type="number" inputMode="decimal" value={newPaymentMontoMensual} onChange={(e) => setNewPaymentMontoMensual(e.target.value)} />
               </Field>
-              <Field label="Próximo vencimiento (opcional)">
+              <Field label="Próximo vencimiento" hint="Opcional">
                 <Input type="date" value={newPaymentVencimiento} onChange={(e) => setNewPaymentVencimiento(e.target.value)} />
               </Field>
-              <div className="sm:col-span-2 flex justify-end">
+              <div className="col-span-2 flex sm:justify-end [&>*]:flex-1 sm:[&>*]:flex-none">
                 <Button type="submit" icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
                   Registrar pago
                 </Button>
               </div>
             </form>
 
-            <ul className="space-y-2">
+            <ul className="divide-y divide-border border-t border-border">
               {paymentsForCompany.length === 0 && (
                 <li className="text-sm text-fg-muted text-center py-4">Sin pagos registrados todavía.</li>
               )}
               {paymentsForCompany.map(p => (
-                <li key={p.id} className="flex items-center justify-between p-3 bg-surface-muted border border-border rounded-control">
-                  <div>
-                    <span className="block font-semibold text-fg">₡{p.monto}</span>
-                    <span className="text-xs text-fg-muted">{p.fecha}{p.notas ? ` · ${p.notas}` : ''}</span>
-                  </div>
+                <li key={p.id} className="py-3 min-w-0">
+                  <span className="block font-semibold text-fg">₡{p.monto}</span>
+                  <span className="block text-xs text-fg-muted break-words">{p.fecha}{p.notas ? ` · ${p.notas}` : ''}</span>
                 </li>
               ))}
             </ul>

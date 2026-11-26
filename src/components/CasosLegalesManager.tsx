@@ -156,7 +156,7 @@ export default function CasosLegalesManager({
           </h2>
           <IconButton label="Cerrar sin guardar" icon={<X className="w-5 h-5" aria-hidden="true" />} onClick={() => setBorradorCaso(null)} />
         </div>
-        <div className="p-5 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-5">
+        <div className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-5">
           <div>
             <label htmlFor="caso-cliente" className={labelBase}>Cliente *</label>
             <select id="caso-cliente" required value={borradorCaso.idPaciente || ''} onChange={e => set('idPaciente', parseInt(e.target.value))} className={inputBase}>
@@ -197,7 +197,8 @@ export default function CasosLegalesManager({
             <textarea id="caso-notas" rows={3} value={borradorCaso.notas} onChange={e => set('notas', e.target.value)} className={`${inputBase} py-2`} />
           </div>
         </div>
-        <div className="px-5 sm:px-6 py-4 border-t border-border bg-surface-muted/60 flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5">
+        {/* Barra de guardar fija abajo en móvil, sobre la barra de inicio de iOS */}
+        <div className="sticky bottom-0 z-10 sm:static px-4 sm:px-6 pt-3 sm:py-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-border bg-surface sm:bg-surface-muted/60 flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5">
           <Button variant="secondary" onClick={() => setBorradorCaso(null)}>Cancelar</Button>
           <Button type="submit" loading={ocupado} icon={ocupado ? undefined : <Save className="w-4 h-4" aria-hidden="true" />}>Guardar caso</Button>
         </div>
@@ -254,7 +255,7 @@ export default function CasosLegalesManager({
             </div>
           </dl>
           {casoAbierto.notas && <p className="text-sm text-fg-muted whitespace-pre-line">{casoAbierto.notas}</p>}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 [&>*]:flex-1 sm:[&>*]:flex-none">
             <Button variant="secondary" size="sm" onClick={() => setBorradorCaso({ ...casoAbierto })} icon={<Edit className="w-4 h-4" aria-hidden="true" />}>
               Editar caso
             </Button>
@@ -296,7 +297,7 @@ export default function CasosLegalesManager({
               </div>
               <div>
                 <label htmlFor="doc-limite" className={labelBase}>Fecha límite</label>
-                <input id="doc-limite" type="date" value={borradorDoc.fechaLimite} onChange={e => setBorradorDoc({ ...borradorDoc, fechaLimite: e.target.value })} className={inputBase} />
+                <input id="doc-limite" type="date" value={borradorDoc.fechaLimite} onChange={e => setBorradorDoc({ ...borradorDoc, fechaLimite: e.target.value })} className={`${inputBase} px-2.5!`} />
               </div>
               <div className="sm:col-span-3">
                 <label htmlFor="doc-notas" className={labelBase}>Notas</label>

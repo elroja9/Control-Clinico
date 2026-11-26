@@ -26,7 +26,7 @@ export default function PainMapSelector({ selectedZone, onSelectZone, painScore 
   };
 
   return (
-    <div className="bg-surface rounded-card p-5 border border-border shadow-xs flex flex-col items-center">
+    <div className="bg-surface rounded-card p-4 sm:p-5 border border-border shadow-xs flex flex-col items-center min-w-0">
       <div className="w-full flex items-start justify-between gap-3 mb-4 pb-3 border-b border-border">
         <div>
           <h4 className="text-body font-semibold text-fg">Mapa Anatómico Digital</h4>
@@ -77,15 +77,20 @@ export default function PainMapSelector({ selectedZone, onSelectZone, painScore 
 
       {/* Interactive Legend */}
       <div className="w-full mt-4 bg-surface-muted p-3 rounded-card border border-border">
-        <span className="text-xs font-semibold text-fg-muted block mb-2">Zonas de interés</span>
-        <div className="flex flex-wrap gap-2">
+        <span id="pain-zonas-titulo" className="text-xs font-semibold text-fg-muted block mb-2">Zonas de interés</span>
+        {/* Móvil: chips en una fila con scroll horizontal y snap; desde sm se reparten en varias filas */}
+        <div
+          role="group"
+          aria-labelledby="pain-zonas-titulo"
+          className="flex gap-2 overflow-x-auto overscroll-x-contain snap-x snap-mandatory -mx-3 px-3 pb-1 sm:flex-wrap sm:overflow-visible sm:mx-0 sm:px-0 sm:pb-0"
+        >
           {zones.map((z) => (
             <button
               key={z.id}
               type="button"
               onClick={() => onSelectZone(z.id)}
               aria-pressed={selectedZone === z.id}
-              className={`min-h-10 text-xs font-semibold px-3 rounded-full border transition-colors ${
+              className={`snap-start shrink-0 whitespace-nowrap min-h-11 text-xs font-semibold px-3.5 rounded-full border transition-colors ${
                 selectedZone === z.id
                   ? 'bg-brand-solid border-brand-solid text-brand-fg'
                   : 'bg-surface border-border-strong text-fg hover:bg-brand-soft'

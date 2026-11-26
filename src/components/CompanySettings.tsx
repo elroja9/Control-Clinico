@@ -64,10 +64,31 @@ type SeccionId = 'empresa' | 'marca' | 'horarios' | 'servicios' | 'usuarios' | '
 
 const SECCION_PREFIJO = 'cs-';
 
-/** Ancla de una sección del índice lateral. */
+/** Ancla de una sección del índice lateral. En móvil el título queda bajo el header de la app
+ *  (4rem + zona segura superior) y bajo el selector sticky "Ir a la sección" (~3.75rem). */
 function Seccion({ id, children }: { id: SeccionId; children: React.ReactNode }) {
-  return <section id={`${SECCION_PREFIJO}${id}`} className="scroll-mt-20">{children}</section>;
+  return (
+    <section id={`${SECCION_PREFIJO}${id}`} className="scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] lg:scroll-mt-24">
+      {children}
+    </section>
+  );
 }
+
+/** Texto corto en móvil y completo desde sm (para que dos botones quepan en una fila a 360px). */
+const textoAdaptable = (corto: string, largo: string) => (
+  <>
+    <span className="sm:hidden">{corto}</span>
+    <span className="hidden sm:inline">{largo}</span>
+  </>
+);
+
+/** Pie de tarjeta de un formulario: en móvil queda fijo abajo, sobre la barra de inicio de iOS
+ *  (mismo patrón que el formulario de servicio); desde sm vuelve a ser el pie normal. */
+const pieFijoMovil = 'max-sm:sticky max-sm:bottom-0 max-sm:z-10 max-sm:bg-surface-muted! max-sm:pb-[calc(1rem+env(safe-area-inset-bottom,0px))]!';
+
+/** Envuelve un Badge usado como acción de CardHeader: en móvil las acciones se estiran
+ *  (flex-1) y el badge quedaba como una barra; así conserva su ancho natural. */
+const badgeAccion = (badge: React.ReactNode) => <div className="flex">{badge}</div>;
 
 const tituloConIcono = (icono: React.ReactNode, texto: string) => (
   <span className="inline-flex items-center gap-2">
@@ -84,8 +105,6 @@ const segmento = (activo: boolean) => cx(
 
 const filaCheck = 'flex items-start gap-3 min-h-10 py-1 cursor-pointer text-sm text-fg';
 const cajaCheck = 'mt-0.5 w-5 h-5 shrink-0 accent-brand-solid';
-const leyenda = 'px-1.5 text-xs font-semibold uppercase tracking-wide text-fg-muted';
-
 interface CompanySettingsProps {
   companies: Company[];
   selectedCompanyId: number;
@@ -984,7 +1003,7 @@ export default function CompanySettings({
 
   // Selector de color de marca: el valor elegido se sigue mostrando en el propio selector.
   const renderColor = (idCampo: string, etiqueta: string, valor: string, onCambio: (v: string) => void) => (
-    <div>
+    <div className="min-w-0">
       <label htmlFor={idCampo} className="block text-xs font-semibold text-fg mb-1.5">{etiqueta}</label>
       <div className="flex items-center gap-2">
         <input
@@ -994,7 +1013,7 @@ export default function CompanySettings({
           onChange={(e) => onCambio(e.target.value)}
           className="w-11 h-11 shrink-0 rounded-control cursor-pointer border border-border-strong bg-surface p-1"
         />
-        <Input id={idCampo} type="text" value={valor} onChange={(e) => onCambio(e.target.value)} wrapperClassName="flex-1 min-w-0" className="font-mono" />
+        <Input id={idCampo} type="text" value={valor} onChange={(e) => onCambio(e.target.value)} wrapperClassName="flex-1 min-w-0" className="font-mono px-2.5!" />
       </div>
     </div>
   );
@@ -1002,7 +1021,7 @@ export default function CompanySettings({
   return (
     <div className="max-w-6xl lg:grid lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-8 lg:items-start">
       {/* Índice lateral (escritorio) */}
-      <nav aria-label="Secciones de la configuración" className="hidden lg:block lg:sticky lg:top-4">
+      <nav aria-label="Secciones de la configuración" className="hidden lg:block lg:sticky lg:top-20">
         <ul className="space-y-0.5">
           {seccionesNav.map(s => {
             const activa = s.id === seccionActiva;
@@ -1026,10 +1045,11 @@ export default function CompanySettings({
       </nav>
 
       <div className="space-y-6 min-w-0">
-        {/* Selector de sección (móvil y tablet) */}
-        <div className="lg:hidden">
-          <label htmlFor="cs-ir-a" className="block text-xs font-semibold text-fg mb-1.5">Ir a la sección</label>
-          <Select id="cs-ir-a" value={seccionActiva} onChange={(e) => irASeccion(e.target.value as SeccionId)}>
+        {/* Selector de sección (móvil y tablet): fijo bajo el header de la app al hacer scroll.
+            El header mide 4rem + zona segura superior; las anclas compensan con scroll-mt. */}
+        <div className="lg:hidden sticky top-[calc(4rem+env(safe-area-inset-top,0px))] z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2 bg-bg/85 backdrop-blur-md border-b border-border flex items-center gap-3 print:hidden">
+          <label htmlFor="cs-ir-a" className="shrink-0 text-xs font-semibold text-fg-muted">Ir a la sección</label>
+          <Select id="cs-ir-a" value={seccionActiva} onChange={(e) => irASeccion(e.target.value as SeccionId)} wrapperClassName="flex-1 min-w-0">
             {seccionesNav.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
           </Select>
         </div>
@@ -1600,37 +1620,48 @@ export default function CompanySettings({
                     )}
 
                     {isAddingUser && (
-                      <form onSubmit={handleCreateUser} className="p-4 sm:p-5 bg-surface-muted/50 border border-border rounded-card space-y-4">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <Field label="Nombre completo" required>
-                            <Input type="text" value={newUserNombre} onChange={(e) => setNewUserNombre(e.target.value)} />
+                      // En móvil el formulario ocupa el ancho de la tarjeta con divisores (sin tarjeta dentro de tarjeta).
+                      <form onSubmit={handleCreateUser} className="-mx-4 sm:mx-0 px-4 py-5 sm:p-5 bg-surface-muted/50 border-y sm:border border-border sm:rounded-card space-y-5">
+                        {/* Nombre y correo son largos (ancho completo); usuario y contraseña caben lado a lado. */}
+                        <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                          <Field label="Nombre completo" required className="col-span-2 sm:col-span-1">
+                            <Input type="text" autoComplete="off" value={newUserNombre} onChange={(e) => setNewUserNombre(e.target.value)} />
                           </Field>
-                          <Field label="Correo" required>
-                            <Input type="email" value={newUserCorreo} onChange={(e) => setNewUserCorreo(e.target.value)} />
+                          <Field label="Correo" required className="col-span-2 sm:col-span-1">
+                            <Input type="email" inputMode="email" autoComplete="off" value={newUserCorreo} onChange={(e) => setNewUserCorreo(e.target.value)} />
                           </Field>
-                          <Field label="Nombre de usuario" required>
-                            <Input type="text" value={newUserUsuario} onChange={(e) => setNewUserUsuario(e.target.value)} />
+                          <Field label="Usuario" required>
+                            <Input type="text" autoComplete="off" autoCapitalize="none" value={newUserUsuario} onChange={(e) => setNewUserUsuario(e.target.value)} />
                           </Field>
                           <Field label="Contraseña" required>
-                            <Input type="password" value={newUserContrasena} onChange={(e) => setNewUserContrasena(e.target.value)} />
+                            <Input type="password" autoComplete="new-password" value={newUserContrasena} onChange={(e) => setNewUserContrasena(e.target.value)} />
                           </Field>
                         </div>
-                        <Field
-                          label="Rol"
-                          hint={newUserRol === 'Contador' ? 'Contador: acceso de solo lectura a facturación, CxP y reportes fiscales; sin acceso a expedientes ni citas.' : undefined}
-                        >
-                          <Select value={newUserRol} onChange={(e) => setNewUserRol(e.target.value as 'Administrador' | 'Profesional' | 'Contador')}>
-                            <option value="Profesional">Profesional</option>
-                            <option value="Administrador">Administrador</option>
-                            <option value="Contador">Contador</option>
-                          </Select>
-                        </Field>
-                        <div className="flex gap-2 justify-end">
-                          <Button variant="ghost" onClick={() => setIsAddingUser(false)}>
+                        <div>
+                          <span id="cs-nuevo-rol-label" className="block text-xs font-semibold text-fg mb-1.5">Rol</span>
+                          {/* size sm y "Admin" en móvil: a 360px cada opción mide ~90px y "Administrador" se partía. */}
+                          <SegmentedControl
+                            ariaLabelledBy="cs-nuevo-rol-label"
+                            size="sm"
+                            value={newUserRol}
+                            onChange={(v: 'Administrador' | 'Profesional' | 'Contador') => setNewUserRol(v)}
+                            options={[
+                              { value: 'Profesional', label: 'Profesional' },
+                              { value: 'Administrador', label: textoAdaptable('Admin', 'Administrador') },
+                              { value: 'Contador', label: 'Contador' }
+                            ]}
+                          />
+                          {newUserRol === 'Contador' && (
+                            <p className="mt-1.5 text-xs text-fg-muted">Solo lectura en facturación, CxP y reportes fiscales; sin acceso a expedientes ni citas.</p>
+                          )}
+                        </div>
+                        {/* Acciones fijas abajo en móvil (sobre la barra de inicio de iOS), como el formulario de servicio. */}
+                        <div className="sticky bottom-0 z-10 -mx-4 sm:mx-0 px-4 sm:px-0 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:pb-0 bg-surface-muted/95 sm:bg-transparent backdrop-blur-sm sm:backdrop-blur-none border-t border-border sm:border-0 flex gap-2 sm:justify-end [&>*]:flex-1 sm:[&>*]:flex-none">
+                          <Button variant="outline" onClick={() => setIsAddingUser(false)}>
                             Cancelar
                           </Button>
                           <Button type="submit" disabled={userLimitReached}>
-                            Guardar colaborador
+                            {textoAdaptable('Guardar', 'Guardar colaborador')}
                           </Button>
                         </div>
                       </form>
@@ -1638,25 +1669,21 @@ export default function CompanySettings({
 
                     <ul className="divide-y divide-border border border-border rounded-card overflow-hidden">
                       {companyUsers.map(u => (
-                        <li key={u.id} className="flex items-center justify-between gap-3 p-3 sm:p-4 bg-surface">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <Avatar name={u.nombre} />
-                            <div className="min-w-0">
-                              <span className="font-semibold text-sm text-fg block truncate">{u.nombre}</span>
-                              <span className="text-xs text-fg-muted flex flex-wrap items-center gap-1.5">
-                                <span className="truncate">{u.usuario}</span>
-                                <Badge tone={u.rol === 'Administrador' ? 'brand' : u.rol === 'Contador' ? 'info' : 'neutral'}>{u.rol}</Badge>
-                              </span>
-                            </div>
+                        <li key={u.id} className="flex items-center gap-3 px-3 py-2.5 sm:px-4 sm:py-3 bg-surface">
+                          <Avatar name={u.nombre} />
+                          <div className="flex-1 min-w-0">
+                            <span className="font-semibold text-sm text-fg block truncate" title={u.nombre}>{u.nombre}</span>
+                            <span className="text-xs text-fg-muted block truncate" title={u.usuario}>{u.usuario}</span>
+                            <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                              <Badge tone={u.rol === 'Administrador' ? 'brand' : u.rol === 'Contador' ? 'info' : 'neutral'}>{u.rol}</Badge>
+                              <Badge tone={u.activo ? 'success' : 'neutral'}>{u.activo ? 'Activo' : 'Inactivo'}</Badge>
+                            </span>
                           </div>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <Badge tone={u.activo ? 'success' : 'neutral'}>{u.activo ? 'Activo' : 'Inactivo'}</Badge>
-                            <IconButton
-                              label={u.activo ? 'Desactivar' : 'Activar'}
-                              icon={<Power className="w-4 h-4" aria-hidden="true" />}
-                              onClick={() => handleToggleUserActivo(u)}
-                            />
-                          </div>
+                          <IconButton
+                            label={`${u.activo ? 'Desactivar' : 'Activar'} a ${u.nombre}`}
+                            icon={<Power className="w-4 h-4" aria-hidden="true" />}
+                            onClick={() => handleToggleUserActivo(u)}
+                          />
                         </li>
                       ))}
                     </ul>
@@ -1672,11 +1699,11 @@ export default function CompanySettings({
                   <CardHeader
                     title={tituloConIcono(<Mail />, 'Parámetros SMTP y alertas por correo')}
                     description="Configura las credenciales de correo de la clínica para enviar recordatorios y confirmaciones automáticas de citas."
-                    actions={<Badge tone={smtpActivo ? 'success' : 'neutral'}>{smtpActivo ? 'Activo' : 'Apagado'}</Badge>}
+                    actions={badgeAccion(<Badge tone={smtpActivo ? 'success' : 'neutral'}>{smtpActivo ? 'Activo' : 'Apagado'}</Badge>)}
                   />
                   <CardBody className="space-y-5">
-                    <label className="flex items-center justify-between gap-4 bg-surface-muted/50 p-4 rounded-card border border-border cursor-pointer">
-                      <span>
+                    <label className="flex items-center justify-between gap-4 bg-surface-muted/60 p-4 rounded-control cursor-pointer">
+                      <span className="min-w-0">
                         <span className="font-semibold text-sm text-fg block">Notificaciones de agenda activas</span>
                         <span className="text-xs text-fg-muted block mt-0.5">Si se apaga, las citas no enviarán correos automáticos de confirmación, modificación o cancelación.</span>
                       </span>
@@ -1695,8 +1722,9 @@ export default function CompanySettings({
                       </span>
                     </label>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                      <Field label="Proveedor SMTP" className="sm:col-span-2 lg:col-span-2">
+                    {/* Proveedor y host a ancho completo; puerto y seguridad (cortos) lado a lado también en el iPhone. */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                      <Field label="Proveedor SMTP" className="col-span-2">
                         <Select
                           value={smtpProveedor}
                           onChange={(e) => {
@@ -1718,37 +1746,41 @@ export default function CompanySettings({
                           <option value="OTRO">Servidor SMTP Privado (Otro)</option>
                         </Select>
                       </Field>
-                      <Field label="Servidor host SMTP" required className="sm:col-span-2 lg:col-span-2">
+                      <Field label="Servidor SMTP (host)" required className="col-span-2">
                         <Input type="text" required value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} placeholder="ej: smtp.mailgun.org" />
                       </Field>
                       <Field label="Puerto" required>
                         <Input type="number" required inputMode="numeric" value={smtpPort} onChange={(e) => setSmtpPort(parseInt(e.target.value))} />
                       </Field>
-                      <Field label="Seguridad">
+                      <Field label="Seguridad" hint="Recomendado: TLS">
                         <Select value={smtpSeguridad} onChange={(e) => setSmtpSeguridad(e.target.value as CompaniaSmtpConfig['smtpSeguridad'])}>
-                          <option value="TLS">TLS (Recom.)</option>
+                          <option value="TLS">TLS</option>
                           <option value="SSL">SSL</option>
                           <option value="NINGUNA">Ninguna</option>
                         </Select>
                       </Field>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <Field label="Usuario de autenticación SMTP" required>
-                        <Input type="text" required value={smtpUsuario} onChange={(e) => setSmtpUsuario(e.target.value)} placeholder="ej: contacto@miempresa.com" />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                      <Field label="Usuario SMTP" required>
+                        <Input type="text" required autoCapitalize="none" value={smtpUsuario} onChange={(e) => setSmtpUsuario(e.target.value)} placeholder="ej: contacto@miempresa.com" />
                       </Field>
-                      <Field label="Contraseña SMTP / App Password" required={!smtpTieneContrasena}>
+                      <Field
+                        label="Contraseña o App Password"
+                        required={!smtpTieneContrasena}
+                        hint={smtpTieneContrasena ? 'Déjela en blanco para mantener la actual.' : undefined}
+                      >
                         <Input
                           type="password"
                           required={!smtpTieneContrasena}
                           value={smtpPassword}
                           onChange={(e) => setSmtpPassword(e.target.value)}
-                          placeholder={smtpTieneContrasena ? '•••••••• (dejar en blanco para mantener la actual)' : 'Ingresa la contraseña o App Password'}
+                          placeholder={smtpTieneContrasena ? '••••••••' : 'Contraseña o App Password'}
                         />
                       </Field>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-5 border-t border-border">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 pt-5 border-t border-border">
                       <Field label="Nombre de remitente" required>
                         <Input type="text" required value={smtpRemitenteNombre} onChange={(e) => setSmtpRemitenteNombre(e.target.value)} placeholder="ej: Clínica FisioNutri" />
                       </Field>
@@ -1765,7 +1797,7 @@ export default function CompanySettings({
                       </Field>
                     </div>
                   </CardBody>
-                  <CardFooter className="flex-wrap">
+                  <CardFooter className={pieFijoMovil}>
                     <Button
                       variant="outline"
                       onClick={handleProbarSmtp}
@@ -1773,10 +1805,10 @@ export default function CompanySettings({
                       loading={smtpProbando}
                       icon={<Mail className="w-4 h-4" aria-hidden="true" />}
                     >
-                      Enviar correo de prueba
+                      {textoAdaptable('Enviar prueba', 'Enviar correo de prueba')}
                     </Button>
                     <Button type="submit" icon={<Check className="w-4 h-4" aria-hidden="true" />}>
-                      Guardar configuración SMTP
+                      {textoAdaptable('Guardar', 'Guardar configuración SMTP')}
                     </Button>
                   </CardFooter>
                 </Card>
@@ -1805,24 +1837,25 @@ export default function CompanySettings({
                     <CardHeader
                       title={tituloConIcono(<ShieldCheck />, 'Firma digital Hacienda (facturación electrónica)')}
                       description="Certificado criptográfico (.p12) y credenciales ATV para firmar comprobantes electrónicos."
-                      actions={<Badge tone={haciendaTieneCertificado ? 'success' : 'warning'}>{haciendaTieneCertificado ? 'Certificado cargado' : 'Sin certificado'}</Badge>}
+                      actions={badgeAccion(<Badge tone={haciendaTieneCertificado ? 'success' : 'warning'}>{haciendaTieneCertificado ? 'Certificado cargado' : 'Sin certificado'}</Badge>)}
                     />
                     <CardBody className="space-y-5">
                       {haciendaMensaje && (
                         <div
                           role={haciendaMensaje.tipo === 'error' ? 'alert' : 'status'}
                           className={cx(
-                            'p-3 rounded-control border text-sm flex items-center gap-2',
+                            'p-3 rounded-control border text-sm flex items-start gap-2',
                             haciendaMensaje.tipo === 'ok' ? 'bg-success-soft border-success/20 text-success' : 'bg-danger-soft border-danger/20 text-danger'
                           )}
                         >
-                          <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
-                          <span>{haciendaMensaje.texto}</span>
+                          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                          <span className="min-w-0 break-words">{haciendaMensaje.texto}</span>
                         </div>
                       )}
 
                       {haciendaInfoCertificado && (
-                        <dl className="p-4 rounded-card border border-border bg-surface-muted/50 text-sm space-y-1">
+                        // Sujeto y emisor son nombres X.500 largos sin espacios útiles: se parten donde haga falta.
+                        <dl className="p-4 rounded-control bg-surface-muted/60 text-sm space-y-1 [overflow-wrap:anywhere]">
                           <div><dt className="inline font-semibold text-fg-muted">Sujeto: </dt><dd className="inline text-fg">{haciendaInfoCertificado.sujeto}</dd></div>
                           <div><dt className="inline font-semibold text-fg-muted">Emisor: </dt><dd className="inline text-fg">{haciendaInfoCertificado.emisor}</dd></div>
                           <div><dt className="inline font-semibold text-fg-muted">Vence: </dt><dd className="inline text-fg">{new Date(haciendaInfoCertificado.validoHasta).toLocaleDateString('es-CR')}</dd></div>
@@ -1830,35 +1863,52 @@ export default function CompanySettings({
                         </dl>
                       )}
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <Field label="Ambiente">
-                          <Select
-                            value={haciendaAmbiente}
-                            onChange={(e) => setHaciendaAmbiente(e.target.value as 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL')}
-                          >
-                            <option value="PRUEBAS_LOCAL">Pruebas Locales (no envía a Hacienda)</option>
-                            <option value="SANDBOX">Sandbox (Pruebas de Hacienda — envía tráfico real)</option>
-                            <option value="PRODUCCION">Producción</option>
-                          </Select>
-                        </Field>
+                      <div>
+                        <span id="cs-hacienda-ambiente-label" className="block text-xs font-semibold text-fg mb-1.5">Ambiente</span>
+                        {/* size sm: a 360px cada opción mide ~90px y "Producción" no cabía en text-sm. */}
+                        <SegmentedControl
+                          ariaLabelledBy="cs-hacienda-ambiente-label"
+                          size="sm"
+                          value={haciendaAmbiente}
+                          onChange={(v: 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL') => setHaciendaAmbiente(v)}
+                          options={[
+                            { value: 'PRUEBAS_LOCAL', label: 'Pruebas locales' },
+                            { value: 'SANDBOX', label: 'Sandbox' },
+                            { value: 'PRODUCCION', label: 'Producción' }
+                          ]}
+                        />
+                        <p className="mt-1.5 text-xs text-fg-muted" aria-live="polite">
+                          {haciendaAmbiente === 'PRUEBAS_LOCAL'
+                            ? 'No envía nada a Hacienda.'
+                            : haciendaAmbiente === 'SANDBOX'
+                            ? 'Pruebas de Hacienda: envía tráfico real al ambiente de pruebas.'
+                            : 'Envía los comprobantes reales a Hacienda.'}
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                         <Field label="Usuario ATV">
-                          <Input type="text" value={haciendaUsuarioAtv} onChange={(e) => setHaciendaUsuarioAtv(e.target.value)} placeholder="ej: cpf-01-1234-5678" />
+                          <Input type="text" autoCapitalize="none" value={haciendaUsuarioAtv} onChange={(e) => setHaciendaUsuarioAtv(e.target.value)} placeholder="ej: cpf-01-1234-5678" />
                         </Field>
-                        <Field label="Contraseña ATV" className="sm:col-span-2">
+                        <Field label="Contraseña ATV" hint={haciendaTienePasswordAtv ? 'Déjela en blanco para mantener la actual.' : undefined}>
                           <Input
                             type="password"
                             value={haciendaPasswordAtv}
                             onChange={(e) => setHaciendaPasswordAtv(e.target.value)}
-                            placeholder={haciendaTienePasswordAtv ? '•••••••• (dejar en blanco para mantener la actual)' : 'Ingresa la contraseña ATV'}
+                            placeholder={haciendaTienePasswordAtv ? '••••••••' : 'Contraseña ATV'}
                           />
                         </Field>
                         <Field
-                          label={<span className="inline-flex items-center gap-1.5"><Upload className="w-3.5 h-3.5" aria-hidden="true" /> Certificado criptográfico (.p12)</span>}
-                          hint={haciendaCertificadoNombreNuevo
-                            ? `Nuevo archivo seleccionado: ${haciendaCertificadoNombreNuevo}`
-                            : haciendaTieneCertificado
-                            ? `Archivo actual: ${haciendaCertificadoNombreArchivo || 'certificado.p12'}${haciendaCertificadoVenceEn ? ` · vence ${haciendaCertificadoVenceEn}` : ''}`
-                            : 'Ningún certificado configurado todavía.'}
+                          label={<span className="inline-flex items-center gap-1.5"><Upload className="w-3.5 h-3.5" aria-hidden="true" /> Certificado (.p12)</span>}
+                          hint={
+                            <span className="[overflow-wrap:anywhere]">
+                              {haciendaCertificadoNombreNuevo
+                                ? `Nuevo archivo seleccionado: ${haciendaCertificadoNombreNuevo}`
+                                : haciendaTieneCertificado
+                                ? `Archivo actual: ${haciendaCertificadoNombreArchivo || 'certificado.p12'}${haciendaCertificadoVenceEn ? ` · vence ${haciendaCertificadoVenceEn}` : ''}`
+                                : 'Ningún certificado configurado todavía.'}
+                            </span>
+                          }
                         >
                           {(p) => (
                             <input
@@ -1867,43 +1917,46 @@ export default function CompanySettings({
                               type="file"
                               accept=".p12,.pfx"
                               onChange={handleCertificadoFileChange}
-                              className="w-full min-h-11 bg-surface border border-border-strong rounded-control text-sm text-fg-muted file:mr-3 file:min-h-11 file:px-4 file:border-0 file:border-r file:border-border-strong file:bg-surface-muted file:text-fg file:font-semibold file:cursor-pointer"
+                              className="w-full max-w-full min-w-0 min-h-11 bg-surface border border-border-strong rounded-control text-sm text-fg-muted file:mr-3 file:min-h-11 file:px-4 file:border-0 file:border-r file:border-border-strong file:bg-surface-muted file:text-fg file:font-semibold file:cursor-pointer"
                             />
                           )}
                         </Field>
-                        <Field label="PIN del certificado">
+                        <Field label="PIN del certificado" hint={haciendaTieneCertificado ? 'Déjelo en blanco para mantener el actual.' : undefined}>
                           <Input
                             type="password"
                             value={haciendaCertificadoPin}
                             onChange={(e) => setHaciendaCertificadoPin(e.target.value)}
-                            placeholder={haciendaTieneCertificado ? '•••••••• (dejar en blanco para mantener el actual)' : 'PIN del certificado .p12'}
+                            placeholder={haciendaTieneCertificado ? '••••••••' : 'PIN del .p12'}
                           />
                         </Field>
                       </div>
 
                       {currentUser.rol === 'Administrador' && (
-                        <fieldset className="border border-border rounded-card p-4 space-y-3">
-                          <legend className={leyenda}>Corrección de numeración</legend>
-                          <p className="text-xs text-fg-muted">
-                            Úselo solo si Hacienda rechaza con «el documento ya fue emitido» porque esta empresa ya facturó con otro sistema.
-                            Escriba el último número que ya emitió ante Hacienda; el siguiente comprobante usará ese más uno. Solo se puede subir.
-                          </p>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                            {CAMPOS_CONSECUTIVO.map(({ campo, etiqueta }) => (
-                              <Field key={campo} label={`${etiqueta} — último emitido`} hint={`Actual: ${haciendaConsecutivos[campo]}`}>
-                                <Input
-                                  type="number" min={haciendaConsecutivos[campo]} step="1" inputMode="numeric"
-                                  value={haciendaCorreccion[campo]}
-                                  onChange={(e) => setHaciendaCorreccion(prev => ({ ...prev, [campo]: e.target.value }))}
-                                  placeholder="Sin cambio"
-                                />
-                              </Field>
-                            ))}
-                          </div>
-                        </fieldset>
+                        // Divisor en lugar de un recuadro: evita una tarjeta dentro de la tarjeta en móvil.
+                        <div className="pt-5 border-t border-border">
+                          <fieldset className="min-w-0 space-y-3">
+                            <legend className="text-sm font-semibold text-fg">Corrección de numeración</legend>
+                            <p className="text-xs text-fg-muted">
+                              Úselo solo si Hacienda rechaza con «el documento ya fue emitido» porque esta empresa ya facturó con otro sistema.
+                              Escriba el último número que ya emitió ante Hacienda; el siguiente comprobante usará ese más uno. Solo se puede subir.
+                            </p>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+                              {CAMPOS_CONSECUTIVO.map(({ campo, etiqueta }) => (
+                                <Field key={campo} label={etiqueta} hint={`Último emitido: ${haciendaConsecutivos[campo]}`}>
+                                  <Input
+                                    type="number" min={haciendaConsecutivos[campo]} step="1" inputMode="numeric"
+                                    value={haciendaCorreccion[campo]}
+                                    onChange={(e) => setHaciendaCorreccion(prev => ({ ...prev, [campo]: e.target.value }))}
+                                    placeholder="Sin cambio"
+                                  />
+                                </Field>
+                              ))}
+                            </div>
+                          </fieldset>
+                        </div>
                       )}
                     </CardBody>
-                    <CardFooter className="justify-between flex-wrap">
+                    <CardFooter className={cx('justify-between', pieFijoMovil)}>
                       <Button
                         variant="outline"
                         onClick={handleProbarCertificado}
@@ -1911,10 +1964,10 @@ export default function CompanySettings({
                         loading={haciendaProbando}
                         icon={<ShieldCheck className="w-4 h-4" aria-hidden="true" />}
                       >
-                        {haciendaProbando ? 'Probando...' : 'Probar configuración'}
+                        {haciendaProbando ? 'Probando...' : textoAdaptable('Probar', 'Probar configuración')}
                       </Button>
                       <Button type="submit" loading={haciendaGuardando} icon={<Check className="w-4 h-4" aria-hidden="true" />}>
-                        {haciendaGuardando ? 'Guardando...' : 'Guardar configuración Hacienda'}
+                        {haciendaGuardando ? 'Guardando...' : textoAdaptable('Guardar', 'Guardar configuración Hacienda')}
                       </Button>
                     </CardFooter>
                   </Card>
@@ -1974,7 +2027,7 @@ export default function CompanySettings({
                               label={`Eliminar ${Number(p.porcentaje)}%`}
                               icon={<X className="w-3.5 h-3.5" aria-hidden="true" />}
                               onClick={() => onDeletePorcentajeDieta(p.id)}
-                              className="w-10! h-10! rounded-full hover:text-danger! hover:bg-danger-soft!"
+                              className="rounded-full hover:text-danger! hover:bg-danger-soft!"
                             />
                           </li>
                         ))}
@@ -2022,20 +2075,21 @@ export default function CompanySettings({
                   description="Los cambios de empresa, marca y reservas en línea se guardan juntos con el botón del final."
                 />
                 <CardBody className="space-y-5">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <Field label="Nombre comercial">
+                  {/* Textos largos a ancho completo; actividad económica e IVA (cortos) lado a lado en el iPhone. */}
+                  <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                    <Field label="Nombre comercial" className="col-span-2 sm:col-span-1">
                       <Input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} />
                     </Field>
-                    <Field label="Razón social jurídica">
+                    <Field label="Razón social" className="col-span-2 sm:col-span-1">
                       <Input type="text" value={editRazon} onChange={(e) => setEditRazon(e.target.value)} />
                     </Field>
-                    <Field label="Cédula física / jurídica (CR)">
+                    <Field label="Cédula física o jurídica" className="col-span-2 sm:col-span-1">
                       <Input type="text" value={editIdent} onChange={(e) => setEditIdent(e.target.value)} placeholder="ej: 3-101-234567" />
                     </Field>
-                    <Field label="Email emisor (Hacienda)">
-                      <Input type="text" value={editCorreo} onChange={(e) => setEditCorreo(e.target.value)} />
+                    <Field label="Correo emisor" hint="El que figura ante Hacienda." className="col-span-2 sm:col-span-1">
+                      <Input type="text" inputMode="email" autoCapitalize="none" value={editCorreo} onChange={(e) => setEditCorreo(e.target.value)} />
                     </Field>
-                    <Field label="Perfil de la clínica / empresa">
+                    <Field label="Perfil de la clínica" className="col-span-2 sm:col-span-1">
                       <Select value={editPerfil} onChange={(e) => setEditPerfil(e.target.value as PerfilCompania)}>
                         <option value="Ambas">Ambas (Fisioterapia y Nutrición)</option>
                         <option value="Fisioterapia">Sólo Fisioterapia</option>
@@ -2044,40 +2098,47 @@ export default function CompanySettings({
                         <option value="Legal">Despacho de Abogados</option>
                       </Select>
                     </Field>
-                    <Field label="Código de actividad económica (Hacienda)">
-                      <Input type="text" value={editActividad} onChange={(e) => setEditActividad(e.target.value)} placeholder="ej: 869001" />
+                    <Field label="Actividad económica" hint="Código de Hacienda">
+                      <Input type="text" inputMode="numeric" value={editActividad} onChange={(e) => setEditActividad(e.target.value)} placeholder="ej: 869001" />
                     </Field>
-                    <Field label="% IVA por defecto">
+                    <Field label="IVA por defecto (%)">
                       <Input type="number" min="0" max="100" step="0.01" inputMode="decimal" value={editIva} onChange={(e) => setEditIva(parseFloat(e.target.value) || 0)} />
                     </Field>
                   </div>
 
                   <label className={filaCheck}>
                     <input type="checkbox" checked={editRegimenSimplificado} onChange={(e) => setEditRegimenSimplificado(e.target.checked)} className={cajaCheck} />
-                    <span>Empresa inscrita en Régimen de Tributación Simplificada (no declara IVA por D-104 tradicional)</span>
+                    <span className="min-w-0">
+                      <span className="block font-semibold">Régimen de Tributación Simplificada</span>
+                      <span className="block text-xs text-fg-muted">La empresa no declara IVA por el D-104 tradicional.</span>
+                    </span>
                   </label>
 
-                  <fieldset className="p-4 border border-border rounded-card">
-                    <legend className={leyenda}>Parámetros contables</legend>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <Field
-                        label="Plazo de crédito a clientes (días)"
-                        hint="Valor sugerido al facturar a crédito; se puede cambiar en cada factura. Va en el XML y define el vencimiento de la cuenta por cobrar."
-                      >
-                        <Input type="number" min="1" step="1" inputMode="numeric" value={editPlazoClientes} onChange={(e) => setEditPlazoClientes(e.target.value)} />
-                      </Field>
-                      <Field
-                        label="Plazo de pago a proveedores (días)"
-                        hint="Valor sugerido al registrar una compra en Cuentas por Pagar, y el que se usa si el XML de crédito del proveedor no trae plazo."
-                      >
-                        <Input type="number" min="1" step="1" inputMode="numeric" value={editPlazoProveedores} onChange={(e) => setEditPlazoProveedores(e.target.value)} />
-                      </Field>
-                    </div>
-                  </fieldset>
+                  {/* Divisor en lugar de un recuadro: evita una tarjeta dentro de la tarjeta en móvil. */}
+                  <div className="pt-5 border-t border-border">
+                    <fieldset className="min-w-0">
+                      <legend className="text-sm font-semibold text-fg mb-3">Plazos de crédito</legend>
+                      <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                        <Field
+                          label="Clientes (días)"
+                          hint="Sugerido al facturar a crédito; editable en cada factura. Va en el XML y define el vencimiento de la cuenta por cobrar."
+                        >
+                          <Input type="number" min="1" step="1" inputMode="numeric" value={editPlazoClientes} onChange={(e) => setEditPlazoClientes(e.target.value)} />
+                        </Field>
+                        <Field
+                          label="Proveedores (días)"
+                          hint="Sugerido al registrar una compra en Cuentas por Pagar; se usa si el XML del proveedor no trae plazo."
+                        >
+                          <Input type="number" min="1" step="1" inputMode="numeric" value={editPlazoProveedores} onChange={(e) => setEditPlazoProveedores(e.target.value)} />
+                        </Field>
+                      </div>
+                    </fieldset>
+                  </div>
 
-                  <fieldset className="p-4 bg-warning-soft border border-warning/25 rounded-card">
+                  {/* En móvil, franja a todo el ancho de la tarjeta (sin recuadro anidado), como el formulario de servicio. */}
+                  <fieldset className="min-w-0 -mx-4 sm:mx-0 px-4 py-4 sm:p-4 bg-warning-soft border-y sm:border border-warning/25 sm:rounded-card">
                     <legend className="px-1.5 text-xs font-semibold uppercase tracking-wide text-warning">Ubicación fiscal (requerida para facturar)</legend>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                       <Field label="Provincia">
                         <Select value={editProvincia} onChange={(e) => handleCambiarProvinciaFiscal(e.target.value)}>
                           <option value="">Seleccione...</option>
@@ -2118,14 +2179,15 @@ export default function CompanySettings({
                   description="Colores y logo de la clínica."
                 />
                 <CardBody className="space-y-5">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {renderColor('cs-color-primario', 'Color primario clínico', editColorPri, setEditColorPri)}
-                    {renderColor('cs-color-sidebar', 'Color controles sidebar', editColorSide, setEditColorSide)}
+                  {/* Los dos colores caben lado a lado en el iPhone (muestra de 44px + código hex). */}
+                  <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                    {renderColor('cs-color-primario', 'Color primario', editColorPri, setEditColorPri)}
+                    {renderColor('cs-color-sidebar', 'Color del menú', editColorSide, setEditColorSide)}
                   </div>
 
                   <div>
                     <span className="block text-xs font-semibold text-fg mb-1.5">Logo de la empresa</span>
-                    <div className="flex items-center gap-3 mb-3">
+                    <div className="flex flex-wrap items-center gap-3 mb-3">
                       {editLogo && (
                         <img src={editLogo} alt="Logo actual" className="w-16 h-16 rounded-control object-cover border border-border" />
                       )}
@@ -2194,17 +2256,21 @@ export default function CompanySettings({
                   </div>
                   <p className="text-xs text-fg-muted">Si lo apaga, la página pública mostrará un botón de WhatsApp para solicitar espacio en lugar de agendar automáticamente.</p>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <Field label="WhatsApp para solicitudes" hint="Un número de 8 dígitos se toma como de Costa Rica (+506).">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                    <Field label="WhatsApp para solicitudes" hint="8 dígitos = número de Costa Rica (+506).">
                       <Input type="tel" inputMode="tel" value={editWhatsappReservas} onChange={(e) => setEditWhatsappReservas(e.target.value)} placeholder="8888-8888" />
                     </Field>
-                    <Field label="Mensaje predeterminado (opcional)" className="sm:col-span-2">
+                    <Field
+                      label="Mensaje predeterminado (opcional)"
+                      hint="Si lo deja vacío se genera con el tipo de cita y el servicio elegido."
+                      className="sm:col-span-2"
+                    >
                       <Textarea
                         rows={3}
                         maxLength={500}
                         value={editMensajeWhatsapp}
                         onChange={(e) => setEditMensajeWhatsapp(e.target.value)}
-                        placeholder="Si lo deja vacío se genera un mensaje con el tipo de cita y el servicio elegido."
+                        placeholder="ej: Hola, quisiera solicitar una cita…"
                       />
                     </Field>
                   </div>
@@ -2212,20 +2278,23 @@ export default function CompanySettings({
                   {(!editReservaAutoConsultorio || !editReservaAutoDomicilio) && editWhatsappReservas.trim() === '' && (
                     <p role="alert" className="text-sm text-warning bg-warning-soft border border-warning/25 rounded-control p-3 flex items-start gap-2">
                       <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
-                      Hay una reserva automática apagada y no hay número de WhatsApp: los pacientes verán solo "Comuníquese con la clínica para agendar".
+                      <span className="min-w-0">Hay una reserva automática apagada y no hay número de WhatsApp: los pacientes verán solo "Comuníquese con la clínica para agendar".</span>
                     </p>
                   )}
                 </CardBody>
-                <CardFooter>
-                  <Button variant="ghost" onClick={() => { setIsEditing(false); setIsAdding(false); }}>
-                    Cancelar
-                  </Button>
-                  <Button onClick={isAdding ? createCompany : saveEdit} icon={<Check className="w-4 h-4" aria-hidden="true" />}>
-                    {isAdding ? 'Registrar' : 'Guardar cambios'}
-                  </Button>
-                </CardFooter>
               </Card>
             </Seccion>
+
+            {/* Acciones del formulario (empresa, marca y reservas se guardan juntas). En móvil quedan fijas
+                abajo, sobre la barra de inicio de iOS, durante todo el formulario; desde sm, al final. */}
+            <div className="sticky bottom-0 z-20 -mx-4 sm:mx-0 px-4 sm:px-0 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:static sm:p-0 bg-bg/90 sm:bg-transparent backdrop-blur-md sm:backdrop-blur-none border-t border-border sm:border-0 flex gap-2 sm:justify-end [&>*]:flex-1 sm:[&>*]:flex-none print:hidden">
+              <Button variant="outline" onClick={() => { setIsEditing(false); setIsAdding(false); }}>
+                Cancelar
+              </Button>
+              <Button onClick={isAdding ? createCompany : saveEdit} icon={<Check className="w-4 h-4" aria-hidden="true" />}>
+                {isAdding ? 'Registrar' : 'Guardar cambios'}
+              </Button>
+            </div>
           </>
         )}
       </div>

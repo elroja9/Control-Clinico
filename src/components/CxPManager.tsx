@@ -7,6 +7,8 @@ import { MEDIO_PAGO_ABONO, colones, fechaCorta, plazoVencimiento } from '../util
 import BandejaFacturasCorreo from './BandejaFacturasCorreo';
 import { StatCard } from './ui/StatCard';
 import { Card } from './ui/Card';
+import { ResponsiveModal } from './ui/ResponsiveModal';
+import { SegmentedControl } from './ui/SegmentedControl';
 import { Badge, type BadgeTone } from './ui/Badge';
 import { Button } from './ui/Button';
 import { IconButton } from './ui/IconButton';
@@ -97,6 +99,8 @@ export default function CxPManager({ cxp, proveedores, articulos, plazoCreditoDe
   const [abonando, setAbonando] = useState(false);
 
   const nombreProveedor = (idProveedor: number) => proveedores.find(p => p.id === idProveedor)?.nombre || `Proveedor #${idProveedor}`;
+  // Cuenta cuyo abono se está registrando (se muestra en un modal)
+  const cuentaAbono = abonandoId != null ? cxp.find(c => c.id === abonandoId) ?? null : null;
 
   // Las vencidas primero (por fecha de vencimiento): es lo que tesorería tiene que pagar ya.
   const ordenadas = [...cxp].sort((a, b) =>
@@ -289,7 +293,7 @@ export default function CxPManager({ cxp, proveedores, articulos, plazoCreditoDe
         </div>
         {/* Contador (soloLectura): sin crear, importar ni pagar */}
         {!soloLectura && (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto [&>*]:flex-1 sm:[&>*]:flex-none">
           {!formAbierto && (
             <Button onClick={abrirForm} icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
               Registrar Compra
@@ -378,10 +382,22 @@ export default function CxPManager({ cxp, proveedores, articulos, plazoCreditoDe
         </Card>
       )}
 
-      {formAbierto && (
-        <Card className="mb-4 animate-slide-down">
-        <form onSubmit={handleGuardar} className="p-5 space-y-4">
-          <h4 className="text-base font-semibold text-fg">Registrar compra</h4>
+      <ResponsiveModal
+        open={formAbierto}
+        onClose={() => setFormAbierto(false)}
+        title="Registrar compra"
+        icon={<Landmark aria-hidden="true" />}
+        size="lg"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setFormAbierto(false)}>Cancelar</Button>
+            <Button type="submit" form="form-cxp-compra" disabled={guardando}>
+              {guardando ? 'Guardando…' : 'Registrar'}
+            </Button>
+          </>
+        }
+      >
+        <form id="form-cxp-compra" onSubmit={handleGuardar} className="space-y-4">
           {error && (
             <div role="alert" className="p-2.5 rounded-control bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-1.5">
               <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -406,14 +422,15 @@ export default function CxPManager({ cxp, proveedores, articulos, plazoCreditoDe
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => setModo('GASTO')} aria-pressed={modo === 'GASTO'} className={`min-h-11 rounded-control text-xs font-semibold border-2 transition-colors ${modo === 'GASTO' ? 'border-brand bg-brand-soft text-brand-ink' : 'border-border text-fg-muted hover:bg-surface-muted'}`}>
-              Gasto (sin inventario)
-            </button>
-            <button type="button" onClick={() => setModo('ARTICULOS')} aria-pressed={modo === 'ARTICULOS'} className={`min-h-11 rounded-control text-xs font-semibold border-2 transition-colors ${modo === 'ARTICULOS' ? 'border-brand bg-brand-soft text-brand-ink' : 'border-border text-fg-muted hover:bg-surface-muted'}`}>
-              Compra de Artículos
-            </button>
-          </div>
+          <SegmentedControl
+            ariaLabel="Tipo de compra"
+            value={modo}
+            onChange={(v) => setModo(v)}
+            options={[
+              { value: 'GASTO', label: 'Gasto (sin inventario)' },
+              { value: 'ARTICULOS', label: 'Compra de Artículos' }
+            ]}
+          />
 
           {modo === 'GASTO' ? (
             <div>
@@ -471,23 +488,19 @@ export default function CxPManager({ cxp, proveedores, articulos, plazoCreditoDe
             </div>
           </div>
 
-          <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
-            <Button variant="ghost" onClick={() => setFormAbierto(false)}>Cancelar</Button>
-            <Button type="submit" disabled={guardando}>
-              {guardando ? 'Guardando…' : 'Registrar'}
-            </Button>
-          </div>
         </form>
-        </Card>
-      )}
+      </ResponsiveModal>
 
       <Card>
-        <div className="flex flex-wrap gap-1.5 p-4 border-b border-border" role="group" aria-label="Filtrar cuentas por pagar">
-          {FILTROS.map(([f, etiqueta]) => (
-            <button key={f} type="button" onClick={() => setFiltro(f)} aria-pressed={filtro === f} className={`min-h-10 px-4 rounded-control text-xs font-semibold transition-colors ${filtro === f ? 'bg-brand-solid text-brand-fg shadow-xs' : 'bg-surface-muted text-fg-muted hover:bg-border hover:text-fg'}`}>
-              {etiqueta}
-            </button>
-          ))}
+        <div className="p-3 sm:p-4 border-b border-border">
+          <SegmentedControl
+            ariaLabel="Filtrar cuentas por pagar"
+            size="sm"
+            value={filtro}
+            onChange={(v) => setFiltro(v)}
+            options={FILTROS.map(([f, etiqueta]) => ({ value: f, label: etiqueta }))}
+            className="sm:w-auto sm:inline-flex"
+          />
         </div>
 
         {visibles.length === 0 && (
@@ -518,7 +531,7 @@ export default function CxPManager({ cxp, proveedores, articulos, plazoCreditoDe
                   </div>
                   <Badge tone={ESTADO_TONO[estado]}>{estado}</Badge>
                   {!soloLectura && c.estado === 'PENDIENTE' && (
-                    <button type="button" onClick={() => abrirAbono(c)} title="Registrar abono" className="w-10 h-10 flex items-center justify-center rounded-control text-success hover:bg-success-soft" aria-label={`Registrar abono a ${nombreProveedor(c.idProveedor)}${c.numeroFacturaProveedor ? `, factura ${c.numeroFacturaProveedor}` : ''}`}>
+                    <button type="button" onClick={() => abrirAbono(c)} title="Registrar abono" className="w-11 h-11 flex items-center justify-center rounded-control text-success hover:bg-success-soft" aria-label={`Registrar abono a ${nombreProveedor(c.idProveedor)}${c.numeroFacturaProveedor ? `, factura ${c.numeroFacturaProveedor}` : ''}`}>
                       <DollarSign className="w-4 h-4" aria-hidden="true" />
                     </button>
                   )}
@@ -535,43 +548,61 @@ export default function CxPManager({ cxp, proveedores, articulos, plazoCreditoDe
                 </div>
               )}
 
-              {abonandoId === c.id && (
-                <div className="mt-3 pt-3 border-t border-border space-y-3 animate-slide-down">
-                  {abonoError && (
-                    <div role="alert" className="p-2.5 rounded-control bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-1.5">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                      <span>{abonoError}</span>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label htmlFor={`cxp-monto-${c.id}`} className={labelCls}>Monto (₡)</label>
-                      <Input id={`cxp-monto-${c.id}`} type="number" min="0" step="0.01" inputMode="decimal" value={montoAbono} onChange={(e: any) => setMontoAbono(e.target.value)} className="tabular-nums" />
-                    </div>
-                    <div>
-                      <label htmlFor={`cxp-medio-${c.id}`} className={labelCls}>Medio de pago</label>
-                      <Select id={`cxp-medio-${c.id}`} value={medioPagoAbono} onChange={(e: any) => setMedioPagoAbono(e.target.value)}>
-                        {Object.entries(MEDIO_PAGO_ABONO).map(([codigo, nombre]) => <option key={codigo} value={codigo}>{nombre}</option>)}
-                      </Select>
-                    </div>
-                    <div>
-                      <label htmlFor={`cxp-ref-${c.id}`} className={labelCls}>Referencia</label>
-                      <Input id={`cxp-ref-${c.id}`} type="text" value={referenciaAbono} onChange={(e: any) => setReferenciaAbono(e.target.value)} placeholder="ej: # comprobante" />
-                    </div>
-                  </div>
-                  <div className="flex gap-2 justify-end">
-                    <Button variant="ghost" onClick={() => setAbonandoId(null)}>Cancelar</Button>
-                    <Button onClick={() => confirmarAbono(c)} disabled={abonando}>
-                      {abonando ? 'Guardando…' : 'Registrar Abono'}
-                    </Button>
-                  </div>
-                </div>
-              )}
             </div>
           );
         })}
         </div>
       </Card>
+
+      {/* Abono: mismo estado (abonandoId) que antes abría el panel bajo la fila */}
+      <ResponsiveModal
+        open={cuentaAbono != null}
+        onClose={() => setAbonandoId(null)}
+        title={cuentaAbono ? `Registrar abono · ${nombreProveedor(cuentaAbono.idProveedor)}` : 'Registrar abono'}
+        icon={<DollarSign aria-hidden="true" />}
+        size="sm"
+        footer={cuentaAbono && (
+          <>
+            <Button variant="ghost" onClick={() => setAbonandoId(null)}>Cancelar</Button>
+            <Button onClick={() => confirmarAbono(cuentaAbono)} disabled={abonando}>
+              {abonando ? 'Guardando…' : 'Registrar Abono'}
+            </Button>
+          </>
+        )}
+      >
+        {cuentaAbono && (
+          <div className="space-y-4">
+            <dl className="p-3 rounded-control bg-surface-muted border border-border text-sm space-y-1">
+              {cuentaAbono.numeroFacturaProveedor && (
+                <div className="flex justify-between gap-3"><dt className="text-fg-muted">Factura</dt><dd className="font-medium text-fg text-right break-all">{cuentaAbono.numeroFacturaProveedor}</dd></div>
+              )}
+              <div className="flex justify-between gap-3"><dt className="text-fg-muted">Saldo pendiente</dt><dd className="font-semibold text-fg tabular-nums">{colones(cuentaAbono.saldoPendiente)}</dd></div>
+            </dl>
+            {abonoError && (
+              <div role="alert" className="p-2.5 rounded-control bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>{abonoError}</span>
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <label htmlFor={`cxp-monto-${cuentaAbono.id}`} className={labelCls}>Monto (₡)</label>
+                <Input id={`cxp-monto-${cuentaAbono.id}`} type="number" min="0" step="0.01" inputMode="decimal" value={montoAbono} onChange={(e: any) => setMontoAbono(e.target.value)} className="tabular-nums" />
+              </div>
+              <div>
+                <label htmlFor={`cxp-medio-${cuentaAbono.id}`} className={labelCls}>Medio de pago</label>
+                <Select id={`cxp-medio-${cuentaAbono.id}`} value={medioPagoAbono} onChange={(e: any) => setMedioPagoAbono(e.target.value)}>
+                  {Object.entries(MEDIO_PAGO_ABONO).map(([codigo, nombre]) => <option key={codigo} value={codigo}>{nombre}</option>)}
+                </Select>
+              </div>
+              <div>
+                <label htmlFor={`cxp-ref-${cuentaAbono.id}`} className={labelCls}>Referencia</label>
+                <Input id={`cxp-ref-${cuentaAbono.id}`} type="text" value={referenciaAbono} onChange={(e: any) => setReferenciaAbono(e.target.value)} placeholder="ej: # comprobante" />
+              </div>
+            </div>
+          </div>
+        )}
+      </ResponsiveModal>
     </section>
   );
 }

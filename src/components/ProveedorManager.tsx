@@ -4,6 +4,7 @@ import { Truck, Plus, Edit, Power } from 'lucide-react';
 import { notify } from './ui/Feedback';
 import { errorIdentificacion } from '../utils/identificacion';
 import { Card } from './ui/Card';
+import { ResponsiveModal } from './ui/ResponsiveModal';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { IconButton } from './ui/IconButton';
@@ -104,18 +105,30 @@ export default function ProveedorManager({ proveedores, onSaveProveedor, soloLec
           <p className="text-body text-fg-muted">Directorio de proveedores para Cuentas por Pagar</p>
         </div>
         {!soloLectura && !formAbierto && (
-          <Button onClick={abrirNuevo} icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
+          <Button onClick={abrirNuevo} icon={<Plus className="w-4 h-4" aria-hidden="true" />} className="w-full sm:w-auto">
             Nuevo proveedor
           </Button>
         )}
       </div>
 
-      {formAbierto && (
-        <Card className="mb-4 animate-slide-down">
-        <form onSubmit={handleGuardar} className="p-5 space-y-4">
-          <h4 className="text-base font-semibold text-fg">{editId != null ? 'Editar proveedor' : 'Nuevo proveedor'}</h4>
+      <ResponsiveModal
+        open={formAbierto}
+        onClose={() => setFormAbierto(false)}
+        title={editId != null ? 'Editar proveedor' : 'Nuevo proveedor'}
+        icon={<Truck aria-hidden="true" />}
+        size="lg"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setFormAbierto(false)}>Cancelar</Button>
+            <Button type="submit" form="form-proveedor" disabled={guardando}>
+              {guardando ? 'Guardando…' : editId != null ? 'Guardar Cambios' : 'Guardar Proveedor'}
+            </Button>
+          </>
+        }
+      >
+        <form id="form-proveedor" onSubmit={handleGuardar} className="space-y-4">
           {error && <p role="alert" className="p-2.5 rounded-control bg-danger-soft border border-danger/20 text-xs text-danger font-semibold">{error}</p>}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
             <div>
               <label htmlFor="proveedorm-tipo-identificacion" className={labelCls}>Tipo Identificación</label>
               <Select id="proveedorm-tipo-identificacion"
@@ -149,15 +162,8 @@ export default function ProveedorManager({ proveedores, onSaveProveedor, soloLec
               <Input id="proveedorm-direccion" type="text" value={direccion} onChange={(e: any) => setDireccion(e.target.value)} />
             </div>
           </div>
-          <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
-            <Button variant="ghost" onClick={() => setFormAbierto(false)}>Cancelar</Button>
-            <Button type="submit" disabled={guardando}>
-              {guardando ? 'Guardando…' : editId != null ? 'Guardar Cambios' : 'Guardar Proveedor'}
-            </Button>
-          </div>
         </form>
-        </Card>
-      )}
+      </ResponsiveModal>
 
       <Card>
         <div className="px-4 py-2 border-b border-border">

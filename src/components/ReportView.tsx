@@ -64,11 +64,11 @@ function SectionHeading({ icon, color, children }: { icon?: ReactNode; color: st
 /** Dato destacado: etiqueta pequeña y valor. */
 function Metric({ label, value, tone, compact }: { label: string; value: ReactNode; tone?: 'danger' | 'success' | 'brand'; compact?: boolean }) {
   return (
-    <div className="rounded-card border border-border bg-surface-muted/60 p-3 text-center break-inside-avoid print:bg-transparent">
+    <div className="min-w-0 rounded-card border border-border bg-surface-muted/60 p-3 text-center break-inside-avoid print:bg-transparent">
       <span className="text-caption text-fg-muted block">{label}</span>
       <span
         className={cx(
-          'block font-semibold',
+          'block font-semibold tabular-nums break-words',
           compact ? 'text-sm text-fg' : 'text-lg tracking-tight',
           !compact && (tone === 'danger' ? 'text-danger' : tone === 'success' ? 'text-success' : tone === 'brand' ? 'text-brand-ink' : 'text-fg')
         )}
@@ -92,8 +92,8 @@ function TextBlock({ label, children, className }: { label: string; children: Re
 function MealRow({ label, accent, children }: { label: string; accent: string; children: ReactNode }) {
   return (
     <div className={cx('rounded-card bg-surface-muted/60 p-3 border border-border border-l-4 flex items-start gap-3 text-xs break-inside-avoid print:bg-transparent', accent)}>
-      <div className="font-semibold text-fg-muted w-24 shrink-0">{label}</div>
-      <div className="text-fg">{children}</div>
+      <div className="font-semibold text-fg-muted w-20 sm:w-24 shrink-0">{label}</div>
+      <div className="text-fg min-w-0 break-words">{children}</div>
     </div>
   );
 }
@@ -172,10 +172,11 @@ export default function ReportView({ consultation, patient, company, servicios, 
   const color = company.colorPrimario;
 
   return (
-    <div className="bg-bg min-h-screen p-4 sm:p-6 print:bg-white print:p-0 print:min-h-0">
+    // El notch lo cubre el header de la app; abajo se respeta la barra de inicio de iOS. En impresión sin relleno.
+    <div className="bg-bg min-h-screen p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6 print:bg-white print:p-0 print:min-h-0">
 
       {/* Barra de acciones: oculta al imprimir */}
-      <div className="max-w-4xl mx-auto mb-6 bg-surface rounded-card border border-border shadow-xs p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
+      <div className="max-w-4xl mx-auto mb-6 bg-surface rounded-card border border-border shadow-xs p-3 sm:p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
         <div className="flex items-center gap-3 min-w-0">
           <Button variant="outline" size="sm" onClick={onClose} aria-label="Volver a la lista" icon={<ArrowLeft className="w-4 h-4" aria-hidden="true" />}>
             <span className="hidden sm:inline">Volver</span>
@@ -185,7 +186,8 @@ export default function ReportView({ consultation, patient, company, servicios, 
             <p className="text-xs text-fg-muted">Imprima, envíe por correo o facture esta consulta</p>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2 items-center w-full sm:w-auto">
+        {/* Móvil: los botones se reparten el ancho e "Imprimir / PDF" ocupa su propia fila */}
+        <div className="flex flex-wrap gap-2 items-center w-full sm:w-auto [&>button]:flex-1 sm:[&>button]:flex-none">
           <Badge tone={estadoActual === 'CERRADA' ? 'success' : 'warning'} className="px-2.5 py-1 text-xs">
             {estadoActual}
           </Badge>
@@ -217,14 +219,14 @@ export default function ReportView({ consultation, patient, company, servicios, 
           >
             {facturaExistente ? `Facturada (${facturaExistente.consecutivo})` : 'Facturar'}
           </Button>
-          <Button size="sm" onClick={triggerPrint} icon={<Printer className="w-4 h-4" aria-hidden="true" />}>
+          <Button size="sm" onClick={triggerPrint} icon={<Printer className="w-4 h-4" aria-hidden="true" />} className="basis-full sm:basis-auto">
             Imprimir / PDF
           </Button>
         </div>
       </div>
 
       {/* Documento clínico */}
-      <div className="max-w-4xl mx-auto bg-surface rounded-panel border border-border shadow-sm p-6 sm:p-10 space-y-6 print:max-w-none print:rounded-none print:border-none print:shadow-none print:p-0 print:space-y-5 print:text-black [print-color-adjust:exact] [-webkit-print-color-adjust:exact]">
+      <div className="max-w-4xl mx-auto bg-surface rounded-panel border border-border shadow-sm p-4 min-[400px]:p-6 sm:p-10 space-y-6 print:max-w-none print:rounded-none print:border-none print:shadow-none print:p-0 print:space-y-5 print:text-black [print-color-adjust:exact] [-webkit-print-color-adjust:exact]">
 
         {/* Encabezado con datos de la clínica */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b-2 pb-6 gap-4 break-inside-avoid" style={{ borderColor: color }}>
@@ -255,10 +257,10 @@ export default function ReportView({ consultation, patient, company, servicios, 
         {/* Datos del paciente */}
         <div className="bg-surface-muted/60 rounded-card p-4 border border-border text-xs sm:text-sm break-inside-avoid print:bg-transparent">
           <span className="text-caption font-bold text-fg-muted uppercase tracking-wider block mb-2">Datos del Paciente</span>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] sm:grid-cols-[repeat(4,minmax(0,1fr))] gap-4">
             <div>
               <span className="text-fg-muted block text-caption">Paciente:</span>
-              <span className="font-semibold text-fg block">{patient.nombreCompleto}</span>
+              <span className="font-semibold text-fg block break-words">{patient.nombreCompleto}</span>
             </div>
             <div>
               <span className="text-fg-muted block text-caption">Identificación:</span>

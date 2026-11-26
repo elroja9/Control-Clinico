@@ -11,6 +11,10 @@ import { Input } from './ui/Input';
 import { Select } from './ui/Select';
 import { EmptyState } from './ui/EmptyState';
 import { Skeleton } from './ui/Skeleton';
+import { SegmentedControl } from './ui/SegmentedControl';
+
+// Tarjetas de resumen en móvil: menos relleno y monto que puede bajar de línea
+const STAT_MOVIL = 'min-w-0 max-sm:p-3.5 [&_.text-title]:break-words max-sm:[&_.text-title]:text-heading';
 
 interface ReportesFiscalesProps {
   company: Company;
@@ -195,19 +199,16 @@ export default function ReportesFiscales({ company, soloLectura = false }: Repor
     <div>
       <PageHeader title="Reportes fiscales" description="Declaración de IVA (D-104) y Renta (D-101)" />
 
-      <div className="flex flex-wrap gap-1.5 mb-5 p-1 bg-surface-muted rounded-card w-fit max-w-full" role="group" aria-label="Tipo de reporte">
-        {(['d104', 'd101', 'historial'] as const).map(t => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setSubTab(t)}
-            aria-pressed={subTab === t}
-            className={`min-h-10 px-4 rounded-control text-sm font-semibold transition-colors ${subTab === t ? 'bg-surface text-brand-ink shadow-sm' : 'text-fg-muted hover:text-fg'}`}
-          >
-            {t === 'd104' ? 'D-104 Mensual' : t === 'd101' ? 'D-101 Anual' : 'Historial'}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        ariaLabel="Tipo de reporte"
+        value={subTab}
+        onChange={(t) => setSubTab(t)}
+        options={(['d104', 'd101', 'historial'] as const).map(t => ({
+          value: t,
+          label: t === 'd104' ? 'D-104 Mensual' : t === 'd101' ? 'D-101 Anual' : 'Historial'
+        }))}
+        className="mb-5 sm:w-auto sm:inline-flex"
+      />
 
       {subTab === 'd104' && (
         <div className="space-y-5">
@@ -265,7 +266,31 @@ export default function ReportesFiscales({ company, soloLectura = false }: Repor
 
               <Card>
                 <CardHeader title="Desglose por tarifa" description="Base gravable e IVA del período" />
-                <div className="overflow-x-auto">
+                {/* Móvil: cada tarifa como fila apilada (sin scroll horizontal) */}
+                <dl className="sm:hidden divide-y divide-border text-sm">
+                  {([
+                    ['13% (Tarifa General)', d104.tarifas.t13],
+                    ['4% (Reducida)', d104.tarifas.t4],
+                    ['2% (Reducida)', d104.tarifas.t2],
+                    ['1% (Reducida)', d104.tarifas.t1]
+                  ] as const).map(([etiqueta, t]) => (
+                    <div key={etiqueta} className="px-4 py-3">
+                      <dt className="font-medium text-fg">{etiqueta}</dt>
+                      <dd className="mt-1 grid grid-cols-[repeat(2,minmax(0,1fr))] gap-2 text-xs">
+                        <span className="text-fg-muted">Base <span className="block text-sm text-fg tabular-nums">{colones(t.base)}</span></span>
+                        <span className="text-fg-muted text-right">IVA <span className="block text-sm font-semibold text-brand-ink tabular-nums">{colones(t.iva)}</span></span>
+                      </dd>
+                    </div>
+                  ))}
+                  <div className="px-4 py-3">
+                    <dt className="font-medium text-fg">Exento</dt>
+                    <dd className="mt-1 grid grid-cols-[repeat(2,minmax(0,1fr))] gap-2 text-xs">
+                      <span className="text-fg-muted">Base <span className="block text-sm text-fg tabular-nums">{colones(d104.tarifas.exento.base)}</span></span>
+                      <span className="text-fg-muted text-right">IVA <span className="block text-sm text-fg-subtle">—</span></span>
+                    </dd>
+                  </div>
+                </dl>
+                <div className="hidden sm:block overflow-x-auto">
                   <table className="w-full text-sm border-collapse min-w-[22rem]">
                     <thead>
                       <tr className="bg-surface-muted text-fg-muted text-caption uppercase tracking-wider">
@@ -289,6 +314,7 @@ export default function ReportesFiscales({ company, soloLectura = false }: Repor
 
               {!soloLectura && !d104.yaCerrado && (
                 <Button
+                  className="w-full sm:w-auto"
                   onClick={handleCerrarD104}
                   disabled={cerrandoD104}
                   icon={<Lock className="w-4 h-4" aria-hidden="true" />}
@@ -346,13 +372,14 @@ export default function ReportesFiscales({ company, soloLectura = false }: Repor
 
               <p className="text-xs text-fg-muted">Contribuyente: <strong className="text-fg">{d101.tipoContribuyente === 'fisica' ? 'Persona Física con Actividad Lucrativa' : 'Persona Jurídica'}</strong> (según cédula de la empresa)</p>
 
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <StatCard label="Ventas Netas" value={colones(d101.ventasNetas)} />
-                <div>
-                  <StatCard label="Compras (CxP, sin IVA)" value={colones(d101.comprasCxP)} delta={{ value: 'El IVA de las compras se recupera en el D-104, no se deduce aquí.' }} className="h-full" />
+              {/* minmax(0,1fr) + montos que pueden bajar de línea: sin scroll horizontal a 360px */}
+              <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] lg:grid-cols-4 gap-3">
+                <StatCard label="Ventas Netas" value={colones(d101.ventasNetas)} className={STAT_MOVIL} />
+                <div className="min-w-0">
+                  <StatCard label="Compras (CxP, sin IVA)" value={colones(d101.comprasCxP)} delta={{ value: 'El IVA de las compras se recupera en el D-104, no se deduce aquí.' }} className={`h-full ${STAT_MOVIL}`} />
                 </div>
-                <StatCard label="Gastos Deducibles" value={colones(d101.totalGastosDeducibles)} />
-                <StatCard label="Utilidad Neta" value={colones(d101.utilidadNeta)} className="bg-brand-soft border-brand/25" />
+                <StatCard label="Gastos Deducibles" value={colones(d101.totalGastosDeducibles)} className={STAT_MOVIL} />
+                <StatCard label="Utilidad Neta" value={colones(d101.utilidadNeta)} className={`bg-brand-soft border-brand/25 ${STAT_MOVIL}`} />
               </div>
 
               <Card>
@@ -392,7 +419,7 @@ export default function ReportesFiscales({ company, soloLectura = false }: Repor
 
               <div className="p-5 bg-danger-soft border border-danger/25 rounded-card">
                 <span className="text-xs font-semibold text-danger uppercase tracking-wider block">Impuesto de renta estimado</span>
-                <span className="text-display font-bold text-danger tabular-nums block mt-1">{colones(d101.impuestoRenta)}</span>
+                <span className="text-title sm:text-display font-bold text-danger tabular-nums block mt-1 break-words">{colones(d101.impuestoRenta)}</span>
                 {d101.referenciaTramos && <span className="block text-xs text-danger mt-1">Tramos: {d101.referenciaTramos}</span>}
               </div>
 
@@ -407,6 +434,7 @@ export default function ReportesFiscales({ company, soloLectura = false }: Repor
 
               {!soloLectura && !d101.yaCerrado && (
                 <Button
+                  className="w-full sm:w-auto"
                   onClick={handleCerrarD101}
                   disabled={cerrandoD101 || gastosSinGuardar}
                   title={gastosSinGuardar ? 'Guarde primero los gastos' : undefined}
@@ -422,11 +450,14 @@ export default function ReportesFiscales({ company, soloLectura = false }: Repor
 
       {subTab === 'historial' && (
         <div className="space-y-4">
-          <div className="flex gap-1.5" role="group" aria-label="Tipo de cierre">
-            {(['D104', 'D101'] as const).map(t => (
-              <button key={t} type="button" onClick={() => setHistorialTipo(t)} aria-pressed={historialTipo === t} className={`min-h-10 px-4 rounded-control text-xs font-semibold transition-colors ${historialTipo === t ? 'bg-brand-solid text-brand-fg shadow-xs' : 'bg-surface-muted text-fg-muted hover:bg-border hover:text-fg'}`}>{t === 'D104' ? 'D-104 (IVA)' : 'D-101 (Renta)'}</button>
-            ))}
-          </div>
+          <SegmentedControl
+            ariaLabel="Tipo de cierre"
+            size="sm"
+            value={historialTipo}
+            onChange={(t) => setHistorialTipo(t)}
+            options={(['D104', 'D101'] as const).map(t => ({ value: t, label: t === 'D104' ? 'D-104 (IVA)' : 'D-101 (Renta)' }))}
+            className="sm:w-auto sm:inline-flex"
+          />
           {cargandoHistorial && (
             <div role="status" aria-label="Cargando" className="space-y-2">
               <Skeleton className="h-16" /><Skeleton className="h-16" />
@@ -440,8 +471,8 @@ export default function ReportesFiscales({ company, soloLectura = false }: Repor
           {cierres.length > 0 && (
             <Card className="divide-y divide-border">
               {cierres.map(c => (
-                <div key={c.id} className="p-4 flex items-center justify-between gap-3">
-                  <div>
+                <div key={c.id} className="p-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                  <div className="min-w-0">
                     <span className="font-semibold text-fg text-body block">Período {periodoLegible(c.periodo)}</span>
                     <span className="text-xs text-fg-muted">Cerrado el {new Date(c.creadoEn).toLocaleString('es-CR')}</span>
                   </div>

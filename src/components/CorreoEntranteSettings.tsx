@@ -110,21 +110,22 @@ export default function CorreoEntranteSettings(_props: Props) {
             </span>
           }
           description="Cada 5 minutos se revisa este buzón (solo lectura: no marca, mueve ni borra correos) y las facturas XML de sus proveedores aparecen en Cuentas por Pagar para importarlas con un clic."
-          actions={<Badge tone={config.activo ? 'success' : 'neutral'}>{config.activo ? 'Activo' : 'Apagado'}</Badge>}
+          actions={<div className="flex"><Badge tone={config.activo ? 'success' : 'neutral'}>{config.activo ? 'Activo' : 'Apagado'}</Badge></div>}
         />
 
         <CardBody className="space-y-5">
-          <label className="flex items-center justify-between gap-4 bg-surface-muted/50 p-4 rounded-card border border-border cursor-pointer">
-            <span>
+          <label className="flex items-center justify-between gap-4 bg-surface-muted/60 p-4 rounded-control cursor-pointer">
+            <span className="min-w-0">
               <span className="font-semibold text-fg block text-sm">Lectura automática activa</span>
               <span className="text-xs text-fg-muted block mt-0.5">Si se apaga, el buzón solo se revisa con el botón "Revisar correo ahora" de Cuentas por Pagar.</span>
             </span>
             <input type="checkbox" checked={config.activo} onChange={e => set('activo', e.target.checked)} className="w-5 h-5 shrink-0 accent-brand-solid" />
           </label>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Field label="Servidor IMAP" className="sm:col-span-2">
-              <Input value={config.imapHost} onChange={e => set('imapHost', e.target.value)} placeholder="ej: imap.gmail.com" />
+          {/* Servidor, usuario, contraseña y carpetas a ancho completo; seguridad y puerto lado a lado en el iPhone. */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+            <Field label="Servidor IMAP" className="col-span-2">
+              <Input value={config.imapHost} onChange={e => set('imapHost', e.target.value)} placeholder="ej: imap.gmail.com" autoCapitalize="none" />
             </Field>
             <Field label="Seguridad">
               <Select
@@ -134,25 +135,32 @@ export default function CorreoEntranteSettings(_props: Props) {
                   setConfig({ ...config, imapSeguro: seguro, imapPort: seguro ? 993 : 143 });
                 }}
               >
-                <option value="TLS">TLS directo (puerto 993)</option>
-                <option value="STARTTLS">STARTTLS (puerto 143)</option>
+                {/* Sin el puerto en el texto: no cabía en media columna; el campo Puerto lo muestra al lado. */}
+                <option value="TLS">TLS directo</option>
+                <option value="STARTTLS">STARTTLS</option>
               </Select>
             </Field>
             <Field label="Puerto">
               <Input type="number" min={1} max={65535} inputMode="numeric" value={config.imapPort} onChange={e => set('imapPort', parseInt(e.target.value) || 0)} />
             </Field>
-            <Field label="Usuario">
-              <Input value={config.imapUsuario} onChange={e => set('imapUsuario', e.target.value)} placeholder="facturas@suempresa.com" autoComplete="off" />
+            <Field label="Usuario" className="col-span-2 sm:col-span-1">
+              <Input value={config.imapUsuario} onChange={e => set('imapUsuario', e.target.value)} placeholder="facturas@suempresa.com" autoComplete="off" autoCapitalize="none" />
             </Field>
             <Field
               label="Contraseña"
+              className="col-span-2 sm:col-span-1"
               hint={
-                /gmail/i.test(config.imapHost) ? (
+                config.tieneContrasena || /gmail/i.test(config.imapHost) ? (
                   <>
-                    Use una contraseña de aplicación de Google (16 caracteres), no la contraseña normal.{' '}
-                    <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer" className="underline font-semibold text-brand-ink">
-                      Generar contraseña de aplicación
-                    </a>
+                    {config.tieneContrasena && 'Guardada: escriba solo para cambiarla. '}
+                    {/gmail/i.test(config.imapHost) && (
+                      <>
+                        Use una contraseña de aplicación de Google (16 caracteres), no la contraseña normal.{' '}
+                        <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer" className="underline font-semibold text-brand-ink">
+                          Generar contraseña de aplicación
+                        </a>
+                      </>
+                    )}
                   </>
                 ) : undefined
               }
@@ -161,29 +169,29 @@ export default function CorreoEntranteSettings(_props: Props) {
                 type="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder={config.tieneContrasena ? '•••••• (guardada; escriba para cambiarla)' : 'Contraseña o clave de aplicación'}
+                placeholder={config.tieneContrasena ? '••••••••' : 'Contraseña o clave de aplicación'}
                 autoComplete="new-password"
               />
             </Field>
             <Field
               label="Carpetas a revisar"
-              className="sm:col-span-3"
+              className="col-span-2 sm:col-span-3"
               hint='Varias separadas por coma. En Gmail use una clave de aplicación; las etiquetas son carpetas (ej. "Facturas").'
             >
-              <Input value={config.imapCarpeta} onChange={e => set('imapCarpeta', e.target.value)} placeholder="INBOX, Facturas" />
+              <Input value={config.imapCarpeta} onChange={e => set('imapCarpeta', e.target.value)} placeholder="INBOX, Facturas" autoCapitalize="none" />
             </Field>
           </div>
 
           {carpetasDisponibles && (
-            <div className="bg-surface-muted/50 p-4 rounded-card border border-border">
-              <p className="text-sm font-semibold text-fg mb-2">Carpetas del buzón (clic para agregar):</p>
+            <div className="bg-surface-muted/60 p-4 rounded-control">
+              <p className="text-sm font-semibold text-fg mb-2">Carpetas del buzón (toque para agregar):</p>
               <div className="flex flex-wrap gap-2">
                 {carpetasDisponibles.filter(c => c.seleccionable).map(c => (
                   <button
                     key={c.ruta}
                     type="button"
                     onClick={() => agregarCarpeta(c.ruta)}
-                    className="min-h-10 px-3 rounded-control bg-surface border border-border-strong hover:bg-surface-muted text-fg text-xs font-mono"
+                    className="min-h-11 max-w-full px-3 rounded-control bg-surface border border-border-strong hover:bg-surface-muted text-fg text-xs font-mono text-left break-all"
                   >
                     {c.ruta}
                   </button>
@@ -206,10 +214,11 @@ export default function CorreoEntranteSettings(_props: Props) {
         </CardBody>
 
         <CardFooter className="flex-wrap justify-between">
-          <span className={`text-sm font-semibold ${config.verificadaEn ? 'text-success' : 'text-fg-muted'}`} role="status">
+          <span className={`max-sm:basis-full! text-sm font-semibold ${config.verificadaEn ? 'text-success' : 'text-fg-muted'}`} role="status">
             {config.verificadaEn ? `Conexión verificada el ${new Date(config.verificadaEn).toLocaleString('es-CR')}` : 'Conexión sin verificar'}
           </span>
-          <div className="flex flex-wrap gap-2">
+          {/* En móvil: "Ver carpetas" y "Probar" en una fila y Guardar a todo el ancho debajo. */}
+          <div className="max-sm:basis-full! grid grid-cols-2 sm:flex sm:flex-wrap gap-2 max-sm:[&>*:last-child]:col-span-2">
             <Button
               variant="outline"
               onClick={verCarpetas}
@@ -218,7 +227,12 @@ export default function CorreoEntranteSettings(_props: Props) {
               title={!config.tieneContrasena ? 'Guarde primero la configuración' : undefined}
               icon={<FolderSearch className="w-4 h-4" aria-hidden="true" />}
             >
-              {ocupado === 'carpetas' ? 'Cargando…' : 'Ver carpetas'}
+              {ocupado === 'carpetas' ? 'Cargando…' : (
+                <>
+                  <span className="sm:hidden">Carpetas</span>
+                  <span className="hidden sm:inline">Ver carpetas</span>
+                </>
+              )}
             </Button>
             <Button
               variant="outline"
@@ -228,7 +242,12 @@ export default function CorreoEntranteSettings(_props: Props) {
               title={!config.tieneContrasena ? 'Guarde primero la configuración' : undefined}
               icon={<PlugZap className="w-4 h-4" aria-hidden="true" />}
             >
-              {ocupado === 'probar' ? 'Probando…' : 'Probar conexión'}
+              {ocupado === 'probar' ? 'Probando…' : (
+                <>
+                  <span className="sm:hidden">Probar</span>
+                  <span className="hidden sm:inline">Probar conexión</span>
+                </>
+              )}
             </Button>
             <Button type="submit" disabled={!!ocupado} icon={<Check className="w-4 h-4" aria-hidden="true" />}>
               Guardar correo entrante

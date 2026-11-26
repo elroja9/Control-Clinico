@@ -6,6 +6,7 @@ import { Card, CardBody } from './ui/Card';
 import { Field } from './ui/Field';
 import { Input } from './ui/Input';
 import { Select } from './ui/Select';
+import { SegmentedControl } from './ui/SegmentedControl';
 
 interface LoginViewProps {
   onLoginSuccess: (user: User, company: Company | undefined) => void;
@@ -201,9 +202,6 @@ export default function LoginView({
     </button>
   );
 
-  const tabClass = (activa: boolean) =>
-    `min-h-10 rounded-lg text-sm font-semibold transition-colors ${activa ? 'bg-surface text-fg shadow-sm' : 'text-fg-muted hover:text-fg'}`;
-
   return (
     <div className="min-h-screen bg-bg font-sans text-fg lg:grid lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
 
@@ -238,8 +236,9 @@ export default function LoginView({
       </aside>
 
       {/* Formulario */}
-      <main className="flex flex-col justify-center items-center px-4 py-8 sm:px-8">
-        <div className="w-full max-w-xl">
+      {/* pt-safe/pb-safe/px-safe: en la PWA de iOS el formulario no queda bajo el notch ni la barra de inicio */}
+      <main className="flex flex-col justify-center items-center px-safe sm:px-8 pt-safe pb-safe">
+        <div className="w-full max-w-xl py-8">
 
           {/* Marca compacta en móvil */}
           <div className="lg:hidden text-center mb-6">
@@ -288,24 +287,19 @@ export default function LoginView({
                 <>
                   {/* Cambio entre iniciar sesión y registrar */}
                   {view !== 'olvide' && (
-                    <div className="grid grid-cols-2 p-1 bg-surface-muted rounded-control mb-6" role="group" aria-label="Elegir acción">
-                      <button
-                        type="button"
-                        aria-pressed={view === 'login'}
-                        onClick={() => { setView('login'); setLoginError(''); }}
-                        className={tabClass(view === 'login')}
-                      >
-                        Iniciar sesión
-                      </button>
-                      <button
-                        type="button"
-                        aria-pressed={view === 'register'}
-                        onClick={() => { setView('register'); setRegisterError(''); }}
-                        className={tabClass(view === 'register')}
-                      >
-                        Registrar empresa
-                      </button>
-                    </div>
+                    <SegmentedControl
+                      ariaLabel="Elegir acción"
+                      value={view}
+                      onChange={(v) => {
+                        if (v === 'register') { setView('register'); setRegisterError(''); }
+                        else { setView('login'); setLoginError(''); }
+                      }}
+                      options={[
+                        { value: 'login', label: 'Iniciar sesión' },
+                        { value: 'register', label: 'Registrar empresa' }
+                      ]}
+                      className="mb-6"
+                    />
                   )}
 
                   {/* 1. LOGIN */}

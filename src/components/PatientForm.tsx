@@ -205,7 +205,7 @@ export default function PatientForm({
   return (
     <form onSubmit={handleSave} className="bg-surface rounded-panel border border-border shadow-sm overflow-clip">
       {/* Encabezado */}
-      <div className="px-5 sm:px-6 py-4 flex justify-between items-center gap-3 border-b border-border">
+      <div className="px-4 sm:px-6 py-4 flex justify-between items-center gap-3 border-b border-border">
         <div className="flex items-center gap-3 min-w-0">
           <span className="w-10 h-10 shrink-0 rounded-control bg-brand-soft text-brand-ink flex items-center justify-center" aria-hidden="true">
             <User className="w-5 h-5" />
@@ -222,7 +222,7 @@ export default function PatientForm({
         <IconButton label="Cerrar sin guardar" icon={<X className="w-5 h-5" aria-hidden="true" />} onClick={onCancel} />
       </div>
 
-      <div className="p-5 sm:p-6 space-y-6">
+      <div className="p-4 sm:p-6 space-y-6">
         {/* Sección 1: datos personales */}
         <section aria-labelledby="pf-personal">
           <SectionTitle icon={<User />}><span id="pf-personal">1. Datos personales y demográficos</span></SectionTitle>
@@ -240,6 +240,7 @@ export default function PatientForm({
               <Field label="Fecha de nacimiento">
                 <Input
                   type="date"
+                  className="px-2.5!"
                   value={fechaNac}
                   onChange={(e: any) => handleBirthdateChange(e.target.value)}
                 />
@@ -260,7 +261,7 @@ export default function PatientForm({
             </>)}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
             <Field label="Tipo de cédula (Hacienda)">
               <Select
                 value={tipoId}
@@ -293,7 +294,7 @@ export default function PatientForm({
             </Field>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
             <Field label="Ocupación / Profesión">
               <Input
                 type="text"
@@ -328,7 +329,7 @@ export default function PatientForm({
         {/* Sección 2: dirección */}
         <section aria-labelledby="pf-direccion" className={sectionDivider}>
           <SectionTitle icon={<MapPin />}><span id="pf-direccion">2. Dirección de residencia (Costa Rica)</span></SectionTitle>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <Field label="Provincia">
               <Select
                 value={provinciaId}
@@ -434,7 +435,8 @@ export default function PatientForm({
       </div>
 
       {/* Barra de acciones */}
-      <div className="sticky bottom-0 z-10 px-5 sm:px-6 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-surface/95 backdrop-blur-sm border-t border-border flex flex-wrap justify-end gap-2.5">
+      {/* Móvil: acción primaria a ancho completo arriba y Cancelar debajo, sobre la barra de inicio de iOS */}
+      <div className="sticky bottom-0 z-10 px-4 sm:px-6 pt-3 sm:pt-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-[max(1rem,env(safe-area-inset-bottom))] bg-surface/95 backdrop-blur-sm border-t border-border flex flex-col-reverse sm:flex-row sm:flex-wrap sm:justify-end gap-2">
         <Button variant="secondary" onClick={onCancel}>Cancelar</Button>
         <Button type="submit" icon={<Save className="w-4 h-4" aria-hidden="true" />}>
           {esLegal ? 'Guardar cliente' : 'Guardar expediente'}

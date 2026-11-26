@@ -6,6 +6,7 @@ import { Card } from './ui/Card';
 import { EmptyState } from './ui/EmptyState';
 import { Input } from './ui/Input';
 import { Skeleton } from './ui/Skeleton';
+import { SegmentedControl } from './ui/SegmentedControl';
 import { StatCard } from './ui/StatCard';
 import { BarChart3, Users, UserPlus, CheckCircle2, TrendingUp, Download } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -88,9 +89,6 @@ export default function ReporteriaClinica({ company }: ReporteriaClinicaProps) {
     URL.revokeObjectURL(url);
   };
 
-  const segmento = (activo: boolean) =>
-    `min-h-10 px-4 rounded-lg text-sm font-semibold transition-colors ${activo ? 'bg-surface shadow-sm text-fg' : 'text-fg-muted hover:text-fg'}`;
-
   return (
     <div className="space-y-5" style={{ '--brand': company.colorPrimario } as CSSProperties}>
       <Card className="p-4 sm:p-5 flex flex-wrap items-center gap-3">
@@ -100,14 +98,16 @@ export default function ReporteriaClinica({ company }: ReporteriaClinicaProps) {
           </span>
           <h3 className="text-heading font-semibold tracking-tight text-fg">Reportería de Clientes y Sesiones</h3>
         </div>
-        <div className="flex bg-surface-muted rounded-control p-1" role="group" aria-label="Tipo de período">
-          <button type="button" onClick={() => setModo('mensual')} aria-pressed={modo === 'mensual'} className={segmento(modo === 'mensual')}>
-            Mensual
-          </button>
-          <button type="button" onClick={() => setModo('rango')} aria-pressed={modo === 'rango'} className={segmento(modo === 'rango')}>
-            Rango personalizado
-          </button>
-        </div>
+        <SegmentedControl
+          ariaLabel="Tipo de período"
+          value={modo}
+          onChange={(v) => setModo(v)}
+          options={[
+            { value: 'mensual', label: 'Mensual' },
+            { value: 'rango', label: 'Rango personalizado' }
+          ]}
+          className="sm:w-auto sm:inline-flex"
+        />
         {modo === 'mensual' ? (
           <Input
             type="month"
@@ -115,12 +115,14 @@ export default function ReporteriaClinica({ company }: ReporteriaClinicaProps) {
             value={mes}
             onChange={(e: any) => setMes(e.target.value)}
             wrapperClassName="w-full sm:w-44"
+            className="px-2.5!"
           />
         ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <Input type="date" aria-label="Desde" value={desde} onChange={(e: any) => setDesde(e.target.value)} wrapperClassName="w-full sm:w-44" />
+          // minmax(0,1fr): en móvil las dos fechas comparten fila sin recortar el texto
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 w-full sm:w-auto sm:grid-cols-[11rem_auto_11rem]">
+            <Input type="date" aria-label="Desde" value={desde} onChange={(e: any) => setDesde(e.target.value)} className="px-2.5!" />
             <span className="text-sm text-fg-muted">a</span>
-            <Input type="date" aria-label="Hasta" value={hasta} onChange={(e: any) => setHasta(e.target.value)} wrapperClassName="w-full sm:w-44" />
+            <Input type="date" aria-label="Hasta" value={hasta} onChange={(e: any) => setHasta(e.target.value)} className="px-2.5!" />
           </div>
         )}
       </Card>
@@ -138,7 +140,7 @@ export default function ReporteriaClinica({ company }: ReporteriaClinicaProps) {
         </div>
       ) : reporte && (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] lg:grid-cols-4 gap-3">
             <StatCard label="Pacientes Nuevos" icon={<UserPlus />} value={reporte.resumen.pacientesNuevos} />
             <StatCard label="Pacientes Atendidos" icon={<Users />} value={reporte.resumen.pacientesAtendidos} />
             <StatCard label="Sesiones Completadas" icon={<CheckCircle2 />} value={reporte.resumen.sesionesCompletadas} />
@@ -193,7 +195,7 @@ export default function ReporteriaClinica({ company }: ReporteriaClinicaProps) {
                     {reporte.pacientes.map(p => (
                       <tr key={p.idPaciente} className="hover:bg-surface-muted/60 transition-colors">
                         <td className="py-3 px-4 sm:px-5 font-semibold text-fg">{p.nombreCompleto}</td>
-                        <td className="py-3 px-4 sm:px-5 text-fg-muted">{p.sesionesCompletadas}</td>
+                        <td className="py-3 px-4 sm:px-5 text-fg-muted tabular-nums">{p.sesionesCompletadas}</td>
                         <td className="py-3 px-4 sm:px-5">
                           {p.esNuevo && <Badge tone="info">Nuevo</Badge>}
                         </td>

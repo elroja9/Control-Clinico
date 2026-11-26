@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { PlantillaDieta } from '../data/mockData';
 import { DireccionPrescripcion } from '../utils/calorieFormulas';
-import { Plus, X, Check } from 'lucide-react';
+import { Plus, X, Check, Edit } from 'lucide-react';
 import { notify } from './ui/Feedback';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
+import { Card, CardBody, CardHeader } from './ui/Card';
 import { EmptyState } from './ui/EmptyState';
 import { Field } from './ui/Field';
 import { IconButton } from './ui/IconButton';
@@ -136,79 +137,84 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
   const todosLosPctLlenos = carbohidratosPct !== '' && proteinasPct !== '' && grasasPct !== '';
 
   return (
-    <div className="mt-5 p-5 sm:p-6 bg-surface-muted border border-border rounded-panel space-y-4 text-body" style={{ '--brand': themeColor } as React.CSSProperties}>
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
-        <div className="min-w-0">
-          <h4 className="text-heading font-semibold tracking-tight text-fg">Plantillas de Dieta</h4>
-          <p className="text-body text-fg-muted">Se sugieren automáticamente en la calculadora cuando el rango de calorías y el objetivo coinciden.</p>
-        </div>
-        {!isFormOpen && (
-          <Button onClick={handleNueva} icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
-            Nueva Plantilla
+    // Tarjeta propia con lista de divisores: antes era un panel gris con tarjetas dentro (tarjetas anidadas en móvil).
+    <Card className="text-body" style={{ '--brand': themeColor } as React.CSSProperties}>
+      <CardHeader
+        title="Plantillas de dieta"
+        description="Se sugieren automáticamente en la calculadora cuando el rango de calorías y el objetivo coinciden."
+        actions={!isFormOpen ? (
+          <Button size="sm" onClick={handleNueva} icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
+            Nueva plantilla
           </Button>
-        )}
-      </div>
+        ) : undefined}
+      />
 
-      {!isFormOpen && (
-        <div className="space-y-2.5">
-          {plantillasDeEstaEmpresa.length === 0 && (
-            <EmptyState
-              icon={<Plus />}
-              title="Sin plantillas configuradas todavía"
-              description="Cree una plantilla para sugerirla automáticamente según el objetivo y el rango de calorías."
-            />
-          )}
+      {!isFormOpen && plantillasDeEstaEmpresa.length === 0 && (
+        <CardBody>
+          <EmptyState
+            icon={<Plus />}
+            title="Sin plantillas configuradas todavía"
+            description="Cree una plantilla para sugerirla automáticamente según el objetivo y el rango de calorías."
+          />
+        </CardBody>
+      )}
+
+      {!isFormOpen && plantillasDeEstaEmpresa.length > 0 && (
+        <ul className="divide-y divide-border">
           {plantillasDeEstaEmpresa.map(p => (
-            <div key={p.id} className="flex items-center justify-between gap-3 bg-surface border border-border rounded-card shadow-xs p-4">
-              <div className="min-w-0">
-                <div className="font-semibold text-fg flex flex-wrap items-center gap-2">
-                  {p.nombre}
+            <li key={p.id} className="flex items-center gap-2 px-4 sm:px-6 py-3">
+              <div className="flex-1 min-w-0">
+                <span className="block font-semibold text-fg break-words">{p.nombre}</span>
+                <span className="mt-1 flex flex-wrap items-center gap-1.5">
                   <Badge tone="brand">{ETIQUETAS_DIRECCION[p.direccion]}</Badge>
-                </div>
-                <div className="mt-1 text-xs text-fg-muted">{p.caloriaMin}-{p.caloriaMax} kcal · Carbohidratos {p.carbohidratosPct ?? '—'}% · Proteínas {p.proteinasPct ?? '—'}% · Grasas {p.grasasPct ?? '—'}%</div>
+                  <span className="text-xs font-semibold text-fg">{p.caloriaMin}-{p.caloriaMax} kcal</span>
+                </span>
+                <span className="mt-1 block text-xs text-fg-muted break-words">
+                  Carbohidratos {p.carbohidratosPct ?? '—'}% · Proteínas {p.proteinasPct ?? '—'}% · Grasas {p.grasasPct ?? '—'}%
+                </span>
               </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <Button variant="ghost" size="sm" onClick={() => handleEditar(p)}>Editar</Button>
-                <IconButton label="Eliminar" icon={<X className="w-4 h-4" aria-hidden="true" />} className="hover:text-danger hover:bg-danger-soft" onClick={() => onDeletePlantillaDieta(p.id)} />
-              </div>
-            </div>
+              <IconButton label={`Editar ${p.nombre}`} icon={<Edit className="w-4 h-4" aria-hidden="true" />} onClick={() => handleEditar(p)} />
+              <IconButton label={`Eliminar ${p.nombre}`} icon={<X className="w-4 h-4" aria-hidden="true" />} className="hover:text-danger! hover:bg-danger-soft!" onClick={() => onDeletePlantillaDieta(p.id)} />
+            </li>
           ))}
-        </div>
+        </ul>
       )}
 
       {isFormOpen && (
-        <div className="bg-surface border border-border rounded-card shadow-xs p-4 sm:p-5 space-y-5">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Field label="Nombre">
+        <CardBody className="space-y-5">
+          {/* Nombre y objetivo a ancho completo en el iPhone; las kcal (cortas) lado a lado. */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+            <Field label="Nombre" className="col-span-2 sm:col-span-1">
               <Input type="text" value={nombre} onChange={(e: any) => setNombre(e.target.value)} placeholder="ej: Déficit clásico 1500-1800" />
             </Field>
-            <Field label="Objetivo">
+            <Field label="Objetivo" className="col-span-2 sm:col-span-1">
               <Select value={direccion} onChange={(e: any) => setDireccion(e.target.value as DireccionPrescripcion)}>
                 <option value="DEFICIT">Déficit</option>
                 <option value="MANTENIMIENTO">Mantenimiento</option>
                 <option value="SUPERAVIT">Superávit</option>
               </Select>
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2 sm:col-span-1 grid grid-cols-2 gap-3">
               <Field label="Kcal mín.">
-                <Input type="number" min={0} step={50} value={caloriaMin} onChange={(e: any) => setCaloriaMin(e.target.value)} />
+                <Input type="number" min={0} step={50} inputMode="numeric" value={caloriaMin} onChange={(e: any) => setCaloriaMin(e.target.value)} />
               </Field>
               <Field label="Kcal máx.">
-                <Input type="number" min={0} step={50} value={caloriaMax} onChange={(e: any) => setCaloriaMax(e.target.value)} />
+                <Input type="number" min={0} step={50} inputMode="numeric" value={caloriaMax} onChange={(e: any) => setCaloriaMax(e.target.value)} />
               </Field>
             </div>
           </div>
 
           <div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {/* 3 columnas también en el iPhone; items-end alinea los campos si una etiqueta baja de línea. */}
+            <div className="grid grid-cols-3 items-end gap-3 sm:gap-4">
               <Field label="Carbohidratos (%)">
-                <Input type="number" min={0} max={100} value={carbohidratosPct} onChange={(e: any) => setCarbohidratosPct(e.target.value)} placeholder="ej: 40" />
+                <Input type="number" min={0} max={100} inputMode="numeric" value={carbohidratosPct} onChange={(e: any) => setCarbohidratosPct(e.target.value)} placeholder="ej: 40" />
               </Field>
               <Field label="Proteínas (%)">
-                <Input type="number" min={0} max={100} value={proteinasPct} onChange={(e: any) => setProteinasPct(e.target.value)} placeholder="ej: 35" />
+                <Input type="number" min={0} max={100} inputMode="numeric" value={proteinasPct} onChange={(e: any) => setProteinasPct(e.target.value)} placeholder="ej: 35" />
               </Field>
               <Field label="Grasas (%)">
-                <Input type="number" min={0} max={100} value={grasasPct} onChange={(e: any) => setGrasasPct(e.target.value)} placeholder="ej: 25" />
+                <Input type="number" min={0} max={100} inputMode="numeric" value={grasasPct} onChange={(e: any) => setGrasasPct(e.target.value)} placeholder="ej: 25" />
               </Field>
             </div>
             {(carbohidratosPct !== '' || proteinasPct !== '' || grasasPct !== '') && (
@@ -239,16 +245,17 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
             </Field>
           </div>
 
-          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5 pt-1">
-            <Button variant="secondary" onClick={() => { setIsFormOpen(false); limpiarFormulario(); }}>
+          {/* En móvil las acciones quedan fijas abajo (sobre la barra de inicio de iOS), como el formulario de servicio. */}
+          <div className="sticky bottom-0 z-10 -mx-4 sm:mx-0 px-4 sm:px-0 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:pb-0 bg-surface/95 sm:bg-transparent backdrop-blur-sm sm:backdrop-blur-none border-t border-border sm:border-0 flex gap-2 sm:justify-end [&>*]:flex-1 sm:[&>*]:flex-none print:hidden">
+            <Button variant="outline" onClick={() => { setIsFormOpen(false); limpiarFormulario(); }}>
               Cancelar
             </Button>
             <Button onClick={handleGuardar}>
-              Guardar Plantilla
+              Guardar plantilla
             </Button>
           </div>
-        </div>
+        </CardBody>
       )}
-    </div>
+    </Card>
   );
 }

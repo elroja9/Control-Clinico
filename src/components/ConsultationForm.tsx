@@ -7,6 +7,7 @@ import { notify } from './ui/Feedback';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { controlBase } from './ui/Input';
+import { SegmentedControl } from './ui/SegmentedControl';
 
 // Estilos compartidos de los controles del formulario (tokens del sistema de diseño)
 const ctl = `${controlBase} px-3 py-2 resize-y`;
@@ -694,7 +695,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
       {/* Acento con el color de la clínica */}
       <div className="h-1" style={{ backgroundColor: themeColor }} aria-hidden="true" />
       {/* Encabezado: paciente y especialidad */}
-      <div className="px-5 sm:px-6 py-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-border">
+      <div className="px-4 sm:px-6 py-4 sm:py-5 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 border-b border-border">
         <div className="flex items-center gap-3 min-w-0">
           <span className="w-10 h-10 shrink-0 rounded-control bg-brand-soft text-brand-ink flex items-center justify-center" aria-hidden="true">
             <ClipboardList className="w-5 h-5" />
@@ -707,32 +708,18 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
         {/* Specialty Selector */}
         {perfilCompania === 'Ambas' ? (
-          <div className="flex bg-surface-muted p-1 rounded-control">
-            <button
-              type="button"
-              onClick={() => setTipo('Nutrición')}
-              aria-pressed={tipo === 'Nutrición'}
-              className={`min-h-10 px-4 rounded-lg font-semibold text-sm transition-colors flex items-center gap-1.5 ${
-                tipo === 'Nutrición' ? 'bg-surface text-fg shadow-sm' : 'text-fg-muted hover:text-fg'
-              }`}
-            >
-              <Apple className="w-4 h-4" aria-hidden="true" />
-              Nutrición
-            </button>
-            <button
-              type="button"
-              onClick={() => setTipo('Fisioterapia')}
-              aria-pressed={tipo === 'Fisioterapia'}
-              className={`min-h-10 px-4 rounded-lg font-semibold text-sm transition-colors flex items-center gap-1.5 ${
-                tipo === 'Fisioterapia' ? 'bg-surface text-fg shadow-sm' : 'text-fg-muted hover:text-fg'
-              }`}
-            >
-              <Dumbbell className="w-4 h-4" aria-hidden="true" />
-              Fisioterapia
-            </button>
-          </div>
+          <SegmentedControl
+            ariaLabel="Especialidad de la consulta"
+            value={tipo}
+            onChange={(v) => setTipo(v)}
+            options={[
+              { value: 'Nutrición', label: 'Nutrición', icon: <Apple /> },
+              { value: 'Fisioterapia', label: 'Fisioterapia', icon: <Dumbbell /> }
+            ]}
+            className="sm:w-auto sm:inline-flex sm:shrink-0"
+          />
         ) : (
-          <Badge tone="brand" className="px-3 py-1.5 text-xs">
+          <Badge tone="brand" className="px-3 py-1.5 text-xs self-start sm:self-auto">
             Especialidad:
             {tipo === 'Fisioterapia' ? <Dumbbell className="w-3.5 h-3.5" aria-hidden="true" /> : <Apple className="w-3.5 h-3.5" aria-hidden="true" />}
             {tipo}
@@ -740,18 +727,19 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
         )}
       </div>
 
-      {/* Índice de secciones (fijo al hacer scroll) */}
-      <nav aria-label="Secciones de la consulta" className="sticky top-0 z-20 bg-surface/95 backdrop-blur-sm border-b border-border">
-        <ol className="flex gap-1.5 overflow-x-auto px-4 sm:px-6 py-2 scrollbar-thin">
+      {/* Índice de secciones: chips horizontales fijos justo bajo el header de la app
+          (que mide 4rem + zona segura superior), con scroll lateral y snap */}
+      <nav aria-label="Secciones de la consulta" className="sticky top-[calc(4rem+env(safe-area-inset-top,0px))] z-20 bg-surface/95 backdrop-blur-sm border-b border-border">
+        <ol className="flex gap-1.5 overflow-x-auto overscroll-x-contain snap-x snap-mandatory scroll-px-4 px-4 sm:px-6 py-2 scrollbar-thin">
           {secciones.map((s, i) => {
             const activa = seccionActiva === s.id;
             return (
-              <li key={s.id} className="shrink-0">
+              <li key={s.id} className="shrink-0 snap-start">
                 <button
                   type="button"
                   onClick={() => irASeccion(s.id)}
                   aria-current={activa ? 'step' : undefined}
-                  className={`min-h-10 px-3 rounded-full text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                  className={`min-h-11 px-3 rounded-full text-xs font-semibold whitespace-nowrap flex items-center gap-1.5 transition-colors ${
                     activa ? 'bg-brand-soft text-brand-ink' : 'text-fg-muted hover:bg-surface-muted hover:text-fg'
                   }`}
                 >
@@ -764,17 +752,17 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
         </ol>
       </nav>
 
-      <div className="p-5 sm:p-6 space-y-6">
+      <div className="p-4 sm:p-6 space-y-6">
 
-        {/* Core fields */}
-        <div id="sec-general" className="scroll-mt-24 grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div>
+        {/* Core fields: una columna en móvil, dos desde sm */}
+        <div id="sec-general" className="scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="sm:col-span-2 lg:col-span-1">
             <label htmlFor="consultati-fecha-de-consulta" className={ctlLabel}>Fecha de Consulta</label>
             <input id="consultati-fecha-de-consulta"
               type="date"
               value={fecha}
               onChange={(e) => setFecha(e.target.value)}
-              className={ctl}
+              className={`${ctl} px-2.5!`}
             />
           </div>
           <div>
@@ -816,7 +804,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
         {tipo === 'Nutrición' && (
           <div className="space-y-4">
             {/* Accordion 1: Antropometria General y Basal */}
-            <details id="sec-antro" className="group scroll-mt-24 border border-border rounded-card overflow-hidden bg-surface" open>
+            <details id="sec-antro" className="group scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] border border-border rounded-card overflow-hidden bg-surface" open>
               <summary className="flex justify-between items-center gap-3 font-semibold px-4 py-3 min-h-12 text-fg bg-surface cursor-pointer select-none group-open:border-b group-open:border-border hover:bg-surface-muted transition-colors">
                 <div className="flex items-center gap-2">
                   <Activity className="w-4 h-4 text-brand-ink" />
@@ -972,7 +960,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
             </details>
 
             {/* Accordion 2: Pliegues y Perimetros */}
-            <details id="sec-pliegues" className="group scroll-mt-24 border border-border rounded-card overflow-hidden bg-surface">
+            <details id="sec-pliegues" className="group scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] border border-border rounded-card overflow-hidden bg-surface">
               <summary className="flex justify-between items-center gap-3 font-semibold px-4 py-3 min-h-12 text-fg bg-surface cursor-pointer select-none group-open:border-b group-open:border-border hover:bg-surface-muted transition-colors">
                 <div className="flex items-center gap-2">
                   <Activity className="w-4 h-4 text-brand-ink" />
@@ -1090,7 +1078,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
             </details>
 
             {/* Accordion 3: Composicion Corporal Segmentada */}
-            <details id="sec-composicion" className="group scroll-mt-24 border border-border rounded-card overflow-hidden bg-surface">
+            <details id="sec-composicion" className="group scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] border border-border rounded-card overflow-hidden bg-surface">
               <summary className="flex justify-between items-center gap-3 font-semibold px-4 py-3 min-h-12 text-fg bg-surface cursor-pointer select-none group-open:border-b group-open:border-border hover:bg-surface-muted transition-colors">
                 <div className="flex items-center gap-2">
                   <Activity className="w-4 h-4 text-brand-ink" />
@@ -1246,7 +1234,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
             </details>
 
             {/* Accordion 4: Evaluacion Bioquimica */}
-            <details id="sec-bioquimica" className="group scroll-mt-24 border border-border rounded-card overflow-hidden bg-surface">
+            <details id="sec-bioquimica" className="group scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] border border-border rounded-card overflow-hidden bg-surface">
               <summary className="flex justify-between items-center gap-3 font-semibold px-4 py-3 min-h-12 text-fg bg-surface cursor-pointer select-none group-open:border-b group-open:border-border hover:bg-surface-muted transition-colors">
                 <div className="flex items-center gap-2">
                   <Heart className="w-4 h-4 text-brand-ink" />
@@ -1407,7 +1395,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
             </details>
 
             {/* Accordion 5: Evaluacion Dietetica */}
-            <details id="sec-dietetica" className="group scroll-mt-24 border border-border rounded-card overflow-hidden bg-surface">
+            <details id="sec-dietetica" className="group scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] border border-border rounded-card overflow-hidden bg-surface">
               <summary className="flex justify-between items-center gap-3 font-semibold px-4 py-3 min-h-12 text-fg bg-surface cursor-pointer select-none group-open:border-b group-open:border-border hover:bg-surface-muted transition-colors">
                 <div className="flex items-center gap-2">
                   <ClipboardList className="w-4 h-4 text-brand-ink" />
@@ -1416,7 +1404,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                 <ChevronRight className="w-4 h-4 shrink-0 transition-transform group-open:rotate-90 text-fg-subtle" />
               </summary>
               <div className="p-4 space-y-4 text-xs">
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
                     <label htmlFor="consultati-tiempos-de-comida-al" className={ctlLabel}>Tiempos de comida al día</label>
                     <select id="consultati-tiempos-de-comida-al"
@@ -1627,7 +1615,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
             </details>
 
             {/* Accordion 6: Estilo de Vida y Ejercicio */}
-            <details id="sec-estilo" className="group scroll-mt-24 border border-border rounded-card overflow-hidden bg-surface">
+            <details id="sec-estilo" className="group scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] border border-border rounded-card overflow-hidden bg-surface">
               <summary className="flex justify-between items-center gap-3 font-semibold px-4 py-3 min-h-12 text-fg bg-surface cursor-pointer select-none group-open:border-b group-open:border-border hover:bg-surface-muted transition-colors">
                 <div className="flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-brand-ink" />
@@ -1811,7 +1799,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
             </details>
 
             {/* Accordion 7: Dieta de Recetas */}
-            <details id="sec-dieta" className="group scroll-mt-24 border border-border rounded-card overflow-hidden bg-surface">
+            <details id="sec-dieta" className="group scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] border border-border rounded-card overflow-hidden bg-surface">
               <summary className="flex justify-between items-center gap-3 font-semibold px-4 py-3 min-h-12 text-fg bg-surface cursor-pointer select-none group-open:border-b group-open:border-border hover:bg-surface-muted transition-colors">
                 <div className="flex items-center gap-2">
                   <Heart className="w-4 h-4 text-brand-ink" />
@@ -1918,31 +1906,27 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
 
                           <div>
                             <label htmlFor="consultati-3-direccion-y-porcentaje" className={ctlLabel}>3. Dirección y porcentaje</label>
-                            <div className="flex flex-wrap gap-2 mb-2">
-                              {(['DEFICIT', 'MANTENIMIENTO', 'SUPERAVIT'] as DireccionPrescripcion[]).map(d => (
-                                <button
-                                  type="button"
-                                  key={d}
-                                  onClick={() => { setDireccionPrescripcion(d); if (d === 'MANTENIMIENTO') setPorcentajePrescripcion(0); }}
-                                  aria-pressed={direccionPrescripcion === d}
-                                  className={`min-h-10 px-3.5 rounded-control font-semibold flex items-center gap-1.5 transition-colors ${direccionPrescripcion === d ? 'bg-brand-solid text-brand-fg' : 'bg-surface-muted text-fg-muted hover:text-fg'}`}
-                                >
-                                  {d === 'DEFICIT' && <TrendingDown className="w-3.5 h-3.5" />}
-                                  {d === 'SUPERAVIT' && <TrendingUp className="w-3.5 h-3.5" />}
-                                  {d === 'MANTENIMIENTO' && <Minus className="w-3.5 h-3.5" />}
-                                  {d === 'DEFICIT' ? 'Déficit' : d === 'SUPERAVIT' ? 'Superávit' : 'Mantenimiento'}
-                                </button>
-                              ))}
-                            </div>
+                            <SegmentedControl
+                              ariaLabel="Dirección de la prescripción"
+                              value={direccionPrescripcion}
+                              onChange={(d) => { setDireccionPrescripcion(d); if (d === 'MANTENIMIENTO') setPorcentajePrescripcion(0); }}
+                              options={(['DEFICIT', 'MANTENIMIENTO', 'SUPERAVIT'] as DireccionPrescripcion[]).map(d => ({
+                                value: d,
+                                label: d === 'DEFICIT' ? 'Déficit' : d === 'SUPERAVIT' ? 'Superávit' : 'Mantenimiento',
+                                icon: d === 'DEFICIT' ? <TrendingDown /> : d === 'SUPERAVIT' ? <TrendingUp /> : <Minus />
+                              }))}
+                              className="mb-2 sm:w-auto sm:inline-flex"
+                            />
                             {direccionPrescripcion !== 'MANTENIMIENTO' && (
-                              <div className="flex flex-wrap gap-2">
+                              // Móvil: chips en una fila con scroll horizontal y snap
+                              <div role="group" aria-label="Porcentaje de la prescripción" className="flex gap-2 overflow-x-auto overscroll-x-contain snap-x snap-mandatory -mx-4 px-4 pb-1 sm:flex-wrap sm:overflow-visible sm:mx-0 sm:px-0 sm:pb-0">
                                 {porcentajesParaMostrar.map(pct => (
                                   <button
                                     type="button"
                                     key={pct}
                                     onClick={() => setPorcentajePrescripcion(pct)}
                                     aria-pressed={porcentajePrescripcion === pct}
-                                    className={`min-h-10 px-4 rounded-full text-xs font-semibold border-2 transition-colors ${porcentajePrescripcion === pct ? 'border-brand bg-brand-soft text-brand-ink' : 'border-border bg-surface text-fg-muted hover:border-border-strong'}`}
+                                    className={`snap-start shrink-0 min-h-11 px-4 rounded-full text-xs font-semibold border-2 tabular-nums transition-colors ${porcentajePrescripcion === pct ? 'border-brand bg-brand-soft text-brand-ink' : 'border-border bg-surface text-fg-muted hover:border-border-strong'}`}
                                   >
                                     {pct}%
                                   </button>
@@ -2130,7 +2114,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
         {/* ================= FISIOTERAPIA SPECIFIC PANEL ================= */}
         {tipo === 'Fisioterapia' && (
           <div className="space-y-4">
-            <div id="sec-fisio-dolor" className="scroll-mt-24 flex justify-between items-center border-t border-border pt-5">
+            <div id="sec-fisio-dolor" className="scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] flex justify-between items-center border-t border-border pt-5">
               <h4 className="text-body font-semibold text-fg flex items-center gap-2">
                 <Dumbbell className="w-4 h-4 text-brand-ink" />
                 Valoración Mecánica, Dolor & Kinesiología
@@ -2223,7 +2207,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
             </div>
 
             {/* Physical examination (ROM, Daniels) */}
-            <div id="sec-fisio-examen" className="scroll-mt-24 bg-surface-muted p-4 sm:p-5 rounded-card border border-border space-y-4">
+            <div id="sec-fisio-examen" className="scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] bg-surface-muted p-4 sm:p-5 rounded-card border border-border space-y-4">
               <span className="text-body font-semibold text-fg block">Examen Físico Funcional</span>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -2248,7 +2232,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
                   <label htmlFor="consultati-rangos-articulares-rom" className={ctlLabel}>Rangos Articulares (ROM)</label>
                   <input id="consultati-rangos-articulares-rom"
@@ -2283,9 +2267,9 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
             </div>
 
             {/* Prescribed physiotherapy interventions */}
-            <div id="sec-fisio-prescripcion" className="scroll-mt-24 bg-brand-soft/40 p-4 sm:p-5 rounded-card border border-brand/15 space-y-4">
+            <div id="sec-fisio-prescripcion" className="scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] bg-brand-soft/40 p-4 sm:p-5 rounded-card border border-brand/15 space-y-4">
               <span className="text-body font-semibold text-brand-ink block">Prescripción e Intervenciones</span>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div>
                   <label htmlFor="consultati-agentes-fisicos-tens-ultrasonido" className={ctlLabel}>Agentes Físicos (TENS, Ultrasonido...)</label>
                   <input id="consultati-agentes-fisicos-tens-ultrasonido"
@@ -2317,7 +2301,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
                   />
                 </div>
               </div>
-              <div className="w-48">
+              <div className="w-full sm:w-48">
                 <label htmlFor="consultati-sesiones-sugeridas-para-el" className={ctlLabel}>Sesiones sugeridas para el ciclo</label>
                 <input id="consultati-sesiones-sugeridas-para-el"
                   type="number"
@@ -2329,7 +2313,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
             </div>
 
             {/* SOAP Clinical evolution note */}
-            <div id="sec-fisio-soap" className="scroll-mt-24 bg-surface-muted p-4 sm:p-5 rounded-card border border-border space-y-4">
+            <div id="sec-fisio-soap" className="scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] bg-surface-muted p-4 sm:p-5 rounded-card border border-border space-y-4">
               <span className="text-body font-semibold text-fg block">Nota de Evolución Clínica Diaria (Estándar SOAP)</span>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -2378,7 +2362,7 @@ export default function ConsultationForm({ patient, editingConsultation, onSave,
         )}
 
         {/* General annotations */}
-        <div id="sec-observaciones" className="scroll-mt-24 border-t border-border pt-5">
+        <div id="sec-observaciones" className="scroll-mt-[calc(8.5rem+env(safe-area-inset-top,0px))] border-t border-border pt-5">
           <label htmlFor="consultati-observaciones-generales-y-recomendaciones" className={ctlLabel}>Observaciones Generales y Recomendaciones al Paciente</label>
           <textarea id="consultati-observaciones-generales-y-recomendaciones"
             rows={2}

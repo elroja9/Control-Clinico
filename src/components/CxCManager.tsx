@@ -4,6 +4,8 @@ import { Wallet, AlertCircle, DollarSign } from 'lucide-react';
 import { fechaCR } from '../utils/fechaCR';
 import { StatCard } from './ui/StatCard';
 import { Card } from './ui/Card';
+import { ResponsiveModal } from './ui/ResponsiveModal';
+import { SegmentedControl } from './ui/SegmentedControl';
 import { Badge, type BadgeTone } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
@@ -45,6 +47,8 @@ export default function CxCManager({ cxc, patients, onRegistrarPago, soloLectura
 
   const nombrePaciente = (idPaciente: number, cuenta?: CuentaCobrar) =>
     patients.find(p => p.id === idPaciente)?.nombreCompleto || cuenta?.receptorNombre || `Paciente #${idPaciente}`;
+  // Cuenta cuyo abono se está registrando (se muestra en un modal)
+  const cuentaAbono = abonandoId != null ? cxc.find(c => c.id === abonandoId) ?? null : null;
 
   // Las vencidas primero (por fecha de vencimiento): es lo que tesorería tiene que gestionar hoy.
   const ordenadas = [...cxc].sort((a, b) =>
@@ -101,18 +105,15 @@ export default function CxCManager({ cxc, patients, onRegistrarPago, soloLectura
       </div>
 
       <Card>
-        <div className="flex flex-wrap gap-1.5 p-4 border-b border-border" role="group" aria-label="Filtrar cuentas por cobrar">
-          {FILTROS.map(([f, etiqueta]) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFiltro(f)}
-              aria-pressed={filtro === f}
-              className={`min-h-10 px-4 rounded-control text-xs font-semibold transition-colors ${filtro === f ? 'bg-brand-solid text-brand-fg shadow-xs' : 'bg-surface-muted text-fg-muted hover:bg-border hover:text-fg'}`}
-            >
-              {etiqueta}
-            </button>
-          ))}
+        <div className="p-3 sm:p-4 border-b border-border">
+          <SegmentedControl
+            ariaLabel="Filtrar cuentas por cobrar"
+            size="sm"
+            value={filtro}
+            onChange={(v) => setFiltro(v)}
+            options={FILTROS.map(([f, etiqueta]) => ({ value: f, label: etiqueta }))}
+            className="sm:w-auto sm:inline-flex"
+          />
         </div>
 
         {visibles.length === 0 && (
@@ -144,7 +145,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago, soloLectura
                       type="button"
                       onClick={() => abrirAbono(c)}
                       title="Registrar abono"
-                      className="w-10 h-10 flex items-center justify-center rounded-control text-success hover:bg-success-soft"
+                      className="w-11 h-11 flex items-center justify-center rounded-control text-success hover:bg-success-soft"
                       aria-label={`Registrar abono de ${nombrePaciente(c.idPaciente, c)}, factura ${c.facturaConsecutivo}`}
                     >
                       <DollarSign className="w-4 h-4" aria-hidden="true" />
@@ -163,45 +164,61 @@ export default function CxCManager({ cxc, patients, onRegistrarPago, soloLectura
                 </ul>
               )}
 
-              {abonandoId === c.id && (
-                <div className="mt-3 pt-3 border-t border-border space-y-3 animate-slide-down">
-                  {error && (
-                    <div role="alert" className="p-2.5 rounded-control bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-1.5">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                      <span>{error}</span>
-                    </div>
-                  )}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label htmlFor={`cxc-monto-${c.id}`} className={labelCls}>Monto (₡)</label>
-                      <Input id={`cxc-monto-${c.id}`} type="number" min="0" step="0.01" inputMode="decimal" value={montoAbono} onChange={(e: any) => setMontoAbono(e.target.value)} className="tabular-nums" />
-                    </div>
-                    <div>
-                      <label htmlFor={`cxc-medio-${c.id}`} className={labelCls}>Medio de pago</label>
-                      <Select id={`cxc-medio-${c.id}`} value={medioPagoAbono} onChange={(e: any) => setMedioPagoAbono(e.target.value)}>
-                        {Object.entries(MEDIO_PAGO_ABONO).map(([codigo, nombre]) => (
-                          <option key={codigo} value={codigo}>{nombre}</option>
-                        ))}
-                      </Select>
-                    </div>
-                    <div>
-                      <label htmlFor={`cxc-ref-${c.id}`} className={labelCls}>Referencia</label>
-                      <Input id={`cxc-ref-${c.id}`} type="text" value={referenciaAbono} onChange={(e: any) => setReferenciaAbono(e.target.value)} placeholder="ej: # comprobante SINPE" />
-                    </div>
-                  </div>
-                  <div className="flex gap-2 justify-end">
-                    <Button variant="ghost" onClick={() => setAbonandoId(null)}>Cancelar</Button>
-                    <Button onClick={() => confirmarAbono(c)} disabled={guardando}>
-                      {guardando ? 'Guardando…' : 'Registrar abono'}
-                    </Button>
-                  </div>
-                </div>
-              )}
             </li>
           );
         })}
         </ul>
       </Card>
+
+      {/* Abono: mismo estado (abonandoId) que antes abría el panel bajo la fila */}
+      <ResponsiveModal
+        open={cuentaAbono != null}
+        onClose={() => setAbonandoId(null)}
+        title={cuentaAbono ? `Registrar abono · ${nombrePaciente(cuentaAbono.idPaciente, cuentaAbono)}` : 'Registrar abono'}
+        icon={<DollarSign aria-hidden="true" />}
+        size="sm"
+        footer={cuentaAbono && (
+          <>
+            <Button variant="ghost" onClick={() => setAbonandoId(null)}>Cancelar</Button>
+            <Button onClick={() => confirmarAbono(cuentaAbono)} disabled={guardando}>
+              {guardando ? 'Guardando…' : 'Registrar abono'}
+            </Button>
+          </>
+        )}
+      >
+        {cuentaAbono && (
+          <div className="space-y-4">
+            <dl className="p-3 rounded-control bg-surface-muted border border-border text-sm space-y-1">
+              <div className="flex justify-between gap-3"><dt className="text-fg-muted">Factura</dt><dd className="font-medium text-fg text-right break-all">{cuentaAbono.facturaConsecutivo}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-fg-muted">Saldo pendiente</dt><dd className="font-semibold text-fg tabular-nums">{colones(cuentaAbono.saldoPendiente)}</dd></div>
+            </dl>
+            {error && (
+              <div role="alert" className="p-2.5 rounded-control bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                <span>{error}</span>
+              </div>
+            )}
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <label htmlFor={`cxc-monto-${cuentaAbono.id}`} className={labelCls}>Monto (₡)</label>
+                <Input id={`cxc-monto-${cuentaAbono.id}`} type="number" min="0" step="0.01" inputMode="decimal" value={montoAbono} onChange={(e: any) => setMontoAbono(e.target.value)} className="tabular-nums" />
+              </div>
+              <div>
+                <label htmlFor={`cxc-medio-${cuentaAbono.id}`} className={labelCls}>Medio de pago</label>
+                <Select id={`cxc-medio-${cuentaAbono.id}`} value={medioPagoAbono} onChange={(e: any) => setMedioPagoAbono(e.target.value)}>
+                  {Object.entries(MEDIO_PAGO_ABONO).map(([codigo, nombre]) => (
+                    <option key={codigo} value={codigo}>{nombre}</option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <label htmlFor={`cxc-ref-${cuentaAbono.id}`} className={labelCls}>Referencia</label>
+                <Input id={`cxc-ref-${cuentaAbono.id}`} type="text" value={referenciaAbono} onChange={(e: any) => setReferenciaAbono(e.target.value)} placeholder="ej: # comprobante SINPE" />
+              </div>
+            </div>
+          </div>
+        )}
+      </ResponsiveModal>
     </section>
   );
 }

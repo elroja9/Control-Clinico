@@ -43,8 +43,8 @@ export default function OnlineBookingShare({ company }: OnlineBookingShareProps)
           description="Comparte este enlace con tus pacientes para que agenden su cita por su cuenta, sin necesidad de llamar."
         />
         <CardBody className="space-y-5">
-          <div className="bg-surface-muted border border-border rounded-control p-4">
-            <span className="block text-fg-muted text-caption font-semibold uppercase tracking-wide mb-1.5">Enlace de {company.nombreComercial}</span>
+          <div className="bg-surface-muted rounded-control p-4">
+            <span className="block text-fg-muted text-caption font-semibold uppercase tracking-wide mb-1.5 break-words">Enlace de {company.nombreComercial}</span>
             <a
               href={bookingUrl}
               target="_blank"
@@ -55,9 +55,11 @@ export default function OnlineBookingShare({ company }: OnlineBookingShareProps)
             </a>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          {/* En móvil: Copiar (acción principal) a todo el ancho y las otras dos lado a lado. */}
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2">
             <Button
               variant="primary"
+              className="col-span-2"
               onClick={handleCopiar}
               icon={copiado ? <Check className="w-4 h-4" aria-hidden="true" /> : <Copy className="w-4 h-4" aria-hidden="true" />}
             >
