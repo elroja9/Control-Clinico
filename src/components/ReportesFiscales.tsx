@@ -3,6 +3,14 @@ import { Company, ReporteD104, ReporteD101, GastosManualesAnuales, CierreFiscal 
 import { FileSpreadsheet, AlertTriangle, Lock, CheckCircle, Archive } from 'lucide-react';
 import { confirmar } from './ui/Feedback';
 import { colones } from '../utils/facturacion';
+import { PageHeader } from './ui/PageHeader';
+import { StatCard } from './ui/StatCard';
+import { Card, CardHeader, CardBody } from './ui/Card';
+import { Button } from './ui/Button';
+import { Input } from './ui/Input';
+import { Select } from './ui/Select';
+import { EmptyState } from './ui/EmptyState';
+import { Skeleton } from './ui/Skeleton';
 
 interface ReportesFiscalesProps {
   company: Company;
@@ -184,23 +192,17 @@ export default function ReportesFiscales({ company, soloLectura = false }: Repor
   }, [subTab, historialTipo]);
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5">
-      <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-3">
-        <FileSpreadsheet className="w-5 h-5 text-slate-500" />
-        <div>
-          <h3 className="text-sm font-bold text-slate-800">Reportes Fiscales</h3>
-          <p className="text-[11px] text-slate-500">Declaración de IVA (D-104) y Renta (D-101)</p>
-        </div>
-      </div>
+    <div>
+      <PageHeader title="Reportes fiscales" description="Declaración de IVA (D-104) y Renta (D-101)" />
 
-      <div className="flex flex-wrap gap-1.5 mb-4" role="group" aria-label="Tipo de reporte">
+      <div className="flex flex-wrap gap-1.5 mb-5 p-1 bg-surface-muted rounded-card w-fit max-w-full" role="group" aria-label="Tipo de reporte">
         {(['d104', 'd101', 'historial'] as const).map(t => (
           <button
             key={t}
             type="button"
             onClick={() => setSubTab(t)}
             aria-pressed={subTab === t}
-            className={`min-h-10 px-3 rounded-lg text-xs font-bold ${subTab === t ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+            className={`min-h-10 px-4 rounded-control text-sm font-semibold transition-colors ${subTab === t ? 'bg-surface text-brand-ink shadow-sm' : 'text-fg-muted hover:text-fg'}`}
           >
             {t === 'd104' ? 'D-104 Mensual' : t === 'd101' ? 'D-101 Anual' : 'Historial'}
           </button>
@@ -208,87 +210,91 @@ export default function ReportesFiscales({ company, soloLectura = false }: Repor
       </div>
 
       {subTab === 'd104' && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <label htmlFor="reportesfi-periodo" className="text-xs font-medium text-slate-600">Período</label>
-            <select id="reportesfi-periodo" value={periodo} onChange={(e) => setPeriodo(e.target.value)} className="min-h-10 bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800">
+        <div className="space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+            <label htmlFor="reportesfi-periodo" className="text-sm font-semibold text-fg">Período</label>
+            <Select id="reportesfi-periodo" value={periodo} onChange={(e: any) => setPeriodo(e.target.value)} wrapperClassName="sm:w-72">
               {periodOptions().map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
+            </Select>
           </div>
 
           {errorD104 && (
-            <div role="alert" className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
+            <div role="alert" className="p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" />
               <span>{errorD104}</span>
             </div>
           )}
 
-          {cargandoD104 && <p role="status" className="text-xs text-slate-600 text-center py-6">Calculando…</p>}
+          {cargandoD104 && (
+            <div role="status" aria-label="Calculando" className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <Skeleton className="h-24" /><Skeleton className="h-24" /><Skeleton className="h-24" />
+              </div>
+              <Skeleton className="h-40" />
+            </div>
+          )}
 
           {!cargandoD104 && d104 && (
             <>
               {d104.regimenSimplificado && (
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <p className="text-[11px] text-amber-800">
+                <div className="p-4 bg-warning-soft border border-warning/25 rounded-card flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" aria-hidden="true" />
+                  <p className="text-xs text-warning">
                     Esta empresa está registrada bajo <strong>Régimen de Tributación Simplificada</strong>: no declara IVA mediante el formulario D-104 tradicional (se declara por cuotas trimestrales según su actividad). Las cifras de abajo son solo un resumen informativo de las ventas registradas, no una declaración válida.
                   </p>
                 </div>
               )}
 
               {d104.yaCerrado && (
-                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-[11px] text-emerald-800">
-                  <CheckCircle className="w-4 h-4 shrink-0" />
+                <div className="p-3 bg-success-soft border border-success/20 rounded-card flex items-center gap-2 text-xs text-success">
+                  <CheckCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
                   <span>Período cerrado el {d104.fechaCierre ? new Date(d104.fechaCierre).toLocaleString('es-CR') : ''} — registro fiscal permanente.</span>
                 </div>
               )}
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 text-slate-500 text-[11px] uppercase">
-                      <th className="text-left py-2 px-3">Tarifa</th>
-                      <th className="text-right py-2 px-3">Base Gravable</th>
-                      <th className="text-right py-2 px-3">IVA</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    <tr><td className="py-2 px-3">13% (Tarifa General)</td><td className="py-2 px-3 text-right font-mono">{colones(d104.tarifas.t13.base)}</td><td className="py-2 px-3 text-right font-mono font-bold text-indigo-600">{colones(d104.tarifas.t13.iva)}</td></tr>
-                    <tr><td className="py-2 px-3">4% (Reducida)</td><td className="py-2 px-3 text-right font-mono">{colones(d104.tarifas.t4.base)}</td><td className="py-2 px-3 text-right font-mono font-bold text-indigo-600">{colones(d104.tarifas.t4.iva)}</td></tr>
-                    <tr><td className="py-2 px-3">2% (Reducida)</td><td className="py-2 px-3 text-right font-mono">{colones(d104.tarifas.t2.base)}</td><td className="py-2 px-3 text-right font-mono font-bold text-indigo-600">{colones(d104.tarifas.t2.iva)}</td></tr>
-                    <tr><td className="py-2 px-3">1% (Reducida)</td><td className="py-2 px-3 text-right font-mono">{colones(d104.tarifas.t1.base)}</td><td className="py-2 px-3 text-right font-mono font-bold text-indigo-600">{colones(d104.tarifas.t1.iva)}</td></tr>
-                    <tr><td className="py-2 px-3">Exento</td><td className="py-2 px-3 text-right font-mono">{colones(d104.tarifas.exento.base)}</td><td className="py-2 px-3 text-right font-mono text-slate-500">—</td></tr>
-                  </tbody>
-                </table>
-              </div>
-
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Débito Fiscal</span>
-                  <span className="text-sm font-bold text-slate-800">{colones(d104.debitoFiscal)}</span>
-                </div>
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Crédito Fiscal (compras)</span>
-                  <span className="text-sm font-bold text-slate-800">{colones(d104.creditoFiscal)}</span>
-                </div>
-                <div className={`p-3 rounded-xl border ${d104.saldoAPagar >= 0 ? 'bg-rose-50 border-rose-200' : 'bg-emerald-50 border-emerald-200'}`}>
-                  <span className={`text-[11px] font-bold uppercase block ${d104.saldoAPagar >= 0 ? 'text-rose-700' : 'text-emerald-700'}`}>{d104.saldoAPagar >= 0 ? 'Saldo a Pagar' : 'Saldo a Favor'}</span>
-                  <span className={`text-sm font-bold ${d104.saldoAPagar >= 0 ? 'text-rose-900' : 'text-emerald-900'}`}>{colones(Math.abs(d104.saldoAPagar))}</span>
-                </div>
+                <StatCard label="Débito Fiscal" value={colones(d104.debitoFiscal)} icon={<FileSpreadsheet />} />
+                <StatCard label="Crédito Fiscal (compras)" value={colones(d104.creditoFiscal)} icon={<FileSpreadsheet />} />
+                <StatCard
+                  label={d104.saldoAPagar >= 0 ? 'Saldo a Pagar' : 'Saldo a Favor'}
+                  value={colones(Math.abs(d104.saldoAPagar))}
+                  icon={<FileSpreadsheet />}
+                  className={d104.saldoAPagar >= 0 ? 'bg-danger-soft border-danger/25' : 'bg-success-soft border-success/25'}
+                />
               </div>
 
-              <p className="text-[11px] text-slate-500">{d104.cantidadFacturas} factura(s) · {d104.cantidadNotasCredito} nota(s) de crédito · {d104.cantidadNotasDebito} nota(s) de débito en este período.</p>
+              <Card>
+                <CardHeader title="Desglose por tarifa" description="Base gravable e IVA del período" />
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse min-w-[22rem]">
+                    <thead>
+                      <tr className="bg-surface-muted text-fg-muted text-caption uppercase tracking-wider">
+                        <th scope="col" className="text-left py-2.5 px-4 sm:px-6 font-semibold">Tarifa</th>
+                        <th scope="col" className="text-right py-2.5 px-4 font-semibold">Base Gravable</th>
+                        <th scope="col" className="text-right py-2.5 px-4 sm:px-6 font-semibold">IVA</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      <tr><td className="py-3 px-4 sm:px-6 text-fg">13% (Tarifa General)</td><td className="py-3 px-4 text-right tabular-nums text-fg">{colones(d104.tarifas.t13.base)}</td><td className="py-3 px-4 sm:px-6 text-right tabular-nums font-semibold text-brand-ink">{colones(d104.tarifas.t13.iva)}</td></tr>
+                      <tr><td className="py-3 px-4 sm:px-6 text-fg">4% (Reducida)</td><td className="py-3 px-4 text-right tabular-nums text-fg">{colones(d104.tarifas.t4.base)}</td><td className="py-3 px-4 sm:px-6 text-right tabular-nums font-semibold text-brand-ink">{colones(d104.tarifas.t4.iva)}</td></tr>
+                      <tr><td className="py-3 px-4 sm:px-6 text-fg">2% (Reducida)</td><td className="py-3 px-4 text-right tabular-nums text-fg">{colones(d104.tarifas.t2.base)}</td><td className="py-3 px-4 sm:px-6 text-right tabular-nums font-semibold text-brand-ink">{colones(d104.tarifas.t2.iva)}</td></tr>
+                      <tr><td className="py-3 px-4 sm:px-6 text-fg">1% (Reducida)</td><td className="py-3 px-4 text-right tabular-nums text-fg">{colones(d104.tarifas.t1.base)}</td><td className="py-3 px-4 sm:px-6 text-right tabular-nums font-semibold text-brand-ink">{colones(d104.tarifas.t1.iva)}</td></tr>
+                      <tr><td className="py-3 px-4 sm:px-6 text-fg">Exento</td><td className="py-3 px-4 text-right tabular-nums text-fg">{colones(d104.tarifas.exento.base)}</td><td className="py-3 px-4 sm:px-6 text-right text-fg-subtle">—</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+
+              <p className="text-xs text-fg-muted">{d104.cantidadFacturas} factura(s) · {d104.cantidadNotasCredito} nota(s) de crédito · {d104.cantidadNotasDebito} nota(s) de débito en este período.</p>
 
               {!soloLectura && !d104.yaCerrado && (
-                <button
-                  type="button"
+                <Button
                   onClick={handleCerrarD104}
                   disabled={cerrandoD104}
-                  className="min-h-10 flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white px-3 rounded-lg text-xs font-semibold disabled:opacity-60"
+                  icon={<Lock className="w-4 h-4" aria-hidden="true" />}
                 >
-                  <Lock className="w-3.5 h-3.5" />
                   {cerrandoD104 ? 'Cerrando...' : 'Cerrar Período'}
-                </button>
+                </Button>
               )}
             </>
           )}
@@ -296,124 +302,118 @@ export default function ReportesFiscales({ company, soloLectura = false }: Repor
       )}
 
       {subTab === 'd101' && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <label htmlFor="reportesfi-ano-fiscal" className="text-xs font-medium text-slate-600">Año Fiscal</label>
-            <select id="reportesfi-ano-fiscal" value={anio} onChange={(e) => setAnio(parseInt(e.target.value))} className="min-h-10 bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800">
+        <div className="space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+            <label htmlFor="reportesfi-ano-fiscal" className="text-sm font-semibold text-fg">Año Fiscal</label>
+            <Select id="reportesfi-ano-fiscal" value={anio} onChange={(e: any) => setAnio(parseInt(e.target.value))} wrapperClassName="sm:w-40">
               {yearOptions().map(y => <option key={y} value={y}>{y}</option>)}
-            </select>
+            </Select>
           </div>
 
           {errorD101 && (
-            <div role="alert" className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
+            <div role="alert" className="p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" />
               <span>{errorD101}</span>
             </div>
           )}
 
-          {cargandoD101 && <p role="status" className="text-xs text-slate-600 text-center py-6">Calculando…</p>}
+          {cargandoD101 && (
+            <div role="status" aria-label="Calculando" className="space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <Skeleton className="h-24" /><Skeleton className="h-24" /><Skeleton className="h-24" /><Skeleton className="h-24" />
+              </div>
+              <Skeleton className="h-32" />
+            </div>
+          )}
 
           {!cargandoD101 && d101 && (
             <>
               {d101.regimenSimplificado && (
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <p className="text-[11px] text-amber-800">
+                <div className="p-4 bg-warning-soft border border-warning/25 rounded-card flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-warning shrink-0 mt-0.5" aria-hidden="true" />
+                  <p className="text-xs text-warning">
                     Esta empresa está en Régimen Simplificado. Igualmente debe presentar Renta (D-101) anualmente, pero el cálculo de utilidad y gastos deducibles sigue reglas distintas a las mostradas aquí — use esta cifra solo como referencia.
                   </p>
                 </div>
               )}
 
               {d101.yaCerrado && (
-                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-[11px] text-emerald-800">
-                  <CheckCircle className="w-4 h-4 shrink-0" />
+                <div className="p-3 bg-success-soft border border-success/20 rounded-card flex items-center gap-2 text-xs text-success">
+                  <CheckCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
                   <span>Liquidación presentada el {d101.fechaCierre ? new Date(d101.fechaCierre).toLocaleString('es-CR') : ''} — registro fiscal permanente.</span>
                 </div>
               )}
 
-              <p className="text-[11px] text-slate-500">Contribuyente: <strong>{d101.tipoContribuyente === 'fisica' ? 'Persona Física con Actividad Lucrativa' : 'Persona Jurídica'}</strong> (según cédula de la empresa)</p>
+              <p className="text-xs text-fg-muted">Contribuyente: <strong className="text-fg">{d101.tipoContribuyente === 'fisica' ? 'Persona Física con Actividad Lucrativa' : 'Persona Jurídica'}</strong> (según cédula de la empresa)</p>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Ventas Netas</span>
-                  <span className="text-sm font-bold text-slate-800">{colones(d101.ventasNetas)}</span>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <StatCard label="Ventas Netas" value={colones(d101.ventasNetas)} />
+                <div>
+                  <StatCard label="Compras (CxP, sin IVA)" value={colones(d101.comprasCxP)} delta={{ value: 'El IVA de las compras se recupera en el D-104, no se deduce aquí.' }} className="h-full" />
                 </div>
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Compras (CxP, sin IVA)</span>
-                  <span className="text-sm font-bold text-slate-800">{colones(d101.comprasCxP)}</span>
-                  <span className="text-[11px] text-slate-500 block mt-0.5">El IVA de las compras se recupera en el D-104, no se deduce aquí.</span>
-                </div>
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-                  <span className="text-[11px] font-bold text-slate-500 uppercase block">Gastos Deducibles</span>
-                  <span className="text-sm font-bold text-slate-800">{colones(d101.totalGastosDeducibles)}</span>
-                </div>
-                <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl">
-                  <span className="text-[11px] font-bold text-indigo-700 uppercase block">Utilidad Neta</span>
-                  <span className="text-sm font-bold text-indigo-900">{colones(d101.utilidadNeta)}</span>
-                </div>
+                <StatCard label="Gastos Deducibles" value={colones(d101.totalGastosDeducibles)} />
+                <StatCard label="Utilidad Neta" value={colones(d101.utilidadNeta)} className="bg-brand-soft border-brand/25" />
               </div>
 
-              <div className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-3">
-                <p className="text-[11px] font-bold text-slate-700 uppercase">Gastos anuales que no pasan por Cuentas por Pagar</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {(Object.keys(gastosForm) as Array<keyof GastosManualesAnuales>).map(campo => (
-                    <div key={campo}>
-                      <label htmlFor={`d101-gasto-${campo}`} className="block text-slate-600 text-[11px] font-medium mb-1">{ETIQUETA_GASTO[campo]} (₡)</label>
-                      <input
-                        id={`d101-gasto-${campo}`}
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        inputMode="decimal"
-                        value={gastosForm[campo]}
-                        disabled={d101.yaCerrado || soloLectura}
-                        onChange={(e) => setGastosForm(prev => ({ ...prev, [campo]: Math.max(0, parseFloat(e.target.value) || 0) }))}
-                        className="w-full min-h-10 bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800 disabled:opacity-60"
-                      />
-                    </div>
-                  ))}
-                </div>
-                {!soloLectura && !d101.yaCerrado && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={handleGuardarGastos}
-                      disabled={guardandoGastos || !gastosSinGuardar}
-                      className="min-h-10 px-3 rounded-lg text-xs font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:opacity-50"
-                    >
-                      {guardandoGastos ? 'Guardando…' : 'Guardar gastos y recalcular'}
-                    </button>
-                    {gastosSinGuardar && <span role="status" className="text-[11px] font-semibold text-amber-800">Hay cambios sin guardar: el impuesto mostrado aún no los incluye.</span>}
+              <Card>
+                <CardHeader title="Gastos anuales que no pasan por Cuentas por Pagar" description="Se suman a los gastos deducibles del año" />
+                <CardBody className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {(Object.keys(gastosForm) as Array<keyof GastosManualesAnuales>).map(campo => (
+                      <div key={campo}>
+                        <label htmlFor={`d101-gasto-${campo}`} className="block text-fg text-xs font-semibold mb-1.5">{ETIQUETA_GASTO[campo]} (₡)</label>
+                        <Input
+                          id={`d101-gasto-${campo}`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          inputMode="decimal"
+                          value={gastosForm[campo]}
+                          disabled={d101.yaCerrado || soloLectura}
+                          onChange={(e: any) => setGastosForm(prev => ({ ...prev, [campo]: Math.max(0, parseFloat(e.target.value) || 0) }))}
+                          className="tabular-nums"
+                        />
+                      </div>
+                    ))}
                   </div>
-                )}
+                  {!soloLectura && !d101.yaCerrado && (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button
+                        onClick={handleGuardarGastos}
+                        disabled={guardandoGastos || !gastosSinGuardar}
+                      >
+                        {guardandoGastos ? 'Guardando…' : 'Guardar gastos y recalcular'}
+                      </Button>
+                      {gastosSinGuardar && <span role="status" className="text-xs font-semibold text-warning">Hay cambios sin guardar: el impuesto mostrado aún no los incluye.</span>}
+                    </div>
+                  )}
+                </CardBody>
+              </Card>
+
+              <div className="p-5 bg-danger-soft border border-danger/25 rounded-card">
+                <span className="text-xs font-semibold text-danger uppercase tracking-wider block">Impuesto de renta estimado</span>
+                <span className="text-display font-bold text-danger tabular-nums block mt-1">{colones(d101.impuestoRenta)}</span>
+                {d101.referenciaTramos && <span className="block text-xs text-danger mt-1">Tramos: {d101.referenciaTramos}</span>}
               </div>
 
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl">
-                <span className="text-[11px] font-bold text-rose-800 uppercase block">Impuesto de renta estimado</span>
-                <span className="text-lg font-bold text-rose-900 tabular-nums">{colones(d101.impuestoRenta)}</span>
-                {d101.referenciaTramos && <span className="block text-[11px] text-rose-800 mt-0.5">Tramos: {d101.referenciaTramos}</span>}
-              </div>
-
-              <details className="text-[11px] text-slate-600" open={d101.tramos.length > 0 && d101.tramos[0].startsWith('No hay')}>
-                <summary className="cursor-pointer font-semibold text-slate-700 min-h-9 flex items-center">Ver desglose por tramos</summary>
+              <details className="text-xs text-fg-muted" open={d101.tramos.length > 0 && d101.tramos[0].startsWith('No hay')}>
+                <summary className="cursor-pointer font-semibold text-fg min-h-10 flex items-center">Ver desglose por tramos</summary>
                 <ul className="mt-2 space-y-1 list-disc list-inside">
                   {d101.tramos.map((t, i) => <li key={i}>{t}</li>)}
                 </ul>
               </details>
 
-              <p className="text-[11px] text-slate-500">{d101.cantidadFacturas} factura(s){d101.cantidadNotasCredito != null ? ` · ${d101.cantidadNotasCredito} nota(s) de crédito` : ''} · {d101.cantidadNotasDebito} nota(s) de débito emitidas en {d101.anio}.</p>
+              <p className="text-xs text-fg-muted">{d101.cantidadFacturas} factura(s){d101.cantidadNotasCredito != null ? ` · ${d101.cantidadNotasCredito} nota(s) de crédito` : ''} · {d101.cantidadNotasDebito} nota(s) de débito emitidas en {d101.anio}.</p>
 
               {!soloLectura && !d101.yaCerrado && (
-                <button
-                  type="button"
+                <Button
                   onClick={handleCerrarD101}
                   disabled={cerrandoD101 || gastosSinGuardar}
                   title={gastosSinGuardar ? 'Guarde primero los gastos' : undefined}
-                  className="min-h-10 flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white px-3 rounded-lg text-xs font-semibold disabled:opacity-50"
+                  icon={<Lock className="w-4 h-4" aria-hidden="true" />}
                 >
-                  <Lock className="w-3.5 h-3.5" />
                   {cerrandoD101 ? 'Presentando...' : 'Presentar Liquidación Anual'}
-                </button>
+                </Button>
               )}
             </>
           )}
@@ -421,34 +421,39 @@ export default function ReportesFiscales({ company, soloLectura = false }: Repor
       )}
 
       {subTab === 'historial' && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="flex gap-1.5" role="group" aria-label="Tipo de cierre">
             {(['D104', 'D101'] as const).map(t => (
-              <button key={t} type="button" onClick={() => setHistorialTipo(t)} aria-pressed={historialTipo === t} className={`min-h-9 px-3 rounded-lg text-[11px] font-bold ${historialTipo === t ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>{t === 'D104' ? 'D-104 (IVA)' : 'D-101 (Renta)'}</button>
+              <button key={t} type="button" onClick={() => setHistorialTipo(t)} aria-pressed={historialTipo === t} className={`min-h-10 px-4 rounded-control text-xs font-semibold transition-colors ${historialTipo === t ? 'bg-brand-solid text-brand-fg shadow-xs' : 'bg-surface-muted text-fg-muted hover:bg-border hover:text-fg'}`}>{t === 'D104' ? 'D-104 (IVA)' : 'D-101 (Renta)'}</button>
             ))}
           </div>
-          {cargandoHistorial && <p className="text-xs text-slate-500 text-center py-6">Cargando...</p>}
-          {!cargandoHistorial && cierres.length === 0 && (
-            <p className="text-slate-500 text-xs text-center py-6 flex flex-col items-center gap-1.5">
-              <Archive className="w-5 h-5 text-slate-300" />
-              Sin cierres {historialTipo} declarados todavía.
-            </p>
+          {cargandoHistorial && (
+            <div role="status" aria-label="Cargando" className="space-y-2">
+              <Skeleton className="h-16" /><Skeleton className="h-16" />
+            </div>
           )}
-          <div className="space-y-1.5">
-            {cierres.map(c => (
-              <div key={c.id} className="p-2.5 bg-white border border-slate-200 rounded-lg flex items-center justify-between">
-                <div>
-                  <span className="font-semibold text-slate-800 text-xs block">Período {periodoLegible(c.periodo)}</span>
-                  <span className="text-[11px] text-slate-500">Cerrado el {new Date(c.creadoEn).toLocaleString('es-CR')}</span>
+          {!cargandoHistorial && cierres.length === 0 && (
+            <Card>
+              <EmptyState icon={<Archive />} title="Sin cierres" description={`Sin cierres ${historialTipo} declarados todavía.`} />
+            </Card>
+          )}
+          {cierres.length > 0 && (
+            <Card className="divide-y divide-border">
+              {cierres.map(c => (
+                <div key={c.id} className="p-4 flex items-center justify-between gap-3">
+                  <div>
+                    <span className="font-semibold text-fg text-body block">Período {periodoLegible(c.periodo)}</span>
+                    <span className="text-xs text-fg-muted">Cerrado el {new Date(c.creadoEn).toLocaleString('es-CR')}</span>
+                  </div>
+                  <span className="text-body font-semibold text-fg tabular-nums text-right">
+                    {c.tipo === 'D104'
+                      ? `${(c.datos as ReporteD104).saldoAPagar >= 0 ? 'A pagar' : 'A favor'} ${colones(Math.abs((c.datos as ReporteD104).saldoAPagar))}`
+                      : `Renta ${colones((c.datos as ReporteD101).impuestoRenta)}`}
+                  </span>
                 </div>
-                <span className="text-xs font-bold text-slate-700 tabular-nums text-right">
-                  {c.tipo === 'D104'
-                    ? `${(c.datos as ReporteD104).saldoAPagar >= 0 ? 'A pagar' : 'A favor'} ${colones(Math.abs((c.datos as ReporteD104).saldoAPagar))}`
-                    : `Renta ${colones((c.datos as ReporteD101).impuestoRenta)}`}
-                </span>
-              </div>
-            ))}
-          </div>
+              ))}
+            </Card>
+          )}
         </div>
       )}
     </div>

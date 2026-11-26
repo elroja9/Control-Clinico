@@ -1,8 +1,12 @@
 import { Patient, Consultation, Company, NotificationLog, Servicio, Factura } from '../data/mockData';
-import { Printer, Download, Share2, Mail, CheckCircle2, Sliders, Calendar, User, Info, Heart, Dumbbell, RefreshCw, Receipt, MapPin, ArrowLeft } from 'lucide-react';
+import { Printer, CheckCircle2, Sliders, Calendar, Heart, Dumbbell, RefreshCw, Receipt, MapPin, ArrowLeft, Mail } from 'lucide-react';
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import FacturarModal from './FacturarModal';
 import { notify } from './ui/Feedback';
+import { Button } from './ui/Button';
+import { Badge } from './ui/Badge';
+import { cx } from './ui/cx';
 
 interface ReportViewProps {
   consultation: Consultation;
@@ -45,6 +49,53 @@ const DIRECCION_LABEL: Record<string, string> = {
 function gramosDesdeMacroPct(pct: number | null, totalCalorias: number, kcalPorGramo: 4 | 9): number | null {
   if (pct == null) return null;
   return Math.round((pct / 100) * totalCalorias / kcalPorGramo);
+}
+
+/** Título de sección del documento; usa el color de la clínica (dato, no token fijo). */
+function SectionHeading({ icon, color, children }: { icon?: ReactNode; color: string; children: ReactNode }) {
+  return (
+    <h4 className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-1.5 break-after-avoid" style={{ color }}>
+      {icon}
+      {children}
+    </h4>
+  );
+}
+
+/** Dato destacado: etiqueta pequeña y valor. */
+function Metric({ label, value, tone, compact }: { label: string; value: ReactNode; tone?: 'danger' | 'success' | 'brand'; compact?: boolean }) {
+  return (
+    <div className="rounded-card border border-border bg-surface-muted/60 p-3 text-center break-inside-avoid print:bg-transparent">
+      <span className="text-caption text-fg-muted block">{label}</span>
+      <span
+        className={cx(
+          'block font-semibold',
+          compact ? 'text-sm text-fg' : 'text-lg tracking-tight',
+          !compact && (tone === 'danger' ? 'text-danger' : tone === 'success' ? 'text-success' : tone === 'brand' ? 'text-brand-ink' : 'text-fg')
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+/** Bloque de texto clínico con encabezado. */
+function TextBlock({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={cx('rounded-card border border-border bg-surface-muted/60 p-3.5 text-xs break-inside-avoid print:bg-transparent', className)}>
+      <span className="font-semibold text-fg-muted block mb-1">{label}</span>
+      <p className="text-fg leading-relaxed">{children}</p>
+    </div>
+  );
+}
+
+function MealRow({ label, accent, children }: { label: string; accent: string; children: ReactNode }) {
+  return (
+    <div className={cx('rounded-card bg-surface-muted/60 p-3 border border-border border-l-4 flex items-start gap-3 text-xs break-inside-avoid print:bg-transparent', accent)}>
+      <div className="font-semibold text-fg-muted w-24 shrink-0">{label}</div>
+      <div className="text-fg">{children}</div>
+    </div>
+  );
 }
 
 export default function ReportView({ consultation, patient, company, servicios, facturas, onClose, onNotificationSent, onConsultationUpdated, onCrearFactura, onVerificarEstadoFactura }: ReportViewProps) {
@@ -118,277 +169,211 @@ export default function ReportView({ consultation, patient, company, servicios, 
     return 'Leve / Tolerable';
   };
 
+  const color = company.colorPrimario;
+
   return (
-    <div className="bg-slate-50 min-h-screen p-4 sm:p-6 print:bg-white print:p-0">
-      
-      {/* Top action toolbar - hidden in Print */}
-      <div className="max-w-4xl mx-auto mb-6 bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
+    <div className="bg-bg min-h-screen p-4 sm:p-6 print:bg-white print:p-0 print:min-h-0">
+
+      {/* Barra de acciones: oculta al imprimir */}
+      <div className="max-w-4xl mx-auto mb-6 bg-surface rounded-card border border-border shadow-xs p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
         <div className="flex items-center gap-3 min-w-0">
-          <button
-            type="button"
-            onClick={onClose}
-            className="min-h-10 min-w-10 shrink-0 flex items-center justify-center gap-1.5 px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold border border-slate-200 transition-colors"
-            aria-label="Volver a la lista"
-          >
-            <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+          <Button variant="outline" size="sm" onClick={onClose} aria-label="Volver a la lista" icon={<ArrowLeft className="w-4 h-4" aria-hidden="true" />}>
             <span className="hidden sm:inline">Volver</span>
-          </button>
+          </Button>
           <div className="min-w-0">
-            <h2 className="text-sm font-bold text-slate-900">Reporte de la consulta</h2>
-            <p className="text-xs text-slate-600">Imprima, envíe por correo o facture esta consulta</p>
+            <h2 className="text-body font-semibold text-fg">Reporte de la consulta</h2>
+            <p className="text-xs text-fg-muted">Imprima, envíe por correo o facture esta consulta</p>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2 text-xs items-center w-full sm:w-auto">
-          <span className={`font-bold px-2.5 py-1.5 rounded-xl border ${
-            estadoActual === 'CERRADA'
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-              : 'bg-amber-50 border-amber-200 text-amber-700'
-          }`}>
+        <div className="flex flex-wrap gap-2 items-center w-full sm:w-auto">
+          <Badge tone={estadoActual === 'CERRADA' ? 'success' : 'warning'} className="px-2.5 py-1 text-xs">
             {estadoActual}
-          </span>
-          <button
-            type="button"
+          </Badge>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleToggleEstado}
             disabled={cambiandoEstado}
-            className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3 rounded-xl border border-slate-200 transition-colors flex items-center gap-1.5 disabled:opacity-60"
+            icon={<CheckCircle2 className="w-4 h-4" aria-hidden="true" />}
           >
-            <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
             {cambiandoEstado ? 'Guardando…' : estadoActual === 'CERRADA' ? 'Reabrir consulta' : 'Marcar como cerrada'}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={sendClientEmail}
             disabled={isSending}
-            className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3 rounded-xl border border-slate-200 transition-colors flex items-center gap-1.5 disabled:opacity-60"
+            icon={isSending ? <RefreshCw className="w-4 h-4 animate-spin" aria-hidden="true" /> : emailSent ? <CheckCircle2 className="w-4 h-4 text-success" aria-hidden="true" /> : <Mail className="w-4 h-4" aria-hidden="true" />}
           >
-            {isSending ? <RefreshCw className="w-4 h-4 animate-spin" aria-hidden="true" /> : emailSent ? <CheckCircle2 className="w-4 h-4 text-emerald-600" aria-hidden="true" /> : <Mail className="w-4 h-4" aria-hidden="true" />}
             <span aria-live="polite">{isSending ? 'Enviando…' : emailSent ? 'Correo enviado' : 'Enviar por correo'}</span>
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => setFacturando(true)}
             disabled={!!facturaExistente}
             title={facturaExistente ? `Ya facturada (${facturaExistente.consecutivo})` : undefined}
-            className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3 rounded-xl border border-slate-200 transition-colors flex items-center gap-1.5 disabled:opacity-60"
+            icon={<Receipt className="w-4 h-4" aria-hidden="true" />}
           >
-            <Receipt className="w-4 h-4" aria-hidden="true" />
             {facturaExistente ? `Facturada (${facturaExistente.consecutivo})` : 'Facturar'}
-          </button>
-          <button
-            type="button"
-            onClick={triggerPrint}
-            className="min-h-10 text-white font-semibold px-4 rounded-xl shadow-md flex items-center gap-1.5 hover:brightness-110 transition-[filter]"
-            style={{ backgroundColor: company.colorPrimario }}
-          >
-            <Printer className="w-4 h-4" aria-hidden="true" />
+          </Button>
+          <Button size="sm" onClick={triggerPrint} icon={<Printer className="w-4 h-4" aria-hidden="true" />}>
             Imprimir / PDF
-          </button>
+          </Button>
         </div>
       </div>
 
-      {/* Main clinical document */}
-      <div className="max-w-4xl mx-auto bg-white rounded-2xl border border-slate-200 shadow-md p-6 sm:p-8 space-y-6 print:border-none print:shadow-none print:p-0">
-        
-        {/* Header containing custom Company values */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b-2 pb-6 gap-4" style={{ borderColor: company.colorPrimario }}>
+      {/* Documento clínico */}
+      <div className="max-w-4xl mx-auto bg-surface rounded-panel border border-border shadow-sm p-6 sm:p-10 space-y-6 print:max-w-none print:rounded-none print:border-none print:shadow-none print:p-0 print:space-y-5 print:text-black [print-color-adjust:exact] [-webkit-print-color-adjust:exact]">
+
+        {/* Encabezado con datos de la clínica */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b-2 pb-6 gap-4 break-inside-avoid" style={{ borderColor: color }}>
           <div className="flex items-center gap-4">
             <img
               src={company.logoUrl}
               alt={company.nombreComercial}
-              className="w-16 h-16 object-cover rounded-xl border border-slate-200 shadow-xs"
+              className="w-16 h-16 object-cover rounded-card border border-border"
               referrerPolicy="no-referrer"
             />
             <div>
-              <h2 className="text-2xl font-bold tracking-tight text-slate-900">{company.nombreComercial}</h2>
-              <p className="text-xs text-slate-500 font-mono mt-0.5">{company.razonSocial}</p>
-              <p className="text-[11px] text-slate-500 font-mono">ID Hacienda: {company.identificacion} | Cédula Jurídica</p>
+              <h2 className="text-title font-semibold tracking-tight text-fg">{company.nombreComercial}</h2>
+              <p className="text-xs text-fg-muted mt-0.5">{company.razonSocial}</p>
+              <p className="text-caption text-fg-muted">ID Hacienda: {company.identificacion} | Cédula Jurídica</p>
             </div>
           </div>
 
-          <div className="text-right sm:text-right font-mono text-xs text-slate-500">
-            <span className="block font-bold" style={{ color: company.colorPrimario }}>REPORTE CLÍNICO INTEGRADO</span>
+          <div className="sm:text-right text-xs text-fg-muted">
+            <span className="block font-bold tracking-wide" style={{ color }}>REPORTE CLÍNICO INTEGRADO</span>
             <span className="block mt-1">Fecha: {consultation.fecha}</span>
             <span className="block">Folio Consulta: #{consultation.id.toString().slice(-6)}</span>
-            <span className="block text-[11px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md mt-1 inline-block">
+            <span className="inline-block text-caption bg-surface-muted text-fg-muted border border-border px-2 py-0.5 rounded-md mt-1.5 print:bg-transparent">
               {consultation.tipo === 'Nutrición' ? 'Especialidad: Nutrición Humana' : 'Especialidad: Fisioterapia y Kinesiología'}
             </span>
           </div>
         </div>
 
-        {/* Patient credentials info card */}
-        <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/60 text-xs sm:text-sm">
-          <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-2">Datos del Paciente</span>
+        {/* Datos del paciente */}
+        <div className="bg-surface-muted/60 rounded-card p-4 border border-border text-xs sm:text-sm break-inside-avoid print:bg-transparent">
+          <span className="text-caption font-bold text-fg-muted uppercase tracking-wider block mb-2">Datos del Paciente</span>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
-              <span className="text-slate-500 block text-[11px]">Paciente:</span>
-              <span className="font-bold text-slate-800 block">{patient.nombreCompleto}</span>
+              <span className="text-fg-muted block text-caption">Paciente:</span>
+              <span className="font-semibold text-fg block">{patient.nombreCompleto}</span>
             </div>
             <div>
-              <span className="text-slate-500 block text-[11px]">Identificación:</span>
-              <span className="font-semibold text-slate-800 block font-mono">{patient.identificacion}</span>
+              <span className="text-fg-muted block text-caption">Identificación:</span>
+              <span className="font-semibold text-fg block">{patient.identificacion}</span>
             </div>
             <div>
-              <span className="text-slate-500 block text-[11px]">Edad / Contacto:</span>
-              <span className="font-semibold text-slate-800 block">{patient.edad} años | Tel: {patient.telefono}</span>
+              <span className="text-fg-muted block text-caption">Edad / Contacto:</span>
+              <span className="font-semibold text-fg block">{patient.edad} años | Tel: {patient.telefono}</span>
             </div>
             <div>
-              <span className="text-slate-500 block text-[11px]">Dirección:</span>
-              <span className="font-medium text-slate-700 block truncate" title={patient.otrasSenas}>{patient.otrasSenas}</span>
+              <span className="text-fg-muted block text-caption">Dirección:</span>
+              <span className="font-medium text-fg block break-words" title={patient.otrasSenas}>{patient.otrasSenas}</span>
             </div>
           </div>
         </div>
 
-        {/* Core clinical report section */}
-        <div className="space-y-6">
-          
+        {/* Cuerpo clínico */}
+        <div className="space-y-6 print:space-y-5">
+
           {/* Motivo */}
-          <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-200">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Motivo Principal del Encuentro</h4>
-            <p className="text-sm font-semibold text-slate-800">{consultation.motivo}</p>
+          <div className="bg-surface-muted/60 p-4 rounded-card border border-border break-inside-avoid print:bg-transparent">
+            <h4 className="text-xs font-bold text-fg-muted uppercase tracking-wider mb-1">Motivo Principal del Encuentro</h4>
+            <p className="text-sm font-semibold text-fg">{consultation.motivo}</p>
           </div>
 
-          {/* ================= REPORT FOR NUTRICION ================= */}
+          {/* ================= NUTRICIÓN ================= */}
           {consultation.tipo === 'Nutrición' && consultation.antropometria && (
-            <div className="space-y-6">
-              
-              {/* Antropometria chart / metrics */}
+            <div className="space-y-6 print:space-y-5">
+
               <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-1.5" style={{ color: company.colorPrimario }}>
-                  <Heart className="w-4 h-4" />
+                <SectionHeading color={color} icon={<Heart className="w-4 h-4" aria-hidden="true" />}>
                   Composición Corporal y Antropometría
-                </h4>
+                </SectionHeading>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                    <span className="text-[11px] text-slate-500 block">Peso Corporal</span>
-                    <span className="text-lg font-bold text-slate-900 block">{consultation.antropometria.peso} kg</span>
-                  </div>
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                    <span className="text-[11px] text-slate-500 block">IMC</span>
-                    <span className="text-lg font-bold text-slate-900 block">{consultation.antropometria.imc}</span>
-                  </div>
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                    <span className="text-[11px] text-slate-500 block">Grasa Corporal</span>
-                    <span className="text-lg font-bold text-rose-600 block">{consultation.antropometria.grasaCorporal}%</span>
-                  </div>
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                    <span className="text-[11px] text-slate-500 block">Masa Muscular</span>
-                    <span className="text-lg font-bold text-emerald-600 block">{consultation.antropometria.masaMuscular} kg</span>
-                  </div>
+                  <Metric label="Peso Corporal" value={`${consultation.antropometria.peso} kg`} />
+                  <Metric label="IMC" value={consultation.antropometria.imc} />
+                  <Metric label="Grasa Corporal" value={`${consultation.antropometria.grasaCorporal}%`} tone="danger" />
+                  <Metric label="Masa Muscular" value={`${consultation.antropometria.masaMuscular} kg`} tone="success" />
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
-                    <span className="text-[11px] text-slate-500 block">Grasa Visceral</span>
-                    <span className="text-sm font-semibold text-slate-800 block">Nivel {consultation.antropometria.grasaVisceral}</span>
-                  </div>
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
-                    <span className="text-[11px] text-slate-500 block">Masa Ósea</span>
-                    <span className="text-sm font-semibold text-slate-800 block">{consultation.antropometria.masaOsea} kg</span>
-                  </div>
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
-                    <span className="text-[11px] text-slate-500 block">Circunferencia Cintura</span>
-                    <span className="text-sm font-semibold text-slate-800 block">{consultation.antropometria.cintura} cm</span>
-                  </div>
-                  <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
-                    <span className="text-[11px] text-slate-500 block">Perímetro Abdominal</span>
-                    <span className="text-sm font-semibold text-slate-800 block">{consultation.antropometria.abdominal} cm</span>
-                  </div>
+                  <Metric compact label="Grasa Visceral" value={`Nivel ${consultation.antropometria.grasaVisceral}`} />
+                  <Metric compact label="Masa Ósea" value={`${consultation.antropometria.masaOsea} kg`} />
+                  <Metric compact label="Circunferencia Cintura" value={`${consultation.antropometria.cintura} cm`} />
+                  <Metric compact label="Perímetro Abdominal" value={`${consultation.antropometria.abdominal} cm`} />
                 </div>
               </div>
 
-              {/* Prescripción Calórica */}
+              {/* Prescripción calórica */}
               {consultation.dieta?.prescripcionCalorica && (
-                <div className="border-t border-slate-200 pt-5">
-                  <h4 className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-1.5" style={{ color: company.colorPrimario }}>
-                    <Sliders className="w-4 h-4" />
+                <div className="border-t border-border pt-5 break-inside-avoid">
+                  <SectionHeading color={color} icon={<Sliders className="w-4 h-4" aria-hidden="true" />}>
                     Prescripción Calórica
-                  </h4>
+                  </SectionHeading>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                      <span className="text-[11px] text-slate-500 block">Fórmula</span>
-                      <span className="text-sm font-bold text-slate-900 block">{FORMULA_LABEL[consultation.dieta.prescripcionCalorica.formula] || consultation.dieta.prescripcionCalorica.formula}</span>
-                    </div>
-                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                      <span className="text-[11px] text-slate-500 block">TMB</span>
-                      <span className="text-lg font-bold text-slate-900 block">{consultation.dieta.prescripcionCalorica.tmb} kcal</span>
-                    </div>
-                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                      <span className="text-[11px] text-slate-500 block">Objetivo</span>
-                      <span className="text-sm font-bold text-slate-900 block">{DIRECCION_LABEL[consultation.dieta.prescripcionCalorica.direccion] || consultation.dieta.prescripcionCalorica.direccion} {consultation.dieta.prescripcionCalorica.porcentaje}%</span>
-                    </div>
-                    <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                      <span className="text-[11px] text-slate-500 block">Presupuesto Calórico</span>
-                      <span className="text-lg font-bold text-teal-600 block">{consultation.dieta.totalCalorias} kcal</span>
-                    </div>
+                    <Metric compact label="Fórmula" value={FORMULA_LABEL[consultation.dieta.prescripcionCalorica.formula] || consultation.dieta.prescripcionCalorica.formula} />
+                    <Metric label="TMB" value={`${consultation.dieta.prescripcionCalorica.tmb} kcal`} />
+                    <Metric compact label="Objetivo" value={`${DIRECCION_LABEL[consultation.dieta.prescripcionCalorica.direccion] || consultation.dieta.prescripcionCalorica.direccion} ${consultation.dieta.prescripcionCalorica.porcentaje}%`} />
+                    <Metric label="Presupuesto Calórico" value={`${consultation.dieta.totalCalorias} kcal`} tone="brand" />
                   </div>
                   {consultation.dieta.macros && (
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
-                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
-                        <span className="text-[11px] text-slate-500 block">Carbohidratos</span>
-                        <span className="text-sm font-semibold text-slate-800 block">
+                      <Metric
+                        compact
+                        label="Carbohidratos"
+                        value={<>
                           {consultation.dieta.macros.carbohidratosPct != null ? `${consultation.dieta.macros.carbohidratosPct}%` : '—'}
                           {consultation.dieta.macros.carbohidratosPct != null && ` (${gramosDesdeMacroPct(consultation.dieta.macros.carbohidratosPct, consultation.dieta.totalCalorias, 4)} g)`}
-                        </span>
-                      </div>
-                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
-                        <span className="text-[11px] text-slate-500 block">Proteínas</span>
-                        <span className="text-sm font-semibold text-slate-800 block">
+                        </>}
+                      />
+                      <Metric
+                        compact
+                        label="Proteínas"
+                        value={<>
                           {consultation.dieta.macros.proteinasPct != null ? `${consultation.dieta.macros.proteinasPct}%` : '—'}
                           {consultation.dieta.macros.proteinasPct != null && ` (${gramosDesdeMacroPct(consultation.dieta.macros.proteinasPct, consultation.dieta.totalCalorias, 4)} g)`}
-                        </span>
-                      </div>
-                      <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-center">
-                        <span className="text-[11px] text-slate-500 block">Grasas</span>
-                        <span className="text-sm font-semibold text-slate-800 block">
+                        </>}
+                      />
+                      <Metric
+                        compact
+                        label="Grasas"
+                        value={<>
                           {consultation.dieta.macros.grasasPct != null ? `${consultation.dieta.macros.grasasPct}%` : '—'}
                           {consultation.dieta.macros.grasasPct != null && ` (${gramosDesdeMacroPct(consultation.dieta.macros.grasasPct, consultation.dieta.totalCalorias, 9)} g)`}
-                        </span>
-                      </div>
+                        </>}
+                      />
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Diet Plan Schedule */}
+              {/* Plan alimentario */}
               {consultation.dieta && (
-                <div className="border-t border-slate-200 pt-5">
-                  <h4 className="text-xs font-bold uppercase tracking-wider mb-4 flex items-center gap-1.5" style={{ color: company.colorPrimario }}>
-                    <Calendar className="w-4 h-4" />
+                <div className="border-t border-border pt-5">
+                  <SectionHeading color={color} icon={<Calendar className="w-4 h-4" aria-hidden="true" />}>
                     Plan Alimentario Recomendado ({consultation.dieta.totalCalorias} kcal)
-                  </h4>
+                  </SectionHeading>
                   <div className="space-y-3">
-                    <div className="bg-slate-50 rounded-xl p-3 border-l-4 border-l-orange-500 flex items-start gap-4 text-xs">
-                      <div className="font-bold text-slate-700 w-24 shrink-0">Desayuno:</div>
-                      <div className="text-slate-800">{consultation.dieta.desayuno}</div>
-                    </div>
+                    <MealRow label="Desayuno:" accent="border-l-warning">{consultation.dieta.desayuno}</MealRow>
                     {(consultation.dieta.meriendaManana || consultation.dieta.meriendaTarde) && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {consultation.dieta.meriendaManana && (
-                          <div className="bg-slate-50 rounded-xl p-3 border-l-4 border-l-teal-500 flex items-start gap-3 text-xs">
-                            <div className="font-bold text-slate-700 w-16 shrink-0">Merienda AM:</div>
-                            <div className="text-slate-800">{consultation.dieta.meriendaManana}</div>
-                          </div>
+                          <MealRow label="Merienda AM:" accent="border-l-brand">{consultation.dieta.meriendaManana}</MealRow>
                         )}
                         {consultation.dieta.meriendaTarde && (
-                          <div className="bg-slate-50 rounded-xl p-3 border-l-4 border-l-teal-500 flex items-start gap-3 text-xs">
-                            <div className="font-bold text-slate-700 w-16 shrink-0">Merienda PM:</div>
-                            <div className="text-slate-800">{consultation.dieta.meriendaTarde}</div>
-                          </div>
+                          <MealRow label="Merienda PM:" accent="border-l-brand">{consultation.dieta.meriendaTarde}</MealRow>
                         )}
                       </div>
                     )}
-                    <div className="bg-slate-50 rounded-xl p-3 border-l-4 border-l-teal-600 flex items-start gap-4 text-xs">
-                      <div className="font-bold text-slate-700 w-24 shrink-0">Almuerzo:</div>
-                      <div className="text-slate-800">{consultation.dieta.almuerzo}</div>
-                    </div>
-                    <div className="bg-slate-50 rounded-xl p-3 border-l-4 border-l-indigo-500 flex items-start gap-4 text-xs">
-                      <div className="font-bold text-slate-700 w-24 shrink-0">Cena:</div>
-                      <div className="text-slate-800">{consultation.dieta.cena}</div>
-                    </div>
+                    <MealRow label="Almuerzo:" accent="border-l-brand-solid">{consultation.dieta.almuerzo}</MealRow>
+                    <MealRow label="Cena:" accent="border-l-info">{consultation.dieta.cena}</MealRow>
                     {consultation.dieta.indicaciones && (
-                      <div className="bg-orange-50/50 rounded-xl p-4 border border-orange-100 text-xs">
-                        <span className="font-bold text-orange-900 block mb-1">Recomendaciones Nutricionales del Profesional</span>
-                        <p className="text-orange-850 leading-relaxed">{consultation.dieta.indicaciones}</p>
+                      <div className="bg-warning-soft rounded-card p-4 border border-warning/20 text-xs break-inside-avoid">
+                        <span className="font-semibold text-warning block mb-1">Recomendaciones Nutricionales del Profesional</span>
+                        <p className="text-fg leading-relaxed">{consultation.dieta.indicaciones}</p>
                       </div>
                     )}
                   </div>
@@ -397,136 +382,104 @@ export default function ReportView({ consultation, patient, company, servicios, 
             </div>
           )}
 
-          {/* ================= REPORT FOR FISIOTERAPIA ================= */}
+          {/* ================= FISIOTERAPIA ================= */}
           {consultation.tipo === 'Fisioterapia' && consultation.fisioterapia && (
-            <div className="space-y-6">
-              
-              {/* Pain Map & EVA report details */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-t border-slate-200 pt-5 text-xs">
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                  <span className="text-[11px] text-slate-500 block uppercase font-bold mb-1">Foco de Dolor</span>
-                  <span className="text-sm font-extrabold text-slate-800 uppercase flex items-center justify-center gap-1"><MapPin className="w-4 h-4 text-rose-600" aria-hidden="true" />{consultation.fisioterapia.zonaDolor}</span>
+            <div className="space-y-6 print:space-y-5">
+
+              {/* Mapa de dolor y EVA */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 border-t border-border pt-5 text-xs">
+                <div className="bg-surface-muted/60 p-3 rounded-card border border-border text-center break-inside-avoid print:bg-transparent">
+                  <span className="text-caption text-fg-muted block uppercase font-bold mb-1">Foco de Dolor</span>
+                  <span className="text-sm font-bold text-fg uppercase flex items-center justify-center gap-1"><MapPin className="w-4 h-4 text-danger" aria-hidden="true" />{consultation.fisioterapia.zonaDolor}</span>
                 </div>
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                  <span className="text-[11px] text-slate-500 block uppercase font-bold mb-1">Escala de Dolor EVA</span>
-                  <span className="text-lg font-extrabold text-rose-600 block">{consultation.fisioterapia.evaDolor} de 10</span>
-                  <span className="text-[11px] font-bold text-slate-500 uppercase">{getEvaLabel(consultation.fisioterapia.evaDolor)}</span>
+                <div className="bg-surface-muted/60 p-3 rounded-card border border-border text-center break-inside-avoid print:bg-transparent">
+                  <span className="text-caption text-fg-muted block uppercase font-bold mb-1">Escala de Dolor EVA</span>
+                  <span className="text-lg font-bold text-danger block">{consultation.fisioterapia.evaDolor} de 10</span>
+                  <span className="text-caption font-bold text-fg-muted uppercase">{getEvaLabel(consultation.fisioterapia.evaDolor)}</span>
                 </div>
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/60 text-center">
-                  <span className="text-[11px] text-slate-500 block uppercase font-bold mb-1">Tipo de Dolor</span>
-                  <span className="text-sm font-semibold text-slate-800 block">{consultation.fisioterapia.tipoDolor}</span>
+                <div className="bg-surface-muted/60 p-3 rounded-card border border-border text-center break-inside-avoid print:bg-transparent">
+                  <span className="text-caption text-fg-muted block uppercase font-bold mb-1">Tipo de Dolor</span>
+                  <span className="text-sm font-semibold text-fg block">{consultation.fisioterapia.tipoDolor}</span>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <span className="font-bold text-slate-500 block mb-1">Factores que empeoran (Agravantes):</span>
-                  <p className="text-slate-800">{consultation.fisioterapia.factoresAgravantes}</p>
-                </div>
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <span className="font-bold text-slate-500 block mb-1">Factores que alivian (Atenuantes):</span>
-                  <p className="text-slate-800">{consultation.fisioterapia.factoresAtenuantes}</p>
-                </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <TextBlock label="Factores que empeoran (Agravantes):">{consultation.fisioterapia.factoresAgravantes}</TextBlock>
+                <TextBlock label="Factores que alivian (Atenuantes):">{consultation.fisioterapia.factoresAtenuantes}</TextBlock>
               </div>
 
-              {/* Physical examination summary */}
+              {/* Examen físico */}
               <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-1.5" style={{ color: company.colorPrimario }}>
-                  <Dumbbell className="w-4 h-4" />
+                <SectionHeading color={color} icon={<Dumbbell className="w-4 h-4" aria-hidden="true" />}>
                   Valoración de Examen Físico Funcional
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                    <span className="font-bold text-slate-600 block mb-1">Inspección de Postura</span>
-                    <p className="text-slate-800 leading-relaxed">{consultation.fisioterapia.posturaObservaciones}</p>
-                  </div>
-                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                    <span className="font-bold text-slate-600 block mb-1">Hallazgos a la Palpación</span>
-                    <p className="text-slate-800 leading-relaxed">{consultation.fisioterapia.palpacionHallazgos}</p>
-                  </div>
+                </SectionHeading>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <TextBlock label="Inspección de Postura">{consultation.fisioterapia.posturaObservaciones}</TextBlock>
+                  <TextBlock label="Hallazgos a la Palpación">{consultation.fisioterapia.palpacionHallazgos}</TextBlock>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 text-xs">
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                    <span className="font-bold text-slate-500 block mb-0.5">Rangos Movilidad (ROM)</span>
-                    <p className="text-slate-800 font-medium">{consultation.fisioterapia.romMedido}</p>
-                  </div>
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                    <span className="font-bold text-slate-500 block mb-0.5">Fuerza Daniels</span>
-                    <p className="text-slate-800 font-medium">{consultation.fisioterapia.fuerzaDaniels}</p>
-                  </div>
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                    <span className="font-bold text-slate-500 block mb-0.5">Pruebas Especiales</span>
-                    <p className="text-slate-800 font-medium">{consultation.fisioterapia.pruebasEspeciales}</p>
-                  </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+                  <TextBlock label="Rangos Movilidad (ROM)">{consultation.fisioterapia.romMedido}</TextBlock>
+                  <TextBlock label="Fuerza Daniels">{consultation.fisioterapia.fuerzaDaniels}</TextBlock>
+                  <TextBlock label="Pruebas Especiales">{consultation.fisioterapia.pruebasEspeciales}</TextBlock>
                 </div>
               </div>
 
-              {/* Prescription */}
-              <div className="border-t border-slate-200 pt-5">
-                <h4 className="text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-1.5" style={{ color: company.colorPrimario }}>
-                  <Calendar className="w-4 h-4" />
+              {/* Prescripción */}
+              <div className="border-t border-border pt-5">
+                <SectionHeading color={color} icon={<Calendar className="w-4 h-4" aria-hidden="true" />}>
                   Prescripción Terapéutica e Intervenciones
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 text-xs">
-                  <div className="bg-teal-50/20 p-3 rounded-xl border border-teal-100">
-                    <span className="font-bold text-teal-900 block mb-1">Agentes Físicos</span>
-                    <p className="text-teal-950">{consultation.fisioterapia.agentesFisicos}</p>
-                  </div>
-                  <div className="bg-teal-50/20 p-3 rounded-xl border border-teal-100">
-                    <span className="font-bold text-teal-900 block mb-1">Terapia Manual</span>
-                    <p className="text-teal-950">{consultation.fisioterapia.terapiaManual}</p>
-                  </div>
-                  <div className="bg-teal-50/20 p-3 rounded-xl border border-teal-100">
-                    <span className="font-bold text-teal-900 block mb-1">Ejercicio Terapéutico</span>
-                    <p className="text-teal-950">{consultation.fisioterapia.ejercicioTerapeutico}</p>
-                  </div>
+                </SectionHeading>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <TextBlock label="Agentes Físicos" className="bg-brand-soft border-brand/20">{consultation.fisioterapia.agentesFisicos}</TextBlock>
+                  <TextBlock label="Terapia Manual" className="bg-brand-soft border-brand/20">{consultation.fisioterapia.terapiaManual}</TextBlock>
+                  <TextBlock label="Ejercicio Terapéutico" className="bg-brand-soft border-brand/20">{consultation.fisioterapia.ejercicioTerapeutico}</TextBlock>
                 </div>
               </div>
 
-              {/* SOAP Evolution */}
-              <div className="bg-slate-900 text-white p-5 rounded-2xl space-y-4">
-                <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                  <span className="text-[11px] font-bold text-teal-400 uppercase tracking-wider">Nota SOAP Oficial de Terapia Física</span>
-                  <span className="text-[11px] text-slate-500 font-mono">Ciclo Sugerido: {consultation.fisioterapia.sesionesSugeridas} Sesiones</span>
+              {/* Evolución SOAP (tema claro: se imprime bien y mantiene contraste) */}
+              <div className="bg-surface-muted/60 border border-border p-5 rounded-card space-y-4 break-inside-avoid print:bg-transparent">
+                <div className="flex flex-wrap justify-between items-center gap-1 border-b border-border pb-2">
+                  <span className="text-caption font-bold text-brand-ink uppercase tracking-wider">Nota SOAP Oficial de Terapia Física</span>
+                  <span className="text-caption text-fg-muted">Ciclo Sugerido: {consultation.fisioterapia.sesionesSugeridas} Sesiones</span>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
-                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/60">
-                    <span className="text-rose-400 font-extrabold block mb-1">S (Subjetivo)</span>
-                    <p className="text-slate-300 leading-relaxed">{consultation.fisioterapia.soapSubjetivo}</p>
+                <div className="grid grid-cols-1 min-[480px]:grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="bg-surface p-3 rounded-control border border-border">
+                    <span className="text-danger font-bold block mb-1">S (Subjetivo)</span>
+                    <p className="text-fg leading-relaxed">{consultation.fisioterapia.soapSubjetivo}</p>
                   </div>
-                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/60">
-                    <span className="text-amber-400 font-extrabold block mb-1">O (Objetivo)</span>
-                    <p className="text-slate-300 leading-relaxed">{consultation.fisioterapia.soapObjetivo}</p>
+                  <div className="bg-surface p-3 rounded-control border border-border">
+                    <span className="text-warning font-bold block mb-1">O (Objetivo)</span>
+                    <p className="text-fg leading-relaxed">{consultation.fisioterapia.soapObjetivo}</p>
                   </div>
-                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/60">
-                    <span className="text-emerald-400 font-extrabold block mb-1">A (Análisis)</span>
-                    <p className="text-slate-300 leading-relaxed">{consultation.fisioterapia.soapAnalisis}</p>
+                  <div className="bg-surface p-3 rounded-control border border-border">
+                    <span className="text-success font-bold block mb-1">A (Análisis)</span>
+                    <p className="text-fg leading-relaxed">{consultation.fisioterapia.soapAnalisis}</p>
                   </div>
-                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/60">
-                    <span className="text-blue-400 font-extrabold block mb-1">P (Plan)</span>
-                    <p className="text-slate-300 leading-relaxed">{consultation.fisioterapia.soapPlan}</p>
+                  <div className="bg-surface p-3 rounded-control border border-border">
+                    <span className="text-info font-bold block mb-1">P (Plan)</span>
+                    <p className="text-fg leading-relaxed">{consultation.fisioterapia.soapPlan}</p>
                   </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Clinician's recommendations */}
+          {/* Recomendaciones del profesional */}
           {consultation.anotacionesGenerales && (
-            <div className="border-t border-slate-200 pt-5 text-xs">
-              <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Recomendaciones y Observaciones del Profesional</h4>
-              <p className="bg-slate-50 p-4 rounded-xl border border-slate-200 leading-relaxed text-slate-800 font-medium">
+            <div className="border-t border-border pt-5 text-xs break-inside-avoid">
+              <h4 className="text-xs font-bold text-fg-muted uppercase tracking-wider mb-2">Recomendaciones y Observaciones del Profesional</h4>
+              <p className="bg-surface-muted/60 p-4 rounded-card border border-border leading-relaxed text-fg font-medium print:bg-transparent">
                 {consultation.anotacionesGenerales}
               </p>
             </div>
           )}
         </div>
 
-        {/* Footer info containing CR electronic receipt signature indicator */}
-        <div className="border-t pt-6 flex flex-col sm:flex-row justify-between items-center text-[11px] text-slate-500 font-mono gap-3">
-          <div className="flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
+        {/* Pie con indicador de firma electrónica */}
+        <div className="border-t border-border pt-6 flex flex-col sm:flex-row justify-between items-center text-caption text-fg-muted gap-3 break-inside-avoid">
+          <div className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-success inline-block" aria-hidden="true"></span>
             <span>Firmado Digitalmente conforme a Resolución Hacienda Costa Rica GT-R-48</span>
           </div>
           <div>

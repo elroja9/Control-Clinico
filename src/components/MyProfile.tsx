@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { User } from '../data/mockData';
 import { MapPin, Clock, Save, Check, Copy, RefreshCw, CalendarSync } from 'lucide-react';
 import { loadGoogleMapsScript } from '../utils/loadGoogleMaps';
+import { Badge, Button, Card, CardBody, CardFooter, CardHeader, Field, Input, cx } from './ui';
+import { buttonSizes, buttonVariants } from './ui/Button';
 
 interface MyProfileProps {
   currentUser: User;
@@ -47,45 +49,53 @@ export default function MyProfile({ currentUser, onSaveUser }: MyProfileProps) {
   };
 
   return (
-    <div className="space-y-4 max-w-lg">
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 text-xs">
-      <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-3">
-        <MapPin className="w-5 h-5 text-slate-500" />
-        <div>
-          <h3 className="text-sm font-bold text-slate-800">Mi Perfil — Visitas a Domicilio</h3>
-          <p className="text-[11px] text-slate-500">Configura tu ubicación principal para que los pacientes puedan agendar visitas a domicilio contigo</p>
-        </div>
-      </div>
-
-      <form onSubmit={handleSave} className="space-y-3">
-        <div>
-          <label className="block text-slate-600 font-medium mb-1">Dirección Principal</label>
-          <input
-            id="mi-perfil-direccion-input"
-            type="text"
-            value={ubicacionDireccion}
-            onChange={(e) => setUbicacionDireccion(e.target.value)}
-            placeholder="Escriba su dirección exacta"
-            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start max-w-5xl">
+      <form onSubmit={handleSave}>
+        <Card>
+          <CardHeader
+            title={
+              <span className="inline-flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-brand-ink" aria-hidden="true" />
+                Visitas a domicilio
+              </span>
+            }
+            description="Configura tu ubicación principal para que los pacientes puedan agendar visitas a domicilio contigo."
           />
-        </div>
-        <div>
-          <label className="block text-slate-600 font-medium mb-1 flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Tiempo máximo de traslado aceptado (minutos)</label>
-          <input
-            type="number"
-            min={0}
-            value={maxTiempoTrasladoMinutos}
-            onChange={(e) => setMaxTiempoTrasladoMinutos(parseInt(e.target.value) || 0)}
-            className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-          />
-        </div>
-        <button type="submit" className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg font-semibold">
-          {guardado ? <Check className="w-3.5 h-3.5" aria-hidden="true" /> : <Save className="w-3.5 h-3.5" aria-hidden="true" />}
-          {guardado ? 'Guardado' : 'Guardar'}
-        </button>
+          <CardBody className="space-y-4">
+            <div>
+              <label htmlFor="mi-perfil-direccion-input" className="block text-xs font-semibold text-fg mb-1.5">Dirección principal</label>
+              <Input
+                id="mi-perfil-direccion-input"
+                type="text"
+                value={ubicacionDireccion}
+                onChange={(e) => setUbicacionDireccion(e.target.value)}
+                placeholder="Escriba su dirección exacta"
+                leadingIcon={<MapPin />}
+              />
+            </div>
+            <Field label="Tiempo máximo de traslado aceptado (minutos)">
+              <Input
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={maxTiempoTrasladoMinutos}
+                onChange={(e) => setMaxTiempoTrasladoMinutos(parseInt(e.target.value) || 0)}
+                leadingIcon={<Clock />}
+              />
+            </Field>
+          </CardBody>
+          <CardFooter>
+            <span role="status" className="sr-only">{guardado ? 'Perfil guardado' : ''}</span>
+            <Button
+              type="submit"
+              icon={guardado ? <Check className="w-4 h-4" aria-hidden="true" /> : <Save className="w-4 h-4" aria-hidden="true" />}
+            >
+              {guardado ? 'Guardado' : 'Guardar'}
+            </Button>
+          </CardFooter>
+        </Card>
       </form>
-    </div>
-    {currentUser.rol !== 'Contador' && <SincronizarCalendario />}
+      {currentUser.rol !== 'Contador' && <SincronizarCalendario />}
     </div>
   );
 }
@@ -160,87 +170,104 @@ function SincronizarCalendario() {
   const url = estado?.url;
   const urlWebcal = url ? url.replace(/^https?:\/\//, 'webcal://') : '';
   const urlGoogle = urlWebcal ? `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(urlWebcal)}` : '';
-  const botonSecundario = 'flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50';
+  // Enlaces con aspecto de botón (webcal / Google Calendar)
+  const enlaceBoton = cx(
+    'inline-flex items-center justify-center rounded-control font-semibold transition-colors text-center',
+    buttonVariants.outline,
+    buttonSizes.sm
+  );
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 text-xs">
-      <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-3">
-        <CalendarSync className="w-5 h-5 text-slate-500" aria-hidden="true" />
-        <div>
-          <h3 className="text-sm font-bold text-slate-800">Sincronizar con el calendario del teléfono</h3>
-          <p className="text-[11px] text-slate-500">Vea sus citas en Google Calendar (Android) o en el Calendario de iPhone/iPad</p>
-        </div>
-      </div>
+    <Card>
+      <CardHeader
+        title={
+          <span className="inline-flex items-center gap-2">
+            <CalendarSync className="w-5 h-5 text-brand-ink" aria-hidden="true" />
+            Sincronizar con el calendario del teléfono
+          </span>
+        }
+        description="Vea sus citas en Google Calendar (Android) o en el Calendario de iPhone/iPad."
+        actions={estado ? <Badge tone={estado.activo ? 'success' : 'neutral'}>{estado.activo ? 'Activa' : 'Inactiva'}</Badge> : undefined}
+      />
 
-      {error && <p role="alert" className="mb-3 text-rose-600">{error}</p>}
-
-      {cargando ? (
-        <p className="text-slate-500">Cargando…</p>
-      ) : !estado ? null : !estado.activo ? (
-        <button
-          type="button"
-          disabled={trabajando}
-          onClick={() => void enviar('generar')}
-          className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg font-semibold"
-        >
-          Activar sincronización
-        </button>
-      ) : (
-        <div className="space-y-3">
-          <div>
-            <label htmlFor="mi-calendario-url" className="block text-slate-600 font-medium mb-1">Enlace de suscripción (personal, no lo comparta)</label>
-            <div className="flex gap-2">
-              <input
-                id="mi-calendario-url"
-                type="text"
-                readOnly
-                value={url || ''}
-                onFocus={(e) => e.currentTarget.select()}
-                className="flex-1 min-w-0 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-              />
-              <button type="button" onClick={() => url && void copiar(url)} className={botonSecundario}>
-                {copiado ? <Check className="w-3.5 h-3.5" aria-hidden="true" /> : <Copy className="w-3.5 h-3.5" aria-hidden="true" />}
-                {copiado ? 'Copiado' : 'Copiar'}
-              </button>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <a href={urlWebcal} className={botonSecundario}>Abrir en iPhone/iPad</a>
-            <a href={urlGoogle} target="_blank" rel="noopener noreferrer" className={botonSecundario}>Agregar a Google Calendar (Android)</a>
-          </div>
-
-          <label className="flex items-start gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              role="switch"
-              checked={estado.nombreCompleto}
-              disabled={trabajando}
-              onChange={(e) => void enviar('generar', e.target.checked)}
-              className="mt-0.5"
-            />
-            <span>
-              <span className="block text-slate-700 font-medium">Mostrar nombre completo del paciente</span>
-              <span className="block text-[11px] text-slate-500">
-                Por defecto solo se muestran las iniciales. Si lo activa, el nombre y el teléfono del paciente quedarán en el calendario de su teléfono y en el de cualquier servicio (como Google) que lea este enlace. Las notas clínicas nunca se incluyen.
-              </span>
-            </span>
-          </label>
-
-          <p className="text-[11px] text-slate-500 leading-relaxed">
-            iPhone: toque “Abrir en iPhone” y confirme “Suscribirse”. Android: use “Agregar a Google Calendar” (requiere estar conectado a Google en el navegador) y active el calendario en la app Google Calendar. La actualización la controla cada calendario: en iPhone suele ser de 15 a 60 minutos; en Google, de algunas horas.
+      <CardBody className="space-y-4">
+        {error && (
+          <p role="alert" className="text-sm font-medium text-danger bg-danger-soft border border-danger/20 rounded-control px-3 py-2">
+            {error}
           </p>
+        )}
 
-          <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
-            <button type="button" disabled={trabajando} onClick={regenerar} className={botonSecundario}>
-              <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" /> Regenerar enlace
-            </button>
-            <button type="button" disabled={trabajando} onClick={desactivar} className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50">
-              Desactivar
-            </button>
-          </div>
-        </div>
+        {cargando ? (
+          <p className="text-sm text-fg-muted" role="status">Cargando…</p>
+        ) : !estado ? null : !estado.activo ? (
+          <Button disabled={trabajando} loading={trabajando} onClick={() => void enviar('generar')}>
+            Activar sincronización
+          </Button>
+        ) : (
+          <>
+            <div>
+              <label htmlFor="mi-calendario-url" className="block text-xs font-semibold text-fg mb-1.5">
+                Enlace de suscripción (personal, no lo comparta)
+              </label>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input
+                  id="mi-calendario-url"
+                  type="text"
+                  readOnly
+                  value={url || ''}
+                  onFocus={(e) => e.currentTarget.select()}
+                  wrapperClassName="flex-1 min-w-0"
+                  className="font-mono text-xs"
+                />
+                <Button
+                  variant="outline"
+                  onClick={() => url && void copiar(url)}
+                  icon={copiado ? <Check className="w-4 h-4" aria-hidden="true" /> : <Copy className="w-4 h-4" aria-hidden="true" />}
+                >
+                  {copiado ? 'Copiado' : 'Copiar'}
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <a href={urlWebcal} className={enlaceBoton}>Abrir en iPhone/iPad</a>
+              <a href={urlGoogle} target="_blank" rel="noopener noreferrer" className={enlaceBoton}>Agregar a Google Calendar (Android)</a>
+            </div>
+
+            <label className="flex items-start gap-3 rounded-control border border-border bg-surface-muted/50 p-3.5 cursor-pointer">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={estado.nombreCompleto}
+                disabled={trabajando}
+                onChange={(e) => void enviar('generar', e.target.checked)}
+                className="mt-0.5 w-5 h-5 shrink-0 accent-brand-solid"
+              />
+              <span>
+                <span className="block text-sm font-semibold text-fg">Mostrar nombre completo del paciente</span>
+                <span className="block text-xs text-fg-muted mt-0.5">
+                  Por defecto solo se muestran las iniciales. Si lo activa, el nombre y el teléfono del paciente quedarán en el calendario de su teléfono y en el de cualquier servicio (como Google) que lea este enlace. Las notas clínicas nunca se incluyen.
+                </span>
+              </span>
+            </label>
+
+            <p className="text-xs text-fg-muted leading-relaxed">
+              iPhone: toque “Abrir en iPhone” y confirme “Suscribirse”. Android: use “Agregar a Google Calendar” (requiere estar conectado a Google en el navegador) y active el calendario en la app Google Calendar. La actualización la controla cada calendario: en iPhone suele ser de 15 a 60 minutos; en Google, de algunas horas.
+            </p>
+          </>
+        )}
+      </CardBody>
+
+      {estado?.activo && (
+        <CardFooter className="justify-between flex-wrap">
+          <Button variant="outline" size="sm" disabled={trabajando} onClick={regenerar} icon={<RefreshCw className="w-4 h-4" aria-hidden="true" />}>
+            Regenerar enlace
+          </Button>
+          <Button variant="danger" size="sm" disabled={trabajando} onClick={desactivar}>
+            Desactivar
+          </Button>
+        </CardFooter>
       )}
-    </div>
+    </Card>
   );
 }

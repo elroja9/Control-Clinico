@@ -1,6 +1,14 @@
 import React, { useState } from 'react';
 import { Factura, Patient, Company, Servicio, NotificationLog } from '../data/mockData';
-import { Receipt, XCircle, FileMinus, FilePlus, AlertCircle, RefreshCw, Eye, Search } from 'lucide-react';
+import { Receipt, XCircle, FileMinus, FilePlus, AlertCircle, RefreshCw, Eye, Search, FileText, Clock } from 'lucide-react';
+import { PageHeader } from './ui/PageHeader';
+import { StatCard } from './ui/StatCard';
+import { Card } from './ui/Card';
+import { Badge, type BadgeTone } from './ui/Badge';
+import { Button } from './ui/Button';
+import { Input } from './ui/Input';
+import { Select } from './ui/Select';
+import { EmptyState } from './ui/EmptyState';
 import FacturaDetailView from './FacturaDetailView';
 import AjusteFacturaModal from './AjusteFacturaModal';
 import { notify } from './ui/Feedback';
@@ -21,14 +29,14 @@ interface FacturacionManagerProps {
   onReenviarCorreo: (idFactura: number) => Promise<NotificationLog>;
 }
 
-const ESTADO_ESTILO: Record<string, string> = {
-  FIRMADA: 'bg-slate-100 text-slate-700',
-  ENVIADA: 'bg-amber-100 text-amber-800',
-  ACEPTADA: 'bg-emerald-100 text-emerald-800',
-  RECHAZADA: 'bg-rose-100 text-rose-800',
-  ERROR: 'bg-rose-100 text-rose-800',
-  ANULADA: 'bg-slate-200 text-slate-700',
-  SIMULADA: 'bg-sky-100 text-sky-800'
+const ESTADO_TONO: Record<string, BadgeTone> = {
+  FIRMADA: 'neutral',
+  ENVIADA: 'warning',
+  ACEPTADA: 'success',
+  RECHAZADA: 'danger',
+  ERROR: 'danger',
+  ANULADA: 'neutral',
+  SIMULADA: 'info'
 };
 
 const MESES_ES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
@@ -182,101 +190,95 @@ export default function FacturacionManager({ facturas, patients, company, servic
     }
   };
 
-  const botonIcono = 'w-10 h-10 flex items-center justify-center rounded-lg transition-colors disabled:opacity-50';
+  const botonIcono = 'w-10 h-10 flex items-center justify-center rounded-control transition-colors disabled:opacity-50';
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5">
-      <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-3">
-        <Receipt className="w-5 h-5 text-slate-500" aria-hidden="true" />
-        <div>
-          <h3 className="text-sm font-bold text-slate-800">Facturación Electrónica</h3>
-          <p className="text-[11px] text-slate-600">Facturas y notas de crédito y débito transmitidas a Hacienda</p>
-        </div>
+    <div>
+      <PageHeader
+        title="Facturación electrónica"
+        description="Facturas y notas de crédito y débito transmitidas a Hacienda"
+      />
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <StatCard label="Ventas netas" value={colones(resumen.ventas)} icon={<Receipt />} delta={{ value: 'sin IVA, aceptadas' }} />
+        <StatCard label="IVA cobrado" value={colones(resumen.iva)} icon={<FileText />} delta={{ value: 'débito fiscal' }} />
+        <StatCard
+          label="Por resolver"
+          value={resumen.porResolver}
+          icon={<Clock />}
+          className={resumen.porResolver ? 'bg-warning-soft border-warning/30' : undefined}
+          delta={{ value: 'sin respuesta de Hacienda' }}
+        />
+        <StatCard
+          label="Rechazadas"
+          value={resumen.rechazadas}
+          icon={<AlertCircle />}
+          className={resumen.rechazadas ? 'bg-danger-soft border-danger/30' : undefined}
+          delta={{ value: 'corregir y reemitir', trend: resumen.rechazadas ? 'down' : 'neutral' }}
+        />
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-2 mb-3">
-        <div>
-          <label htmlFor="facturacion-mes" className="sr-only">Mes</label>
-          <select id="facturacion-mes" value={mes} onChange={(e) => setMes(e.target.value)} className="w-full sm:w-auto min-h-10 bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800 capitalize">
-            {meses.map(m => <option key={m} value={m}>{nombreMes(m)}{m === mesActual ? ' (actual)' : ''}</option>)}
-            <option value="">Todos los meses</option>
-          </select>
+      <Card>
+        <div className="flex flex-col sm:flex-row gap-2 p-4 border-b border-border">
+          <div className="sm:w-56">
+            <label htmlFor="facturacion-mes" className="sr-only">Mes</label>
+            <Select id="facturacion-mes" value={mes} onChange={(e: any) => setMes(e.target.value)} className="capitalize">
+              {meses.map(m => <option key={m} value={m}>{nombreMes(m)}{m === mesActual ? ' (actual)' : ''}</option>)}
+              <option value="">Todos los meses</option>
+            </Select>
+          </div>
+          <div className="flex-1">
+            <label htmlFor="facturacion-buscar" className="sr-only">Buscar por consecutivo o cliente</label>
+            <Input id="facturacion-buscar" type="search" leadingIcon={<Search />} value={busqueda} onChange={(e: any) => setBusqueda(e.target.value)} placeholder="Buscar por consecutivo o cliente…" />
+          </div>
         </div>
-        <div className="relative flex-1">
-          <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" aria-hidden="true" />
-          <label htmlFor="facturacion-buscar" className="sr-only">Buscar por consecutivo o cliente</label>
-          <input id="facturacion-buscar" type="search" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} placeholder="Buscar por consecutivo o cliente…" className="w-full min-h-10 bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-2.5 text-xs text-slate-800" />
-        </div>
-      </div>
 
-      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-        <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-          <dt className="text-[11px] font-bold text-slate-600 uppercase">Ventas netas</dt>
-          <dd className="text-sm font-bold text-slate-900 tabular-nums">{colones(resumen.ventas)}</dd>
-          <dd className="text-[11px] text-slate-600">sin IVA, aceptadas</dd>
-        </div>
-        <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-          <dt className="text-[11px] font-bold text-slate-600 uppercase">IVA cobrado</dt>
-          <dd className="text-sm font-bold text-slate-900 tabular-nums">{colones(resumen.iva)}</dd>
-          <dd className="text-[11px] text-slate-600">débito fiscal</dd>
-        </div>
-        <div className={`p-2.5 rounded-xl border ${resumen.porResolver ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
-          <dt className="text-[11px] font-bold text-slate-600 uppercase">Por resolver</dt>
-          <dd className="text-sm font-bold text-slate-900 tabular-nums">{resumen.porResolver}</dd>
-          <dd className="text-[11px] text-slate-600">sin respuesta de Hacienda</dd>
-        </div>
-        <div className={`p-2.5 rounded-xl border ${resumen.rechazadas ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200'}`}>
-          <dt className="text-[11px] font-bold text-slate-600 uppercase">Rechazadas</dt>
-          <dd className="text-sm font-bold text-slate-900 tabular-nums">{resumen.rechazadas}</dd>
-          <dd className="text-[11px] text-slate-600">corregir y reemitir</dd>
-        </div>
-      </dl>
+        {ordenadas.length === 0 && (
+          <EmptyState
+            icon={<Receipt />}
+            title={facturas.length === 0 ? 'Todavía no hay facturas' : 'Sin resultados'}
+            description={facturas.length === 0 ? 'Todavía no se ha emitido ninguna factura.' : 'No hay comprobantes con este filtro.'}
+          />
+        )}
 
-      {ordenadas.length === 0 && (
-        <p className="text-slate-600 text-xs text-center py-6">
-          {facturas.length === 0 ? 'Todavía no se ha emitido ninguna factura.' : 'No hay comprobantes con este filtro.'}
-        </p>
-      )}
-
-      <ul className="space-y-1.5">
+        <ul className="divide-y divide-border">
         {ordenadas.map(f => {
           const esNotaCredito = f.tipoDocumento === '03';
           const esNotaDebito = f.tipoDocumento === '02';
           const esNota = esNotaCredito || esNotaDebito;
           const tipoTexto = esNotaCredito ? 'Nota de Crédito' : esNotaDebito ? 'Nota de Débito' : 'Factura';
           return (
-            <li key={f.id} className="p-2.5 bg-white border border-slate-200 rounded-lg">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <span className="font-semibold text-slate-800 inline-flex items-center gap-1.5 text-xs">
-                    {esNotaCredito ? <FileMinus className="w-3.5 h-3.5 text-rose-600" aria-hidden="true" /> : esNotaDebito ? <FilePlus className="w-3.5 h-3.5 text-amber-700" aria-hidden="true" /> : <Receipt className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />}
+            <li key={f.id} className="p-4 hover:bg-surface-muted/40 transition-colors">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <span className="font-semibold text-fg inline-flex items-center gap-1.5 text-body">
+                    {esNotaCredito ? <FileMinus className="w-4 h-4 text-danger" aria-hidden="true" /> : esNotaDebito ? <FilePlus className="w-4 h-4 text-warning" aria-hidden="true" /> : <Receipt className="w-4 h-4 text-fg-subtle" aria-hidden="true" />}
                     {tipoTexto} {f.consecutivo}
                   </span>
-                  <span className="text-[11px] text-slate-600 block truncate">
-                    {nombrePaciente(f.idPaciente, f)} &middot; {new Date(f.fechaEmision).toLocaleString('es-CR')} &middot;{' '}
-                    <span className={`font-semibold tabular-nums ${esNotaCredito ? 'text-rose-700' : 'text-slate-800'}`}>{esNotaCredito ? '−' : ''}{colones(f.total)}</span>
+                  <span className="text-xs text-fg-muted block truncate">
+                    {nombrePaciente(f.idPaciente, f)} &middot; {new Date(f.fechaEmision).toLocaleString('es-CR')}
                     {f.condicionVenta === '02' ? ' · Crédito' : !esNotaCredito ? ` · ${MEDIO_PAGO_HACIENDA[f.medioPago] || f.medioPago}` : ''}
                     {!esNota && f.montoRecibido != null && ` · Vuelto ${colones(f.montoRecibido - f.total)}`}
                   </span>
                   {esNota && f.idFacturaReferencia != null && (
-                    <span className="text-[11px] text-slate-600 block">{esNotaCredito ? 'Ajusta' : 'Debita'} factura {referenciaFactura(f.idFacturaReferencia)}{f.motivoAnulacion ? ` — ${f.motivoAnulacion}` : ''}</span>
+                    <span className="text-xs text-fg-muted block">{esNotaCredito ? 'Ajusta' : 'Debita'} factura {referenciaFactura(f.idFacturaReferencia)}{f.motivoAnulacion ? ` — ${f.motivoAnulacion}` : ''}</span>
                   )}
                   {!esNota && f.estado === 'ANULADA' && f.motivoAnulacion && (
-                    <span className="text-[11px] text-slate-600 block truncate" title={f.motivoAnulacion}>Anulada — {f.motivoAnulacion}</span>
+                    <span className="text-xs text-fg-muted block truncate" title={f.motivoAnulacion}>Anulada — {f.motivoAnulacion}</span>
                   )}
                   {f.mensajeError && f.estado !== 'SIMULADA' && (
-                    <span className={`text-[11px] block truncate ${f.estado === 'ERROR' || f.estado === 'RECHAZADA' ? 'text-rose-700' : 'text-amber-800'}`} title={f.mensajeError}>{f.mensajeError}</span>
+                    <span className={`text-xs block truncate ${f.estado === 'ERROR' || f.estado === 'RECHAZADA' ? 'text-danger' : 'text-warning'}`} title={f.mensajeError}>{f.mensajeError}</span>
                   )}
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full mr-1 ${ESTADO_ESTILO[f.estado] || 'bg-slate-100 text-slate-700'}`}>
-                    {f.estado}
-                  </span>
+                <div className="flex items-center justify-between lg:justify-end gap-3 shrink-0">
+                  <span className={`text-body font-semibold tabular-nums text-right lg:min-w-28 ${esNotaCredito ? 'text-danger' : 'text-fg'}`}>{esNotaCredito ? '−' : ''}{colones(f.total)}</span>
+                  <Badge tone={ESTADO_TONO[f.estado] || 'neutral'}>{f.estado}</Badge>
+                  <div className="flex items-center gap-0.5">
                   <button
                     type="button"
                     onClick={() => setViewingFactura(f)}
                     title="Ver, imprimir o reenviar"
-                    className={`${botonIcono} text-slate-600 hover:bg-slate-100`}
+                    className={`${botonIcono} text-fg-muted hover:bg-surface-muted`}
                     aria-label={`Ver, imprimir o reenviar ${tipoTexto} ${f.consecutivo}`}
                   >
                     <Eye className="w-4 h-4" aria-hidden="true" />
@@ -287,7 +289,7 @@ export default function FacturacionManager({ facturas, patients, company, servic
                       onClick={() => handleVerificarEstado(f.id)}
                       disabled={verificandoId === f.id}
                       title="Verificar estado con Hacienda"
-                      className={`${botonIcono} text-amber-700 hover:bg-amber-50`}
+                      className={`${botonIcono} text-warning hover:bg-warning-soft`}
                       aria-label={`Verificar estado con Hacienda de ${tipoTexto} ${f.consecutivo}`}
                     >
                       <RefreshCw className={`w-4 h-4 ${verificandoId === f.id ? 'animate-spin' : ''}`} aria-hidden="true" />
@@ -299,7 +301,7 @@ export default function FacturacionManager({ facturas, patients, company, servic
                       type="button"
                       onClick={() => setAjustando({ tipo: 'CREDITO', factura: f })}
                       title="Emitir nota de crédito parcial"
-                      className={`${botonIcono} text-indigo-600 hover:bg-indigo-50`}
+                      className={`${botonIcono} text-brand-ink hover:bg-brand-soft`}
                       aria-label={`Emitir nota de crédito parcial sobre la factura ${f.consecutivo}`}
                     >
                       <FileMinus className="w-4 h-4" aria-hidden="true" />
@@ -310,7 +312,7 @@ export default function FacturacionManager({ facturas, patients, company, servic
                       type="button"
                       onClick={() => setAjustando({ tipo: 'DEBITO', factura: f })}
                       title="Emitir nota de débito"
-                      className={`${botonIcono} text-amber-700 hover:bg-amber-50`}
+                      className={`${botonIcono} text-warning hover:bg-warning-soft`}
                       aria-label={`Emitir nota de débito sobre la factura ${f.consecutivo}`}
                     >
                       <FilePlus className="w-4 h-4" aria-hidden="true" />
@@ -321,55 +323,44 @@ export default function FacturacionManager({ facturas, patients, company, servic
                       type="button"
                       onClick={() => { setAnulandoId(f.id); setMotivoAnulacion(''); setError(''); }}
                       title="Anular factura"
-                      className={`${botonIcono} text-rose-600 hover:bg-rose-50`}
+                      className={`${botonIcono} text-danger hover:bg-danger-soft`}
                       aria-label={`Anular la factura ${f.consecutivo}`}
                     >
                       <XCircle className="w-4 h-4" aria-hidden="true" />
                     </button>
                   )}
+                  </div>
                 </div>
               </div>
 
               {anulandoId === f.id && (
-                <div className="mt-2.5 pt-2.5 border-t border-slate-100 space-y-2">
+                <div className="mt-3 pt-3 border-t border-border space-y-3 animate-slide-down">
                   {error && (
-                    <div role="alert" className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] flex items-center gap-1.5">
+                    <div role="alert" className="p-2.5 rounded-control bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-1.5">
                       <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                       <span>{error}</span>
                     </div>
                   )}
-                  <p className="text-[11px] text-slate-600">
+                  <p className="text-xs text-fg-muted">
                     {explicacionAnulacion(f, cantidadesAcreditadas(facturas, f.id))}
                   </p>
                   <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
                     <div className="flex-1">
-                      <label htmlFor={`motivo-anulacion-${f.id}`} className="block text-slate-600 font-medium mb-1 text-[11px]">Motivo de la anulación *</label>
-                      <input
+                      <label htmlFor={`motivo-anulacion-${f.id}`} className="block text-fg font-semibold mb-1.5 text-xs">Motivo de la anulación *</label>
+                      <Input
                         id={`motivo-anulacion-${f.id}`}
                         type="text"
                         maxLength={MOTIVO_MAX}
                         value={motivoAnulacion}
-                        onChange={(e) => setMotivoAnulacion(e.target.value)}
+                        onChange={(e: any) => setMotivoAnulacion(e.target.value)}
                         placeholder="ej: Error en el monto facturado"
-                        className="w-full min-h-10 bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800"
                       />
                     </div>
                     <div className="flex gap-2 justify-end">
-                      <button
-                        type="button"
-                        onClick={() => setAnulandoId(null)}
-                        className="min-h-10 px-3 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                      >
-                        Cancelar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleConfirmarAnular(f.id)}
-                        disabled={anulando}
-                        className="min-h-10 px-3 rounded-lg text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-60"
-                      >
+                      <Button variant="ghost" onClick={() => setAnulandoId(null)}>Cancelar</Button>
+                      <Button variant="danger" onClick={() => handleConfirmarAnular(f.id)} disabled={anulando}>
                         {anulando ? 'Anulando…' : 'Confirmar anulación'}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -377,7 +368,8 @@ export default function FacturacionManager({ facturas, patients, company, servic
             </li>
           );
         })}
-      </ul>
+        </ul>
+      </Card>
 
       {viewingFactura && (() => {
         // El Contador no carga pacientes (datos clínicos): se muestra un receptor genérico, sin datos personales.

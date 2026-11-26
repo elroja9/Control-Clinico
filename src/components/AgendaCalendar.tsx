@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Patient, User, Cita, CompaniaSmtpConfig, NotificationLog, CalendarBlock, Servicio, Factura } from '../data/mockData';
 import FacturarModal from './FacturarModal';
 import { notify, confirmar } from './ui/Feedback';
+import { Button, Badge, Card, CardBody, EmptyState, Field, Input, PageHeader, Select, Textarea } from './ui';
 import { useDialog } from '../hooks/useDialog';
 import { terminoPersona } from '../utils/terminoPersona';
 import { servicioCompatible } from '../utils/modalidad';
@@ -32,7 +33,9 @@ import {
   MapPin,
   Navigation,
   Ban,
-  Receipt
+  Receipt,
+  Home,
+  Building2
 } from 'lucide-react';
 
 function urlUbicacionCita(cita: Cita): string | null {
@@ -564,14 +567,40 @@ export default function AgendaCalendar({
   // Helper: Get color classes for appointment status
   const getStatusColor = (status: Cita['estadoCita']) => {
     switch (status) {
-      case 'PROGRAMADA': return 'bg-sky-50 border-sky-200 text-sky-700 hover:bg-sky-100';
-      case 'CONFIRMADA': return 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100';
-      case 'CANCELADA': return 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100 line-through';
-      case 'COMPLETADA': return 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100';
-      case 'NO_ASISTIO': return 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100';
-      default: return 'bg-slate-50 border-slate-200 text-slate-700';
+      case 'PROGRAMADA': return 'bg-info-soft border-info/25 text-info hover:brightness-95';
+      case 'CONFIRMADA': return 'bg-brand-soft border-brand/30 text-brand-ink hover:brightness-95';
+      case 'CANCELADA': return 'bg-surface-muted border-border text-fg-subtle line-through opacity-75 hover:opacity-100';
+      case 'COMPLETADA': return 'bg-success-soft border-success/25 text-success hover:brightness-95';
+      case 'NO_ASISTIO': return 'bg-warning-soft border-warning/30 text-warning hover:brightness-95';
+      default: return 'bg-surface-muted border-border text-fg-muted';
     }
   };
+
+  // Rayado suave para horarios bloqueados (usa tokens, no colores fijos)
+  const CLASE_BLOQUEO = 'bg-surface-muted bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,var(--color-border)_6px,var(--color-border)_7px)]';
+  // Foco visible común para celdas y tarjetas clicables
+  const CLASE_FOCO = 'focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand';
+
+  // Línea de "hora actual" dentro de la celda de la hora h del día dateStr
+  const lineaAhora = (dateStr: string, h: number) => {
+    const ahora = new Date();
+    if (dateStr !== todayStr || ahora.getHours() !== h) return null;
+    return (
+      <div
+        className="absolute left-0 right-0 h-0.5 bg-brand z-10 pointer-events-none"
+        style={{ top: `${(ahora.getMinutes() / 60) * 100}%` }}
+        aria-hidden="true"
+      >
+        <span className="absolute -left-1 -top-[3px] w-2 h-2 rounded-full bg-brand" />
+      </div>
+    );
+  };
+
+  // Icono de modalidad: domicilio (Home) o consultorio (Building2)
+  const iconoVisita = (cita: Cita, cls: string) =>
+    cita.tipoVisita === 'DOMICILIO'
+      ? <Home className={cls} aria-label="Visita a domicilio" role="img" />
+      : <Building2 className={cls} aria-label="Consultorio" role="img" />;
 
   // Helper: Month calculations
   const getDaysInMonth = (date: Date) => {
@@ -593,7 +622,7 @@ export default function AgendaCalendar({
     const days = [];
     // Previous month empty paddings
     for (let i = 0; i < startDay; i++) {
-      days.push(<div key={`prev-${i}`} className="h-28 border border-slate-100 bg-slate-50/50 p-1"></div>);
+      days.push(<div key={`prev-${i}`} className="h-28 border-b border-r border-border bg-surface-muted/50 p-1"></div>);
     }
 
     // Days in current month
@@ -615,13 +644,13 @@ export default function AgendaCalendar({
           aria-label={`${day} de ${currentDate.toLocaleDateString('es-CR', { month: 'long' })}${isToday ? ', hoy' : ''}: ${dayCitas.length} cita${dayCitas.length === 1 ? '' : 's'}${dayBlock ? ', bloqueado' : '. Crear cita'}`}
           onClick={abrirDia}
           onKeyDown={activarConTeclado(abrirDia)}
-          className={`h-28 border border-slate-100 p-1.5 transition-colors cursor-pointer relative flex flex-col justify-between focus-visible:z-10 ${
-            dayBlock ? 'bg-slate-100/70 bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(100,116,139,0.08)_6px,rgba(100,116,139,0.08)_12px)]' : isToday ? 'bg-teal-50/60 hover:bg-teal-50' : 'hover:bg-slate-50'
+          className={`h-28 border-b border-r border-border p-1.5 transition-colors cursor-pointer relative flex flex-col justify-between focus-visible:z-10 ${CLASE_FOCO} ${
+            dayBlock ? CLASE_BLOQUEO : isToday ? 'bg-brand-soft/60 hover:bg-brand-soft' : 'hover:bg-surface-muted'
           }`}
         >
-          <span className="text-xs font-bold text-slate-600 flex items-center gap-1">
-            <span className={isToday ? 'inline-flex items-center justify-center w-6 h-6 rounded-full text-white' : ''} style={isToday ? { backgroundColor: themeColor } : undefined}>{day}</span>
-            {dayBlock && <Lock className="w-3 h-3 text-slate-500" aria-hidden="true" />}
+          <span className="text-xs font-semibold text-fg-muted flex items-center gap-1">
+            <span className={isToday ? 'inline-flex items-center justify-center w-6 h-6 rounded-full bg-brand-solid text-brand-fg' : ''}>{day}</span>
+            {dayBlock && <Lock className="w-3 h-3 text-fg-subtle" aria-hidden="true" />}
           </span>
           <div className="flex-1 overflow-y-auto space-y-1 mt-1 scrollbar-thin">
             {dayCitas.map(cita => {
@@ -635,18 +664,18 @@ export default function AgendaCalendar({
                   tabIndex={0}
                   onClick={(e) => handleOpenEditCita(cita, e)}
                   onKeyDown={activarConTeclado(() => handleOpenEditCita(cita))}
-                  className={`px-1 py-0.5 rounded-md text-[11px] font-bold truncate border flex items-center gap-0.5 ${getStatusColor(cita.estadoCita)}`}
+                  className={`px-1 py-0.5 rounded-md text-caption font-semibold truncate border flex items-center gap-0.5 transition-colors ${CLASE_FOCO} ${getStatusColor(cita.estadoCita)}`}
                   title={`${time} - ${patient?.nombreCompleto}${esDomicilio ? ` · Domicilio: ${cita.direccionDomicilio || 'sin dirección'}` : ''}`}
                   aria-label={`Cita ${time} con ${patient?.nombreCompleto || persona.minuscula}, ${cita.estadoCita.toLowerCase().replace('_', ' ')}`}
                 >
-                  {esDomicilio && <MapPin className="w-2.5 h-2.5 shrink-0" />}
+                  {esDomicilio && <Home className="w-2.5 h-2.5 shrink-0" aria-hidden="true" />}
                   <span className="truncate">{time} - {patient?.nombreCompleto || persona.singular}</span>
                 </div>
               );
             })}
           </div>
           {dayCitas.length > 0 && (
-            <span className="absolute bottom-1 right-1 bg-slate-200 text-slate-800 text-[11px] font-bold px-1.5 rounded-full tabular-nums" aria-hidden="true">
+            <span className="absolute bottom-1 right-1 bg-surface-muted text-fg-muted text-caption font-semibold px-1.5 rounded-full tabular-nums ring-1 ring-inset ring-border" aria-hidden="true">
               {dayCitas.length}
             </span>
           )}
@@ -655,8 +684,8 @@ export default function AgendaCalendar({
     }
 
     return (
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="grid grid-cols-7 bg-slate-100 text-center font-bold text-xs py-2.5 text-slate-600 border-b border-slate-200" aria-hidden="true">
+      <div className="bg-surface rounded-card border border-border shadow-xs overflow-hidden">
+        <div className="grid grid-cols-7 bg-surface-muted text-center font-semibold text-xs py-2.5 text-fg-muted border-b border-border" aria-hidden="true">
           <div>Dom</div>
           <div>Lun</div>
           <div>Mar</div>
@@ -690,26 +719,28 @@ export default function AgendaCalendar({
     const hours = Array.from({ length: 11 }, (_, i) => 8 + i); // 8:00 AM to 6:00 PM
 
     return (
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="grid grid-cols-8 bg-slate-100 border-b border-slate-200 text-center font-bold text-xs py-2.5 text-slate-500">
-          <div className="border-r border-slate-200 flex items-center justify-center text-[11px]">Hora</div>
+      <div className="bg-surface rounded-card border border-border shadow-xs overflow-hidden">
+       <div className="overflow-x-auto">
+        <div className="min-w-[760px]">
+        <div className="grid grid-cols-8 bg-surface-muted border-b border-border text-center font-semibold text-xs py-2.5 text-fg-muted">
+          <div className="border-r border-border flex items-center justify-center text-caption">Hora</div>
           {weekDays.map((wd, i) => {
             const isToday = formatDateString(wd) === todayStr;
             return (
-              <div key={i} className={`flex flex-col py-1 ${isToday ? 'bg-teal-50 text-teal-800 rounded-lg mx-1 font-extrabold' : ''}`}>
-                <span className="text-[11px] uppercase">{['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][i]}</span>
+              <div key={i} className={`flex flex-col py-1 ${isToday ? 'bg-brand-soft text-brand-ink rounded-lg mx-1 font-bold' : ''}`}>
+                <span className="text-caption uppercase">{['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][i]}</span>
                 <span className="text-xs">{wd.getDate()}</span>
               </div>
             );
           })}
         </div>
 
-        <div className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto">
+        <div className="divide-y divide-border max-h-[500px] overflow-y-auto">
           {hours.map(h => {
             const timeStr = `${String(h).padStart(2, '0')}:00`;
             return (
               <div key={h} className="grid grid-cols-8 min-h-16">
-                <div className="border-r border-slate-100 text-[11px] text-slate-500 font-bold flex items-center justify-center bg-slate-50/50">
+                <div className="border-r border-border text-caption text-fg-subtle font-medium flex items-center justify-center bg-surface-muted/50 tabular-nums">
                   {timeStr}
                 </div>
                 {weekDays.map((wd, i) => {
@@ -733,12 +764,13 @@ export default function AgendaCalendar({
                       aria-label={`${wd.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric' })} a las ${timeStr}${slotBlock ? ', bloqueado' : hourCitas.length ? `, ${hourCitas.length} cita(s)` : ', disponible'}`}
                       onClick={abrirHora}
                       onKeyDown={activarConTeclado(abrirHora)}
-                      className={`border-r border-slate-100 p-1 relative cursor-pointer min-h-16 flex flex-col gap-1 transition-colors focus-visible:z-10 ${
-                        slotBlock ? 'bg-slate-100/70 bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(100,116,139,0.08)_6px,rgba(100,116,139,0.08)_12px)]' : 'hover:bg-slate-50'
+                      className={`border-r border-border p-1 relative cursor-pointer min-h-16 flex flex-col gap-1 transition-colors focus-visible:z-10 ${CLASE_FOCO} ${
+                        slotBlock ? CLASE_BLOQUEO : 'hover:bg-surface-muted'
                       }`}
                     >
+                      {lineaAhora(dateStr, h)}
                       {slotBlock && hourCitas.length === 0 && (
-                        <Lock className="w-3 h-3 text-slate-500 m-auto" />
+                        <Lock className="w-3 h-3 text-fg-subtle m-auto" aria-hidden="true" />
                       )}
                       {hourCitas.map(cita => {
                         const patient = patients.find(p => p.id === cita.idPaciente);
@@ -750,13 +782,17 @@ export default function AgendaCalendar({
                             tabIndex={0}
                             onClick={(e) => handleOpenEditCita(cita, e)}
                             onKeyDown={activarConTeclado(() => handleOpenEditCita(cita))}
-                            className={`p-1.5 rounded-lg text-[11px] font-bold border leading-tight ${getStatusColor(cita.estadoCita)}`}
+                            aria-label={`Cita ${cita.fechaHora.split('T')[1]} con ${patient?.nombreCompleto || persona.minuscula}, ${cita.estadoCita.toLowerCase().replace('_', ' ')}`}
+                            className={`p-1.5 rounded-lg text-caption font-semibold border leading-tight transition-colors ${CLASE_FOCO} ${getStatusColor(cita.estadoCita)}`}
                           >
-                            <span className="block font-bold">{cita.fechaHora.split('T')[1]} ({cita.duracionMinutos}m)</span>
-                            <span className="block text-slate-800 truncate">{patient?.nombreCompleto}</span>
+                            <span className="flex items-center gap-1 font-semibold tabular-nums">
+                              {iconoVisita(cita, 'w-3 h-3 shrink-0')}
+                              {cita.fechaHora.split('T')[1]} ({cita.duracionMinutos}m)
+                            </span>
+                            <span className="block truncate">{patient?.nombreCompleto}</span>
                             {esDomicilio && (
-                              <span className="flex items-center gap-0.5 text-slate-500 font-semibold truncate" title={cita.direccionDomicilio || 'Visita a domicilio'}>
-                                <MapPin className="w-2.5 h-2.5 shrink-0" />
+                              <span className="flex items-center gap-0.5 opacity-80 font-medium truncate" title={cita.direccionDomicilio || 'Visita a domicilio'}>
+                                <MapPin className="w-2.5 h-2.5 shrink-0" aria-hidden="true" />
                                 <span className="truncate">{cita.direccionDomicilio || 'Domicilio'}</span>
                                 {urlUbicacionCita(cita) && (
                                   <a
@@ -765,9 +801,10 @@ export default function AgendaCalendar({
                                     rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
                                     title={`Abrir ubicación del ${persona.minuscula}`}
-                                    className="shrink-0 text-teal-700"
+                                    className="shrink-0 text-brand-ink"
+                                    aria-label={`Abrir ubicación del ${persona.minuscula}`}
                                   >
-                                    <Navigation className="w-2.5 h-2.5" />
+                                    <Navigation className="w-2.5 h-2.5" aria-hidden="true" />
                                   </a>
                                 )}
                               </span>
@@ -782,6 +819,8 @@ export default function AgendaCalendar({
             );
           })}
         </div>
+        </div>
+       </div>
       </div>
     );
   };
@@ -795,21 +834,21 @@ export default function AgendaCalendar({
     return (
       <div className="space-y-4">
         {/* Quick Day summary cards */}
-        <div className="bg-slate-900 text-white rounded-2xl p-4 flex justify-between items-center shadow-xs">
-          <div>
-            <span className="text-[11px] font-extrabold text-teal-400 uppercase tracking-widest block">Resumen del Día</span>
-            <h3 className="text-sm font-bold mt-0.5">
+        <div className="bg-brand-soft border border-brand/20 rounded-card p-4 flex justify-between items-center shadow-xs">
+          <div className="min-w-0">
+            <span className="text-caption font-semibold text-brand-ink uppercase tracking-wider block">Resumen del día</span>
+            <h3 className="text-sm font-semibold text-fg mt-0.5 first-letter:uppercase">
               {currentDate.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long' })}
             </h3>
           </div>
-          <div className="bg-teal-500/10 border border-teal-500/20 px-3.5 py-1.5 rounded-xl text-center">
-            <span className="text-[11px] block font-extrabold text-teal-300">CITAS HOY</span>
-            <span className="text-xl font-black text-white">{dayCitas.length}</span>
+          <div className="bg-surface border border-brand/20 px-3.5 py-1.5 rounded-control text-center shrink-0">
+            <span className="text-caption block font-semibold text-brand-ink uppercase">Citas</span>
+            <span className="text-xl font-bold text-fg tabular-nums">{dayCitas.length}</span>
           </div>
         </div>
 
         {/* Timeline lists */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs divide-y divide-slate-100 overflow-hidden">
+        <div className="bg-surface rounded-card border border-border shadow-xs divide-y divide-border overflow-hidden">
           {hours.map(h => {
             const timeStr = `${String(h).padStart(2, '0')}:00`;
             const hourCitas = dayCitas.filter(c => {
@@ -824,7 +863,7 @@ export default function AgendaCalendar({
 
             return (
               <div key={h} className="flex min-h-16">
-                <div className="w-16 sm:w-20 shrink-0 border-r border-slate-100 text-xs text-slate-600 font-bold flex items-center justify-center bg-slate-50/50 tabular-nums">
+                <div className="w-16 sm:w-20 shrink-0 border-r border-border text-xs text-fg-muted font-semibold flex items-center justify-center bg-surface-muted/50 tabular-nums">
                   {timeStr}
                 </div>
                 <div
@@ -833,17 +872,18 @@ export default function AgendaCalendar({
                   aria-label={`${timeStr}${slotBlock ? ', bloqueado' : hourCitas.length ? `, ${hourCitas.length} cita(s)` : ', disponible. Crear cita'}`}
                   onClick={abrirHora}
                   onKeyDown={activarConTeclado(abrirHora)}
-                  className={`flex-1 min-w-0 p-2 transition-colors cursor-pointer flex flex-col gap-1.5 ${
-                    slotBlock ? 'bg-slate-100/70 bg-[repeating-linear-gradient(45deg,transparent,transparent_6px,rgba(100,116,139,0.08)_6px,rgba(100,116,139,0.08)_12px)]' : 'hover:bg-slate-50'
+                  className={`flex-1 min-w-0 p-2 transition-colors cursor-pointer flex flex-col gap-1.5 relative ${CLASE_FOCO} ${
+                    slotBlock ? CLASE_BLOQUEO : 'hover:bg-surface-muted'
                   }`}
                 >
+                  {lineaAhora(dateStr, h)}
                   {hourCitas.length === 0 ? (
                     slotBlock ? (
-                      <span className="text-xs text-slate-600 font-semibold flex items-center gap-1 my-auto pl-2">
+                      <span className="text-xs text-fg-muted font-semibold flex items-center gap-1 my-auto pl-2">
                         <Lock className="w-3 h-3" aria-hidden="true" /> Bloqueado{slotBlock.motivo ? `: ${slotBlock.motivo}` : ''}
                       </span>
                     ) : (
-                      <span className="text-xs text-slate-500 font-medium my-auto pl-2 flex items-center gap-1">
+                      <span className="text-xs text-fg-subtle font-medium my-auto pl-2 flex items-center gap-1">
                         <Plus className="w-3 h-3" aria-hidden="true" /> Disponible
                       </span>
                     )
@@ -858,22 +898,21 @@ export default function AgendaCalendar({
                           tabIndex={0}
                           onClick={(e) => handleOpenEditCita(cita, e)}
                           onKeyDown={activarConTeclado(() => handleOpenEditCita(cita))}
-                          className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shadow-xs transition-colors ${getStatusColor(cita.estadoCita)}`}
+                          className={`p-3 rounded-control border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shadow-xs transition-colors ${CLASE_FOCO} ${getStatusColor(cita.estadoCita)}`}
                         >
-                          <div className="space-y-0.5">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-black">{cita.fechaHora.split('T')[1]}</span>
-                              <span className="text-[11px] font-bold uppercase bg-white/70 px-1.5 py-0.5 rounded-md border border-slate-300/40">{cita.estadoCita.replace('_', ' ')}</span>
-                              {esDomicilio && (
-                                <span className="text-[11px] font-black uppercase bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-md border border-amber-200 flex items-center gap-0.5">
-                                  <MapPin className="w-2.5 h-2.5" /> Domicilio
-                                </span>
-                              )}
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="text-xs font-bold tabular-nums">{cita.fechaHora.split('T')[1]}</span>
+                              <span className="text-caption font-semibold uppercase bg-surface/80 px-1.5 py-0.5 rounded-md border border-border text-fg-muted">{cita.estadoCita.replace('_', ' ')}</span>
+                              <span className="text-caption font-semibold uppercase bg-surface/80 text-fg-muted px-1.5 py-0.5 rounded-md border border-border flex items-center gap-0.5">
+                                {esDomicilio ? <Home className="w-2.5 h-2.5" aria-hidden="true" /> : <Building2 className="w-2.5 h-2.5" aria-hidden="true" />}
+                                {esDomicilio ? 'Domicilio' : 'Consultorio'}
+                              </span>
                             </div>
-                            <h4 className="text-xs font-bold text-slate-800">{patient?.nombreCompleto || persona.singular}</h4>
+                            <h4 className="text-sm font-semibold text-fg">{patient?.nombreCompleto || persona.singular}</h4>
                             {esDomicilio && (
-                              <p className="text-[11px] text-amber-700 font-semibold truncate max-w-sm flex items-center gap-1">
-                                <MapPin className="w-3 h-3 shrink-0" />
+                              <p className="text-xs text-fg-muted font-medium truncate max-w-sm flex items-center gap-1">
+                                <MapPin className="w-3 h-3 shrink-0" aria-hidden="true" />
                                 <span className="truncate">
                                   {cita.direccionDomicilio || 'Dirección no especificada'}
                                   {cita.tiempoTrasladoMinutos != null && ` · ${cita.tiempoTrasladoMinutos} min de traslado`}
@@ -885,34 +924,34 @@ export default function AgendaCalendar({
                                     rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
                                     title={`Abrir ubicación del ${persona.minuscula}`}
-                                    className="shrink-0 flex items-center gap-0.5 text-teal-700 hover:underline font-bold"
+                                    className="shrink-0 flex items-center gap-0.5 text-brand-ink hover:underline font-semibold min-h-6"
                                   >
-                                    <Navigation className="w-3 h-3" />
+                                    <Navigation className="w-3 h-3" aria-hidden="true" />
                                     Abrir ubicación
                                   </a>
                                 )}
                               </p>
                             )}
-                            <p className="text-xs text-slate-600 truncate max-w-sm">{cita.notas || 'Sin notas internas'}</p>
+                            <p className="text-xs text-fg-muted truncate max-w-sm">{cita.notas || 'Sin notas internas'}</p>
                           </div>
 
                           <div className="flex items-center gap-2 mt-1 sm:mt-0">
                             {cita.idConsulta ? (
-                              <span className="text-[11px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-md px-2 py-0.5 flex items-center gap-1">
+                              <Badge tone="success">
                                 <Check className="w-3 h-3" aria-hidden="true" />
                                 Consulta atendida
-                              </span>
+                              </Badge>
                             ) : esLegal ? null : (
-                              <button
-                                onClick={(e) => {
+                              <Button
+                                size="sm"
+                                onClick={(e: any) => {
                                   e.stopPropagation();
                                   if (patient) onStartConsultation(patient, cita.id);
                                 }}
-                                className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold min-h-9 px-3 rounded-xl flex items-center gap-1.5 shadow-xs transition-colors shrink-0"
+                                icon={<Activity className="w-4 h-4" aria-hidden="true" />}
                               >
-                                <Activity className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
                                 Iniciar consulta
-                              </button>
+                              </Button>
                             )}
                           </div>
                         </div>
@@ -932,101 +971,96 @@ export default function AgendaCalendar({
     <div className="space-y-6">
       
       {/* Header toolbar */}
-      <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div className="flex items-center gap-3">
-          <div className="p-3 rounded-2xl bg-slate-950 text-white" style={{ backgroundColor: themeColor }}>
-            <CalendarIcon className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-base font-bold text-slate-900">Agenda y citas</h2>
-            <p className="text-xs text-slate-600 mt-0.5">Toque un día u horario libre para agendar; toque una cita para gestionarla.</p>
-          </div>
-        </div>
+      <div className="-mb-2">
+        <PageHeader
+          title="Agenda y citas"
+          description="Toque un día u horario libre para agendar; toque una cita para gestionarla."
+          actions={
+            <>
+              <Button variant="outline" onClick={handleOpenNewBlock} icon={<Lock className="w-4 h-4" aria-hidden="true" />}>
+                Bloquear horario
+              </Button>
+              <Button onClick={() => handleOpenNewCita()} icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
+                Nueva cita
+              </Button>
+            </>
+          }
+        />
+      </div>
 
-        {/* Filters and View selectors */}
-        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
-          {/* Doctor filter dropdown */}
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <label htmlFor="filtro-profesional" className="text-xs font-semibold text-slate-600 shrink-0">Profesional</label>
-            <select
-              id="filtro-profesional"
-              value={selectedDoctorId}
-              onChange={(e) => setSelectedDoctorId(parseInt(e.target.value))}
-              className="flex-1 sm:flex-none min-h-10 bg-slate-50 border border-slate-200 rounded-xl px-2.5 text-xs text-slate-800 font-semibold"
-            >
-              <option value={0}>Todos los especialistas</option>
-              {users.filter(u => u.idCompania === activeCompanyId && u.rol !== 'Contador').map(doc => (
-                <option key={doc.id} value={doc.id}>{doc.nombre}</option>
-              ))}
-            </select>
+      {/* Toolbar: navegación, rango, vista y filtro de profesional */}
+      <Card className="p-3 sm:p-4 flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 shrink-0" role="group" aria-label="Navegación del calendario">
+              <Button
+                variant="outline"
+                onClick={handlePrev}
+                aria-label={view === 'month' ? 'Mes anterior' : view === 'week' ? 'Semana anterior' : 'Día anterior'}
+                className="w-11 px-0"
+              >
+                <ChevronLeft className="w-4 h-4" aria-hidden="true" />
+              </Button>
+              <Button variant="outline" onClick={handleToday}>Hoy</Button>
+              <Button
+                variant="outline"
+                onClick={handleNext}
+                aria-label={view === 'month' ? 'Mes siguiente' : view === 'week' ? 'Semana siguiente' : 'Día siguiente'}
+                className="w-11 px-0"
+              >
+                <ChevronRight className="w-4 h-4" aria-hidden="true" />
+              </Button>
+            </div>
+            <h3 className="text-base font-semibold tracking-tight text-fg first-letter:uppercase truncate" aria-live="polite">
+              {view === 'month' && currentDate.toLocaleDateString('es-CR', { month: 'long', year: 'numeric' })}
+              {view === 'week' && `Semana del ${currentDate.toLocaleDateString('es-CR', { day: 'numeric', month: 'short' })}`}
+              {view === 'day' && currentDate.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+            </h3>
           </div>
 
-          {/* View Toggles (Hidden/Disabled on Mobile since it forces 'day' view) */}
-          <div className="hidden md:flex bg-slate-100 p-1 rounded-xl border border-slate-200" role="group" aria-label="Vista del calendario">
+          {/* View Toggles (ocultos en móvil: allí se fuerza la vista 'day', que es una lista legible) */}
+          <div className="hidden md:flex bg-surface-muted p-1 rounded-control border border-border" role="group" aria-label="Vista del calendario">
             {([['month', 'Mes'], ['week', 'Semana'], ['day', 'Día']] as const).map(([v, label]) => (
               <button
                 key={v}
                 type="button"
                 onClick={() => setView(v)}
                 aria-pressed={view === v}
-                className={`min-h-8 px-3 rounded-lg text-xs font-bold transition-colors ${
-                  view === v ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                className={`min-h-9 px-3.5 rounded-lg text-sm font-semibold transition-colors ${
+                  view === v ? 'bg-surface text-fg shadow-xs' : 'text-fg-muted hover:text-fg'
                 }`}
               >
                 {label}
               </button>
             ))}
           </div>
-
-          <button
-            type="button"
-            onClick={handleOpenNewBlock}
-            className="flex-1 sm:flex-none min-h-10 bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold px-4 rounded-xl flex items-center justify-center gap-1.5 shadow-xs transition-colors md:ml-0"
-          >
-            <Lock className="w-4 h-4" aria-hidden="true" />
-            Bloquear horario
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleOpenNewCita()}
-            className="flex-1 sm:flex-none min-h-10 text-white text-xs font-bold px-4 rounded-xl flex items-center justify-center gap-1.5 shadow-sm hover:brightness-110 transition-[filter]"
-            style={{ backgroundColor: themeColor }}
-          >
-            <Plus className="w-4 h-4" aria-hidden="true" />
-            Nueva cita
-          </button>
-        </div>
-      </div>
-
-      {/* Navigation Controller */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={handlePrev} aria-label={view === 'month' ? 'Mes anterior' : view === 'week' ? 'Semana anterior' : 'Día anterior'} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 w-10 h-10 flex items-center justify-center rounded-xl transition-colors">
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button type="button" onClick={handleToday} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold px-3.5 h-10 rounded-xl transition-colors">
-            Hoy
-          </button>
-          <button type="button" onClick={handleNext} aria-label={view === 'month' ? 'Mes siguiente' : view === 'week' ? 'Semana siguiente' : 'Día siguiente'} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 w-10 h-10 flex items-center justify-center rounded-xl transition-colors">
-            <ChevronRight className="w-4 h-4" />
-          </button>
         </div>
 
-        <h3 className="text-sm font-extrabold text-slate-900 first-letter:uppercase order-first sm:order-none w-full sm:w-auto" aria-live="polite">
-          {view === 'month' && currentDate.toLocaleDateString('es-CR', { month: 'long', year: 'numeric' })}
-          {view === 'week' && `Semana del ${currentDate.toLocaleDateString('es-CR', { day: 'numeric', month: 'short' })}`}
-          {view === 'day' && currentDate.toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-        </h3>
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-border">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <label htmlFor="filtro-profesional" className="text-xs font-semibold text-fg-muted shrink-0">Profesional</label>
+            <Select
+              id="filtro-profesional"
+              value={selectedDoctorId}
+              onChange={(e: any) => setSelectedDoctorId(parseInt(e.target.value))}
+              wrapperClassName="flex-1 sm:w-64"
+              className="min-h-10"
+            >
+              <option value={0}>Todos los especialistas</option>
+              {users.filter(u => u.idCompania === activeCompanyId && u.rol !== 'Contador').map(doc => (
+                <option key={doc.id} value={doc.id}>{doc.nombre}</option>
+              ))}
+            </Select>
+          </div>
 
-        <div
-          className={`flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 font-semibold border ${activeSmtp.activo ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-slate-100 border-slate-200 text-slate-600'}`}
-          title="Se configura en Personalizar Clínica › Correo"
-        >
-          <Bell className="w-3.5 h-3.5" aria-hidden="true" />
-          <span>Avisos por correo: {activeSmtp.activo ? 'activos' : 'apagados'}</span>
+          <div title="Se configura en Personalizar Clínica › Correo">
+            <Badge tone={activeSmtp.activo ? 'success' : 'neutral'} className="py-1">
+              <Bell className="w-3.5 h-3.5" aria-hidden="true" />
+              Avisos por correo: {activeSmtp.activo ? 'activos' : 'apagados'}
+            </Badge>
+          </div>
         </div>
-      </div>
+      </Card>
 
       {/* Render selected view */}
       {view === 'month' && renderMonthView()}
@@ -1034,127 +1068,141 @@ export default function AgendaCalendar({
       {view === 'day' && renderDayView()}
 
       {/* Calendar Blocks List Section */}
-      <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Lock className="w-4 h-4 text-slate-500" />
-            <h3 className="text-xs font-black uppercase text-slate-700 tracking-wider">Bloqueos de Agenda</h3>
+      <Card>
+        <CardBody className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Lock className="w-4 h-4 text-fg-subtle" aria-hidden="true" />
+              <h3 className="text-sm font-semibold text-fg">Bloqueos de agenda</h3>
+            </div>
+            <Badge>
+              {myCalendarBlocks.length} activo{myCalendarBlocks.length !== 1 ? 's' : ''}
+            </Badge>
           </div>
-          <span className="text-[11px] bg-slate-100 text-slate-600 font-bold border border-slate-200 px-2.5 py-0.5 rounded-full uppercase">
-            {myCalendarBlocks.length} activo{myCalendarBlocks.length !== 1 ? 's' : ''}
-          </span>
-        </div>
 
-        {myCalendarBlocks.length === 0 ? (
-          <div className="text-center py-6 text-xs text-slate-500 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-            No tienes horarios bloqueados. Usa "Bloquear Horario" para marcar fechas u horas no disponibles.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {myCalendarBlocks.map(block => (
-              <div key={block.id} className="p-3.5 rounded-2xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-all flex items-center justify-between gap-2 text-xs">
-                <div>
-                  <span className="font-bold text-slate-700 block">
-                    {block.fechaInicio === block.fechaFin ? block.fechaInicio : `${block.fechaInicio} al ${block.fechaFin}`}
-                    {block.horaInicio && block.horaFin ? ` · ${block.horaInicio} - ${block.horaFin}` : ' · Todo el día'}
-                  </span>
-                  {block.motivo && <span className="text-slate-500 block mt-0.5">{block.motivo}</span>}
+          {myCalendarBlocks.length === 0 ? (
+            <EmptyState
+              className="py-8 rounded-card border border-dashed border-border"
+              icon={<Lock />}
+              title="Sin horarios bloqueados"
+              description='Use "Bloquear horario" para marcar fechas u horas no disponibles.'
+            />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {myCalendarBlocks.map(block => (
+                <div key={block.id} className="p-3.5 rounded-control border border-border bg-surface-muted/50 flex items-center justify-between gap-2 text-xs">
+                  <div className="min-w-0">
+                    <span className="font-semibold text-fg block">
+                      {block.fechaInicio === block.fechaFin ? block.fechaInicio : `${block.fechaInicio} al ${block.fechaFin}`}
+                      {block.horaInicio && block.horaFin ? ` · ${block.horaInicio} - ${block.horaFin}` : ' · Todo el día'}
+                    </span>
+                    {block.motivo && <span className="text-fg-muted block mt-0.5">{block.motivo}</span>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEditBlock(block)}
+                    className="text-fg-muted hover:text-fg hover:bg-surface w-10 h-10 flex items-center justify-center rounded-lg shrink-0 transition-colors focus-visible:outline-2 focus-visible:outline-brand"
+                    title="Editar o eliminar"
+                    aria-label={`Editar o eliminar el bloqueo del ${block.fechaInicio}`}
+                  >
+                    <Edit className="w-4 h-4" aria-hidden="true" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleOpenEditBlock(block)}
-                  className="text-slate-500 hover:text-slate-900 hover:bg-white p-2 -m-1 rounded-lg shrink-0 transition-colors"
-                  title="Editar o eliminar"
-                  aria-label={`Editar o eliminar el bloqueo del ${block.fechaInicio}`}
-                >
-                  <Edit className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </CardBody>
+      </Card>
 
       {/* Notification Logs History Section */}
-      <div className="bg-white rounded-3xl p-5 border border-slate-200 shadow-xs space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Mail className="w-4 h-4 text-slate-500" />
-            <h3 className="text-xs font-bold uppercase text-slate-700 tracking-wider">Correos enviados a {persona.minusculaPlural}</h3>
+      <Card>
+        <CardBody className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Mail className="w-4 h-4 text-fg-subtle" aria-hidden="true" />
+              <h3 className="text-sm font-semibold text-fg">Correos enviados a {persona.minusculaPlural}</h3>
+            </div>
+            <Badge className="tabular-nums">
+              {logs.filter(l => l.idCompania === activeCompanyId).length}
+            </Badge>
           </div>
-          <span className="text-[11px] bg-slate-100 text-slate-700 font-bold border border-slate-200 px-2.5 py-0.5 rounded-full tabular-nums">
-            {logs.filter(l => l.idCompania === activeCompanyId).length}
-          </span>
-        </div>
 
-        {logs.filter(l => l.idCompania === activeCompanyId).length === 0 ? (
-          <div className="text-center py-6 px-4 text-xs text-slate-600 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-            Todavía no se ha enviado ningún correo. Se registran aquí al agendar, modificar o cancelar citas con los avisos por correo activos.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-80 overflow-y-auto">
-            {logs.filter(l => l.idCompania === activeCompanyId).map(log => (
-              <div key={log.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/50 hover:bg-slate-50 transition-all space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className={`text-[11px] font-black px-2 py-0.5 rounded-full ${
-                    log.tipo === 'CANCELACION' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
-                    log.tipo === 'CONFIRMACION' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' :
-                    log.tipo === 'CONSULTA' ? 'bg-violet-100 text-violet-700 border border-violet-200' :
-                    'bg-sky-100 text-sky-700 border border-sky-200'
-                  }`}>
-                    {log.tipo}
-                  </span>
-                  <span className="text-[11px] text-slate-600 font-semibold tabular-nums">
-                    {new Date(log.enviadoEn).toLocaleString('es-CR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                  </span>
+          {logs.filter(l => l.idCompania === activeCompanyId).length === 0 ? (
+            <EmptyState
+              className="py-8 rounded-card border border-dashed border-border"
+              icon={<Mail />}
+              title="Aún no se ha enviado ningún correo"
+              description="Se registran aquí al agendar, modificar o cancelar citas con los avisos por correo activos."
+            />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-80 overflow-y-auto">
+              {logs.filter(l => l.idCompania === activeCompanyId).map(log => (
+                <div key={log.id} className="p-4 rounded-control border border-border bg-surface-muted/50 space-y-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <Badge tone={
+                      log.tipo === 'CANCELACION' ? 'danger' :
+                      log.tipo === 'CONFIRMACION' ? 'success' :
+                      log.tipo === 'CONSULTA' ? 'brand' :
+                      'info'
+                    }>
+                      {log.tipo}
+                    </Badge>
+                    <span className="text-caption text-fg-muted font-medium tabular-nums">
+                      {new Date(log.enviadoEn).toLocaleString('es-CR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="font-semibold text-fg block break-words">Destinatario: <span className="font-normal text-fg-muted">{log.destinatario}</span></span>
+                    <span className="font-semibold text-fg block break-words">Asunto: <span className="font-normal text-fg-muted">{log.asunto}</span></span>
+                  </div>
+                  <div className="bg-surface p-2.5 rounded-lg border border-border text-caption font-mono text-fg-muted whitespace-pre-wrap max-h-24 overflow-y-auto">
+                    {log.cuerpo}
+                  </div>
                 </div>
-                <div>
-                  <span className="font-bold text-slate-700 block">Destinatario: <span className="font-medium text-slate-500">{log.destinatario}</span></span>
-                  <span className="font-bold text-slate-700 block">Asunto: <span className="font-medium text-slate-500">{log.asunto}</span></span>
-                </div>
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200/60 text-[11px] font-mono text-slate-600 whitespace-pre-wrap max-h-24 overflow-y-auto">
-                  {log.cuerpo}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </CardBody>
+      </Card>
 
       {/* SCHEDULING FORM MODAL */}
       {isFormOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
+        <div className="fixed inset-0 bg-fg/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
           <div
             ref={citaFormRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="titulo-form-cita"
             tabIndex={-1}
-            className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden"
+            className="bg-surface rounded-t-panel sm:rounded-panel w-full max-w-lg shadow-lg border border-border max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden"
           >
-            <div className="surface-dark sticky top-0 z-10 p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
-              <div className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-white/80" aria-hidden="true" />
-                <h3 id="titulo-form-cita" className="text-sm font-bold">{selectedCita ? 'Gestionar cita' : 'Nueva cita'}</h3>
+            <div className="sticky top-0 z-20 px-5 py-4 bg-surface border-b border-border flex justify-between items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="w-9 h-9 rounded-control bg-brand-soft text-brand-ink flex items-center justify-center shrink-0">
+                  <Clock className="w-4 h-4" aria-hidden="true" />
+                </span>
+                <h3 id="titulo-form-cita" className="text-base font-semibold tracking-tight text-fg truncate">{selectedCita ? 'Gestionar cita' : 'Nueva cita'}</h3>
               </div>
-              <button type="button" onClick={() => setIsFormOpen(false)} className="text-white hover:bg-white/15 w-9 h-9 -m-1.5 flex items-center justify-center rounded-lg transition-colors" aria-label="Cerrar">
-                <X className="w-5 h-5" />
+              <button type="button" onClick={() => setIsFormOpen(false)} className="text-fg-muted hover:text-fg hover:bg-surface-muted w-10 h-10 -mr-2 flex items-center justify-center rounded-control transition-colors focus-visible:outline-2 focus-visible:outline-brand" aria-label="Cerrar">
+                <X className="w-5 h-5" aria-hidden="true" />
               </button>
             </div>
 
-            <form onSubmit={handleFormSubmit} className="p-5 space-y-4">
+            <form onSubmit={handleFormSubmit} className="p-5 space-y-6">
               {formError && (
-                <div role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <div role="alert" className="p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-sm flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
                   <span>{formError}</span>
                 </div>
               )}
 
-              {/* Patient Selection */}
+              {/* Sección: paciente */}
+              <section aria-labelledby="cita-sec-paciente" className="space-y-3">
+              <h4 id="cita-sec-paciente" className="text-caption font-semibold uppercase tracking-wider text-fg-subtle">{persona.singular}</h4>
               <div className="relative">
-                <label htmlFor="cita-paciente" className="block text-slate-700 text-xs font-bold mb-1.5">{persona.singular} *</label>
+                <label htmlFor="cita-paciente" className="block text-xs font-semibold text-fg mb-1.5">{persona.singular} <span className="text-danger" aria-hidden="true">*</span></label>
                 <div className="relative">
-                  <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
+                  <Search className="w-4 h-4 text-fg-subtle absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
                   <input
                     id="cita-paciente"
                     type="text"
@@ -1191,11 +1239,11 @@ export default function AgendaCalendar({
                       }
                     }}
                     placeholder="Buscar por nombre o cédula…"
-                    className={`w-full min-h-10 bg-slate-50 border rounded-xl pl-8 pr-3 text-xs ${formPatientId ? 'border-emerald-300' : 'border-slate-200'}`}
+                    className={`w-full min-h-11 bg-surface border rounded-control pl-10 pr-3.5 text-body text-fg placeholder:text-fg-subtle hover:border-fg-subtle focus:border-brand transition-colors ${formPatientId ? 'border-success' : 'border-border-strong'}`}
                   />
                 </div>
                 {isPatientDropdownOpen && (
-                  <ul id="cita-paciente-lista" role="listbox" aria-label={persona.plural} className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg animate-slide-down">
+                  <ul id="cita-paciente-lista" role="listbox" aria-label={persona.plural} className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-surface border border-border rounded-control shadow-lg animate-slide-down">
                     {filteredPatients.length > 0 ? (
                       filteredPatients.map((p, i) => (
                         <li
@@ -1205,72 +1253,50 @@ export default function AgendaCalendar({
                           aria-selected={formPatientId === p.id.toString()}
                           onMouseDown={() => handleSelectPatient(p)}
                           onMouseEnter={() => setPatientActiveIndex(i)}
-                          className={`w-full text-left px-3 py-2.5 text-xs cursor-pointer border-b border-slate-100 last:border-b-0 flex items-center justify-between gap-2 ${i === patientActiveIndex ? 'bg-slate-100' : ''}`}
+                          className={`w-full text-left px-3 py-2.5 text-sm cursor-pointer border-b border-border last:border-b-0 flex items-center justify-between gap-2 ${i === patientActiveIndex ? 'bg-surface-muted' : ''}`}
                         >
                           <span className="min-w-0">
-                            <span className="font-semibold text-slate-900 block truncate">{p.nombreCompleto}</span>
-                            <span className="text-slate-600">{p.identificacion}</span>
+                            <span className="font-semibold text-fg block truncate">{p.nombreCompleto}</span>
+                            <span className="text-xs text-fg-muted">{p.identificacion}</span>
                           </span>
-                          {formPatientId === p.id.toString() && <Check className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />}
+                          {formPatientId === p.id.toString() && <Check className="w-4 h-4 text-success shrink-0" aria-hidden="true" />}
                         </li>
                       ))
                     ) : (
-                      <li className="px-3 py-3 text-xs text-slate-600">Ningún {persona.minuscula} coincide con “{formPatientSearch}”. Regístrelo primero en {persona.plural}.</li>
+                      <li className="px-3 py-3 text-sm text-fg-muted">Ningún {persona.minuscula} coincide con “{formPatientSearch}”. Regístrelo primero en {persona.plural}.</li>
                     )}
                   </ul>
                 )}
               </div>
+              </section>
 
-              {/* Servicio (opcional — autocompleta la duración de la cita) */}
-              {companyServicios.length > 0 && (
-                <div>
-                  <label htmlFor="agendacale-servicio" className="block text-slate-600 text-xs font-bold mb-1.5">Servicio</label>
-                  <select id="agendacale-servicio"
-                    value={formServicioId}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setFormServicioId(val);
-                      const servicio = companyServicios.find(s => s.id === parseInt(val));
-                      if (servicio) setFormDuration(servicio.duracionMinutos);
-                    }}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-                  >
-                    <option value="">-- Sin servicio específico (duración manual) --</option>
-                    {serviciosParaForm.map(s => (
-                      <option key={s.id} value={s.id}>{s.nombre} ({s.duracionMinutos} min) · {formatearColones(precioConIva(s.precio, ivaEfectivo(s, ivaPorDefecto)))} IVA incl.</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {/* Date, Time, Duration */}
+              {/* Sección: fecha, hora y duración */}
+              <section aria-labelledby="cita-sec-fecha" className="space-y-3">
+              <h4 id="cita-sec-fecha" className="text-caption font-semibold uppercase tracking-wider text-fg-subtle">Fecha, hora y duración</h4>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label htmlFor="agendacale-fecha" className="block text-slate-600 text-xs font-bold mb-1.5">Fecha *</label>
-                  <input id="agendacale-fecha"
+                <Field label="Fecha" required>
+                  <Input
+                    id="agendacale-fecha"
                     type="date"
                     required
                     value={formDate}
-                    onChange={(e) => setFormDate(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                    onChange={(e: any) => setFormDate(e.target.value)}
                   />
-                </div>
-                <div>
-                  <label htmlFor="agendacale-hora-inicio" className="block text-slate-600 text-xs font-bold mb-1.5">Hora Inicio *</label>
-                  <input id="agendacale-hora-inicio"
+                </Field>
+                <Field label="Hora de inicio" required>
+                  <Input
+                    id="agendacale-hora-inicio"
                     type="time"
                     required
                     value={formTime}
-                    onChange={(e) => setFormTime(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                    onChange={(e: any) => setFormTime(e.target.value)}
                   />
-                </div>
-                <div>
-                  <label htmlFor="agendacale-duracion-min" className="block text-slate-600 text-xs font-bold mb-1.5">Duración (Min) *</label>
-                  <select id="agendacale-duracion-min"
+                </Field>
+                <Field label="Duración" required>
+                  <Select
+                    id="agendacale-duracion-min"
                     value={formDuration}
-                    onChange={(e) => setFormDuration(parseInt(e.target.value))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                    onChange={(e: any) => setFormDuration(parseInt(e.target.value))}
                   >
                     <option value={15}>15 minutos</option>
                     <option value={30}>30 minutos</option>
@@ -1278,121 +1304,147 @@ export default function AgendaCalendar({
                     <option value={60}>60 minutos</option>
                     <option value={90}>90 minutos</option>
                     <option value={120}>120 minutos</option>
-                  </select>
-                </div>
+                  </Select>
+                </Field>
               </div>
+              </section>
 
-              {/* Specialist & Status */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="agendacale-profesional-asignado" className="block text-slate-600 text-xs font-bold mb-1.5">Profesional Asignado *</label>
-                  <select id="agendacale-profesional-asignado"
-                    value={formDoctorId}
-                    onChange={(e) => setFormDoctorId(parseInt(e.target.value))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-                  >
-                    {users.filter(u => u.idCompania === activeCompanyId && u.rol !== 'Contador').map(doc => (
-                      <option key={doc.id} value={doc.id}>{doc.nombre}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="agendacale-estado-de-la-cita" className="block text-slate-600 text-xs font-bold mb-1.5">Estado de la Cita *</label>
-                  <select id="agendacale-estado-de-la-cita"
-                    value={formStatus}
-                    onChange={(e) => setFormStatus(e.target.value as Cita['estadoCita'])}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-                  >
-                    <option value="PROGRAMADA">PROGRAMADA (Sin Confirmar)</option>
-                    <option value="CONFIRMADA">CONFIRMADA</option>
-                    <option value="CANCELADA">CANCELADA</option>
-                    <option value="COMPLETADA">COMPLETADA (Atendida)</option>
-                    <option value="NO_ASISTIO">NO ASISTIÓ</option>
-                  </select>
-                </div>
-              </div>
+              {/* Sección: tipo de visita y servicio */}
+              <section aria-labelledby="cita-sec-visita" className="space-y-3">
+              <h4 id="cita-sec-visita" className="text-caption font-semibold uppercase tracking-wider text-fg-subtle">Tipo de visita y servicio</h4>
+              <p className="text-sm text-fg flex items-center gap-2">
+                {tipoVisitaForm === 'DOMICILIO' ? <Home className="w-4 h-4 text-brand-ink" aria-hidden="true" /> : <Building2 className="w-4 h-4 text-brand-ink" aria-hidden="true" />}
+                <span className="font-medium">{tipoVisitaForm === 'DOMICILIO' ? 'Visita a domicilio' : 'En consultorio'}</span>
+              </p>
 
               {/* Home-visit location (only for existing DOMICILIO citas — staff can't create these directly) */}
               {selectedCita?.tipoVisita === 'DOMICILIO' && (
-                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs space-y-1.5">
-                  <div className="flex items-center gap-1.5 text-amber-800 font-bold">
-                    <MapPin className="w-3.5 h-3.5" />
-                    Visita a Domicilio
+                <div className="p-3 rounded-control bg-warning-soft border border-warning/25 text-sm space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-warning font-semibold">
+                    <MapPin className="w-4 h-4" aria-hidden="true" />
+                    Visita a domicilio
                   </div>
-                  <p className="text-slate-700">{selectedCita.direccionDomicilio || 'Dirección no especificada'}</p>
+                  <p className="text-fg">{selectedCita.direccionDomicilio || 'Dirección no especificada'}</p>
                   {selectedCita.tiempoTrasladoMinutos != null && (
-                    <p className="text-slate-500">Tiempo de traslado estimado: {selectedCita.tiempoTrasladoMinutos} min</p>
+                    <p className="text-fg-muted">Tiempo de traslado estimado: {selectedCita.tiempoTrasladoMinutos} min</p>
                   )}
                   {urlUbicacionCita(selectedCita) && (
                     <a
                       href={urlUbicacionCita(selectedCita)!}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-teal-700 font-bold hover:underline"
+                      className="inline-flex items-center gap-1 min-h-10 text-brand-ink font-semibold hover:underline"
                     >
-                      <Navigation className="w-3.5 h-3.5" />
+                      <Navigation className="w-4 h-4" aria-hidden="true" />
                       Abrir ubicación del {persona.minuscula}
                     </a>
                   )}
                 </div>
               )}
 
-              {/* Notes */}
-              <div>
-                <label htmlFor="agendacale-notas-internas-de-agenda" className="block text-slate-600 text-xs font-bold mb-1.5">Notas Internas de Agenda (No se envían al paciente)</label>
-                <textarea id="agendacale-notas-internas-de-agenda"
+              {/* Servicio (opcional — autocompleta la duración de la cita) */}
+              {companyServicios.length > 0 && (
+                <Field label="Servicio">
+                  <Select
+                    id="agendacale-servicio"
+                    value={formServicioId}
+                    onChange={(e: any) => {
+                      const val = e.target.value;
+                      setFormServicioId(val);
+                      const servicio = companyServicios.find(s => s.id === parseInt(val));
+                      if (servicio) setFormDuration(servicio.duracionMinutos);
+                    }}
+                  >
+                    <option value="">-- Sin servicio específico (duración manual) --</option>
+                    {serviciosParaForm.map(s => (
+                      <option key={s.id} value={s.id}>{s.nombre} ({s.duracionMinutos} min) · {formatearColones(precioConIva(s.precio, ivaEfectivo(s, ivaPorDefecto)))} IVA incl.</option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+              </section>
+
+              {/* Sección: profesional y estado */}
+              <section aria-labelledby="cita-sec-estado" className="space-y-3">
+              <h4 id="cita-sec-estado" className="text-caption font-semibold uppercase tracking-wider text-fg-subtle">Profesional y estado</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="Profesional asignado" required>
+                  <Select
+                    id="agendacale-profesional-asignado"
+                    value={formDoctorId}
+                    onChange={(e: any) => setFormDoctorId(parseInt(e.target.value))}
+                  >
+                    {users.filter(u => u.idCompania === activeCompanyId && u.rol !== 'Contador').map(doc => (
+                      <option key={doc.id} value={doc.id}>{doc.nombre}</option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Estado de la cita" required>
+                  <Select
+                    id="agendacale-estado-de-la-cita"
+                    value={formStatus}
+                    onChange={(e: any) => setFormStatus(e.target.value as Cita['estadoCita'])}
+                  >
+                    <option value="PROGRAMADA">PROGRAMADA (Sin Confirmar)</option>
+                    <option value="CONFIRMADA">CONFIRMADA</option>
+                    <option value="CANCELADA">CANCELADA</option>
+                    <option value="COMPLETADA">COMPLETADA (Atendida)</option>
+                    <option value="NO_ASISTIO">NO ASISTIÓ</option>
+                  </Select>
+                </Field>
+              </div>
+              </section>
+
+              {/* Sección: notas */}
+              <section aria-labelledby="cita-sec-notas" className="space-y-3">
+              <h4 id="cita-sec-notas" className="text-caption font-semibold uppercase tracking-wider text-fg-subtle">Notas</h4>
+              <Field label={`Notas internas de agenda (no se envían al ${persona.minuscula})`}>
+                <Textarea
+                  id="agendacale-notas-internas-de-agenda"
                   value={formNotes}
-                  onChange={(e) => setFormNotes(e.target.value)}
+                  onChange={(e: any) => setFormNotes(e.target.value)}
                   placeholder={esLegal ? 'ej: Revisar avance del caso y documentos pendientes.' : 'ej: Paciente reporta dolor irradiado. Solicita enfoque suave.'}
                   rows={2}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden resize-none"
+                  className="resize-none"
                 />
-              </div>
+              </Field>
+              </section>
 
               {/* Actions Footer */}
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
-                {selectedCita ? (
-                  <div className="flex items-center gap-1 -ml-2">
-                    {selectedCita.estadoCita !== 'CANCELADA' && (
-                      <button
-                        type="button"
-                        onClick={handleCancelarCita}
-                        className="min-h-10 px-2 rounded-lg text-rose-700 hover:bg-rose-50 text-xs font-bold flex items-center gap-1.5 transition-colors"
-                      >
-                        <Ban className="w-4 h-4" aria-hidden="true" />
-                        Cancelar cita
-                      </button>
-                    )}
+              <div className="pt-4 border-t border-border space-y-3">
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+                  {selectedCita && (
+                    <Button
+                      variant="outline"
+                      onClick={() => handleAbrirFacturar(selectedCita)}
+                      icon={<Receipt className="w-4 h-4" aria-hidden="true" />}
+                      className="sm:mr-auto"
+                    >
+                      Facturar
+                    </Button>
+                  )}
+                  <Button variant="secondary" onClick={() => setIsFormOpen(false)}>
+                    Cerrar
+                  </Button>
+                  <Button type="submit" icon={<Check className="w-4 h-4" aria-hidden="true" />}>
+                    {selectedCita ? 'Guardar cambios' : 'Crear cita'}
+                  </Button>
+                </div>
+
+                {/* Acción destructiva separada del resto */}
+                {selectedCita && selectedCita.estadoCita !== 'CANCELADA' && (
+                  <div className="pt-3 border-t border-dashed border-danger/30 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-fg-muted">La cita no se elimina: queda en el historial como cancelada.</p>
                     <button
                       type="button"
-                      onClick={() => handleAbrirFacturar(selectedCita)}
-                      className="min-h-10 px-2 rounded-lg text-emerald-800 hover:bg-emerald-50 text-xs font-bold flex items-center gap-1.5 transition-colors"
+                      onClick={handleCancelarCita}
+                      className="min-h-10 px-3 rounded-control text-danger hover:bg-danger-soft text-sm font-semibold flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-danger"
                     >
-                      <Receipt className="w-4 h-4" aria-hidden="true" />
-                      Facturar
+                      <Ban className="w-4 h-4" aria-hidden="true" />
+                      Cancelar cita
                     </button>
                   </div>
-                ) : (
-                  <div></div>
                 )}
-
-                <div className="flex gap-2 ml-auto">
-                  <button
-                    type="button"
-                    onClick={() => setIsFormOpen(false)}
-                    className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold px-4 rounded-xl transition-colors"
-                  >
-                    Cerrar
-                  </button>
-                  <button
-                    type="submit"
-                    className="min-h-10 text-white text-xs font-bold px-4 rounded-xl shadow-xs flex items-center gap-1.5 hover:brightness-110 transition-[filter]"
-                    style={{ backgroundColor: themeColor }}
-                  >
-                    <Check className="w-4 h-4" aria-hidden="true" />
-                    {selectedCita ? 'Guardar cambios' : 'Crear cita'}
-                  </button>
-                </div>
               </div>
             </form>
           </div>
@@ -1418,45 +1470,46 @@ export default function AgendaCalendar({
       )}
 
       {isBlockFormOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
+        <div className="fixed inset-0 bg-fg/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
           <div
             ref={blockFormRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="titulo-form-bloqueo"
             tabIndex={-1}
-            className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden"
+            className="bg-surface rounded-t-panel sm:rounded-panel w-full max-w-lg shadow-lg border border-border max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden"
           >
-            <div className="surface-dark sticky top-0 z-10 p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
-              <div className="flex items-center gap-2">
-                <Lock className="w-5 h-5 text-white/80" aria-hidden="true" />
-                <h3 id="titulo-form-bloqueo" className="text-sm font-bold">{selectedBlock ? 'Editar bloqueo de agenda' : 'Bloquear horario'}</h3>
+            <div className="sticky top-0 z-20 px-5 py-4 bg-surface border-b border-border flex justify-between items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="w-9 h-9 rounded-control bg-brand-soft text-brand-ink flex items-center justify-center shrink-0">
+                  <Lock className="w-4 h-4" aria-hidden="true" />
+                </span>
+                <h3 id="titulo-form-bloqueo" className="text-base font-semibold tracking-tight text-fg truncate">{selectedBlock ? 'Editar bloqueo de agenda' : 'Bloquear horario'}</h3>
               </div>
-              <button type="button" onClick={() => setIsBlockFormOpen(false)} className="text-white hover:bg-white/15 w-9 h-9 -m-1.5 flex items-center justify-center rounded-lg transition-colors" aria-label="Cerrar">
-                <X className="w-5 h-5" />
+              <button type="button" onClick={() => setIsBlockFormOpen(false)} className="text-fg-muted hover:text-fg hover:bg-surface-muted w-10 h-10 -mr-2 flex items-center justify-center rounded-control transition-colors focus-visible:outline-2 focus-visible:outline-brand" aria-label="Cerrar">
+                <X className="w-5 h-5" aria-hidden="true" />
               </button>
             </div>
 
             <form onSubmit={handleBlockFormSubmit} className="p-5 space-y-4">
               {blockFormError && (
-                <div role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <div role="alert" className="p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-sm flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
                   <span>{blockFormError}</span>
                 </div>
               )}
 
-              <div>
-                <label htmlFor="agendacale-fecha-de-inicio" className="block text-slate-600 text-xs font-bold mb-1.5">Fecha de Inicio *</label>
-                <input id="agendacale-fecha-de-inicio"
+              <Field label="Fecha de inicio" required>
+                <Input
+                  id="agendacale-fecha-de-inicio"
                   type="date"
                   required
                   value={blockFechaInicio}
-                  onChange={(e) => setBlockFechaInicio(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                  onChange={(e: any) => setBlockFechaInicio(e.target.value)}
                 />
-              </div>
+              </Field>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
                 <input
                   type="checkbox"
                   id="blockEsVariosDias"
@@ -1467,104 +1520,90 @@ export default function AgendaCalendar({
                       setBlockEsTodoElDia(true);
                     }
                   }}
-                  className="rounded text-teal-600 w-4 h-4 cursor-pointer"
+                  className="rounded accent-brand-solid w-5 h-5 cursor-pointer shrink-0"
                 />
-                <label htmlFor="blockEsVariosDias" className="text-xs font-bold text-slate-700 cursor-pointer">Bloquear varios días (ej. vacaciones)</label>
+                <label htmlFor="blockEsVariosDias" className="text-sm font-medium text-fg cursor-pointer min-h-10 flex items-center pl-2 flex-1">Bloquear varios días (ej. vacaciones)</label>
               </div>
 
               {blockEsVariosDias && (
-                <div>
-                  <label htmlFor="agendacale-fecha-de-fin" className="block text-slate-600 text-xs font-bold mb-1.5">Fecha de Fin *</label>
-                  <input id="agendacale-fecha-de-fin"
+                <Field label="Fecha de fin" required>
+                  <Input
+                    id="agendacale-fecha-de-fin"
                     type="date"
                     required
                     value={blockFechaFin}
-                    onChange={(e) => setBlockFechaFin(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                    onChange={(e: any) => setBlockFechaFin(e.target.value)}
                   />
-                </div>
+                </Field>
               )}
 
               {!blockEsVariosDias && (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
                   <input
                     type="checkbox"
                     id="blockEsTodoElDia"
                     checked={blockEsTodoElDia}
                     onChange={(e) => setBlockEsTodoElDia(e.target.checked)}
-                    className="rounded text-teal-600 w-4 h-4 cursor-pointer"
+                    className="rounded accent-brand-solid w-5 h-5 cursor-pointer shrink-0"
                   />
-                  <label htmlFor="blockEsTodoElDia" className="text-xs font-bold text-slate-700 cursor-pointer">Todo el día</label>
+                  <label htmlFor="blockEsTodoElDia" className="text-sm font-medium text-fg cursor-pointer min-h-10 flex items-center pl-2 flex-1">Todo el día</label>
                 </div>
               )}
 
               {!blockEsVariosDias && !blockEsTodoElDia && (
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label htmlFor="agendacale-hora-inicio-2" className="block text-slate-600 text-xs font-bold mb-1.5">Hora Inicio *</label>
-                    <input id="agendacale-hora-inicio-2"
+                  <Field label="Hora de inicio" required>
+                    <Input
+                      id="agendacale-hora-inicio-2"
                       type="time"
                       required
                       value={blockHoraInicio}
-                      onChange={(e) => setBlockHoraInicio(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                      onChange={(e: any) => setBlockHoraInicio(e.target.value)}
                     />
-                  </div>
-                  <div>
-                    <label htmlFor="agendacale-hora-fin" className="block text-slate-600 text-xs font-bold mb-1.5">Hora Fin *</label>
-                    <input id="agendacale-hora-fin"
+                  </Field>
+                  <Field label="Hora de fin" required>
+                    <Input
+                      id="agendacale-hora-fin"
                       type="time"
                       required
                       value={blockHoraFin}
-                      onChange={(e) => setBlockHoraFin(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
+                      onChange={(e: any) => setBlockHoraFin(e.target.value)}
                     />
-                  </div>
+                  </Field>
                 </div>
               )}
 
-              <div>
-                <label htmlFor="agendacale-motivo-opcional" className="block text-slate-600 text-xs font-bold mb-1.5">Motivo (opcional)</label>
-                <input id="agendacale-motivo-opcional"
+              <Field label="Motivo (opcional)">
+                <Input
+                  id="agendacale-motivo-opcional"
                   type="text"
                   value={blockMotivo}
-                  onChange={(e) => setBlockMotivo(e.target.value)}
+                  onChange={(e: any) => setBlockMotivo(e.target.value)}
                   placeholder="ej: Vacaciones, Capacitación, Cita personal"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
                 />
-              </div>
+              </Field>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100">
-                {selectedBlock ? (
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteBlock(selectedBlock.id)}
-                    className="min-h-10 px-2 -ml-2 rounded-lg text-rose-700 hover:bg-rose-50 text-xs font-bold flex items-center gap-1.5 transition-colors"
-                  >
-                    <Trash2 className="w-4 h-4" aria-hidden="true" />
-                    Eliminar bloqueo
-                  </button>
-                ) : (
-                  <div></div>
-                )}
-
-                <div className="flex gap-2 ml-auto">
-                  <button
-                    type="button"
-                    onClick={() => setIsBlockFormOpen(false)}
-                    className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold px-4 rounded-xl transition-colors"
-                  >
+              <div className="pt-4 border-t border-border space-y-3">
+                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+                  <Button variant="secondary" onClick={() => setIsBlockFormOpen(false)}>
                     Cerrar
-                  </button>
-                  <button
-                    type="submit"
-                    className="min-h-10 text-white text-xs font-bold px-4 rounded-xl shadow-xs flex items-center gap-1.5 hover:brightness-110 transition-[filter]"
-                    style={{ backgroundColor: themeColor }}
-                  >
-                    <Check className="w-4 h-4" aria-hidden="true" />
+                  </Button>
+                  <Button type="submit" icon={<Check className="w-4 h-4" aria-hidden="true" />}>
                     {selectedBlock ? 'Guardar cambios' : 'Bloquear'}
-                  </button>
+                  </Button>
                 </div>
+                {selectedBlock && (
+                  <div className="pt-3 border-t border-dashed border-danger/30 flex justify-start">
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteBlock(selectedBlock.id)}
+                      className="min-h-10 px-3 -ml-3 rounded-control text-danger hover:bg-danger-soft text-sm font-semibold flex items-center gap-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-danger"
+                    >
+                      <Trash2 className="w-4 h-4" aria-hidden="true" />
+                      Eliminar bloqueo
+                    </button>
+                  </div>
+                )}
               </div>
             </form>
           </div>

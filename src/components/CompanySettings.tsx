@@ -3,10 +3,11 @@ import PlantillaDietaManager from './PlantillaDietaManager';
 import { Company, CompaniaSmtpConfig, SmtpConfigInput, HaciendaConfig, HaciendaConfigInput, User, HorarioAtencion, HorarioDomicilio, DiaSemana, DEFAULT_HORARIO_ATENCION, Servicio, PorcentajeDieta, PlantillaDieta, PerfilCompania } from '../data/mockData';
 import CorreoEntranteSettings from './CorreoEntranteSettings';
 import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
-import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X, Loader2 } from 'lucide-react';
+import { Plus, Check, Settings, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X, Palette, CalendarCheck } from 'lucide-react';
 import { notify, confirmar } from './ui/Feedback';
 import { baseDesdePrecioConIva, formatearColones, ivaEfectivo, precioConIva } from '../utils/precios';
-import { Badge } from './ui';
+import { Avatar, Badge, Button, Card, CardBody, CardFooter, CardHeader, EmptyState, Field, IconButton, Input, Select, Textarea, cx } from './ui';
+import { buttonSizes, buttonVariants } from './ui/Button';
 
 // MySQL devuelve tinyint (0/1) y en memoria boolean; sin dato = reserva automática activa.
 const reservaActiva = (v: boolean | number | null | undefined): boolean => (v == null ? true : !!v);
@@ -56,6 +57,34 @@ function validarHorarioDomicilio(h: HorarioDomicilio): Partial<Record<DiaSemana,
   }
   return errores;
 }
+
+// --- Piezas visuales compartidas (solo presentación) ---
+
+type SeccionId = 'empresa' | 'marca' | 'horarios' | 'servicios' | 'usuarios' | 'smtp' | 'correo-entrante' | 'hacienda' | 'reservas' | 'dietas';
+
+const SECCION_PREFIJO = 'cs-';
+
+/** Ancla de una sección del índice lateral. */
+function Seccion({ id, children }: { id: SeccionId; children: React.ReactNode }) {
+  return <section id={`${SECCION_PREFIJO}${id}`} className="scroll-mt-20">{children}</section>;
+}
+
+const tituloConIcono = (icono: React.ReactNode, texto: string) => (
+  <span className="inline-flex items-center gap-2">
+    <span className="text-brand-ink [&_svg]:w-5 [&_svg]:h-5" aria-hidden="true">{icono}</span>
+    {texto}
+  </span>
+);
+
+// Segmentado (opción única) para tipo de servicio y modalidad.
+const segmento = (activo: boolean) => cx(
+  'min-h-11 px-3 rounded-control border-2 text-sm font-semibold transition-colors',
+  activo ? 'border-brand bg-brand-soft text-brand-ink' : 'border-border text-fg-muted hover:bg-surface-muted'
+);
+
+const filaCheck = 'flex items-start gap-3 min-h-10 py-1 cursor-pointer text-sm text-fg';
+const cajaCheck = 'mt-0.5 w-5 h-5 shrink-0 accent-brand-solid';
+const leyenda = 'px-1.5 text-xs font-semibold uppercase tracking-wide text-fg-muted';
 
 interface CompanySettingsProps {
   companies: Company[];
@@ -166,6 +195,9 @@ export default function CompanySettings({
   const [ajusteStockValor, setAjusteStockValor] = useState('');
   const [ajusteStockNotas, setAjusteStockNotas] = useState('');
   const [ajusteStockGuardando, setAjusteStockGuardando] = useState(false);
+
+  // Índice de secciones: sección resaltada en el índice (solo navegación, no afecta datos).
+  const [seccionActiva, setSeccionActiva] = useState<SeccionId>('empresa');
 
   useEffect(() => {
     setIsAddingUser(false);
@@ -888,1504 +920,1314 @@ export default function CompanySettings({
     setHorario(prev => ({ ...prev, [dia]: cerrado ? { abre: null, cierra: null } : { abre: '08:00', cierra: '18:00' } }));
   };
 
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5">
-      <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-3">
-        <div className="flex items-center gap-2">
-          <Building className="w-5 h-5 text-slate-500" style={{ color: currentCompany.colorPrimario }} />
-          <div>
-            <h3 className="text-sm font-bold text-slate-800">Clínica / Empresa Activa</h3>
-            <p className="text-[11px] text-slate-500">Configuración de identidad visual costarricense</p>
-          </div>
-        </div>
-        {companies.length > 1 && (
-          <button
-            onClick={openAddForm}
-            className="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Nueva
-          </button>
-        )}
-      </div>
+  // --- Índice de secciones (solo navegación) ---
+  const esAdmin = currentUser.rol === 'Administrador';
+  // Porcentajes y plantillas de dieta son de nutrición: no aplican a clínicas solo de
+  // Fisioterapia, Spa o Legal (mismo criterio que muestraNutricion en App.tsx).
+  const muestraDietas = (currentCompany.perfilCompania || 'Ambas') === 'Nutrición' || (currentCompany.perfilCompania || 'Ambas') === 'Ambas';
+  const enVista = !isEditing && !isAdding;
 
-      {/* Select Company Grid */}
-      {companies.length > 1 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
-          {companies.map((c) => {
-            const isSelected = c.id === selectedCompanyId;
+  const seccionesNav: Array<{ id: SeccionId; label: string }> = enVista
+    ? [
+        { id: 'empresa', label: 'Empresa' },
+        { id: 'marca', label: 'Marca' },
+        ...(esAdmin ? [
+          { id: 'horarios' as SeccionId, label: 'Horarios' },
+          { id: 'servicios' as SeccionId, label: 'Servicios' },
+          { id: 'usuarios' as SeccionId, label: 'Usuarios' }
+        ] : []),
+        { id: 'smtp', label: 'Correo SMTP' },
+        { id: 'correo-entrante', label: 'Correo entrante' },
+        { id: 'hacienda', label: 'Hacienda' },
+        { id: 'reservas', label: 'Reservas en línea' },
+        ...(esAdmin && muestraDietas ? [{ id: 'dietas' as SeccionId, label: 'Dietas' }] : [])
+      ]
+    : [
+        { id: 'empresa', label: 'Empresa' },
+        { id: 'marca', label: 'Marca' },
+        { id: 'reservas', label: 'Reservas en línea' }
+      ];
+
+  const irASeccion = (id: SeccionId) => {
+    setSeccionActiva(id);
+    const el = document.getElementById(`${SECCION_PREFIJO}${id}`);
+    if (!el) return;
+    const sinMovimiento = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: sinMovimiento ? 'auto' : 'smooth', block: 'start' });
+  };
+
+  // Resalta en el índice la sección que está a la vista mientras se hace scroll.
+  const claveNav = seccionesNav.map(s => s.id).join(',');
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return;
+    const elementos = claveNav
+      .split(',')
+      .map(id => document.getElementById(`${SECCION_PREFIJO}${id}`))
+      .filter((el): el is HTMLElement => el !== null);
+    if (elementos.length === 0) return;
+    const observer = new IntersectionObserver(entries => {
+      const visible = entries
+        .filter(e => e.isIntersecting)
+        .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (visible) setSeccionActiva(visible.target.id.slice(SECCION_PREFIJO.length) as SeccionId);
+    }, { rootMargin: '-10% 0px -70% 0px' });
+    elementos.forEach(el => observer.observe(el));
+    return () => observer.disconnect();
+  }, [claveNav, selectedCompanyId]);
+
+  const renderDato = (etiqueta: string, valor: React.ReactNode) => (
+    <div className="min-w-0">
+      <dt className="text-xs text-fg-muted">{etiqueta}</dt>
+      <dd className="text-sm font-medium text-fg break-words">{valor}</dd>
+    </div>
+  );
+
+  // Selector de color de marca: el valor elegido se sigue mostrando en el propio selector.
+  const renderColor = (idCampo: string, etiqueta: string, valor: string, onCambio: (v: string) => void) => (
+    <div>
+      <label htmlFor={idCampo} className="block text-xs font-semibold text-fg mb-1.5">{etiqueta}</label>
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          aria-label={`${etiqueta} (selector de color)`}
+          value={valor}
+          onChange={(e) => onCambio(e.target.value)}
+          className="w-11 h-11 shrink-0 rounded-control cursor-pointer border border-border-strong bg-surface p-1"
+        />
+        <Input id={idCampo} type="text" value={valor} onChange={(e) => onCambio(e.target.value)} wrapperClassName="flex-1 min-w-0" className="font-mono" />
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="max-w-6xl lg:grid lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-8 lg:items-start">
+      {/* Índice lateral (escritorio) */}
+      <nav aria-label="Secciones de la configuración" className="hidden lg:block lg:sticky lg:top-4">
+        <ul className="space-y-0.5">
+          {seccionesNav.map(s => {
+            const activa = s.id === seccionActiva;
             return (
-              <div
-                key={c.id}
-                onClick={() => handleSelect(c.id)}
-                className={`p-3 rounded-xl border-2 cursor-pointer transition-all flex items-center justify-between ${
-                  isSelected
-                    ? 'border-slate-800 bg-slate-50/50 shadow-sm'
-                    : 'border-slate-100 hover:border-slate-200 bg-white'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <img
-                    src={c.logoUrl}
-                    alt={c.nombreComercial}
-                    className="w-10 h-10 object-cover rounded-lg border border-slate-200"
-                    referrerPolicy="no-referrer"
-                  />
-                  <div>
-                    <span className="font-bold text-xs text-slate-800 block">{c.nombreComercial}</span>
-                    <span className="text-[11px] text-slate-500 block truncate max-w-[120px]">{c.identificacion}</span>
-                  </div>
-                </div>
-                {isSelected && (
-                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[11px]" style={{ backgroundColor: c.colorPrimario }}>
-                    <Check className="w-3 h-3" />
-                  </div>
-                )}
-              </div>
+              <li key={s.id}>
+                <button
+                  type="button"
+                  onClick={() => irASeccion(s.id)}
+                  aria-current={activa ? 'true' : undefined}
+                  className={cx(
+                    'w-full min-h-10 px-3 rounded-control text-left text-sm font-semibold transition-colors',
+                    activa ? 'bg-brand-soft text-brand-ink' : 'text-fg-muted hover:bg-surface-muted hover:text-fg'
+                  )}
+                >
+                  {s.label}
+                </button>
+              </li>
             );
           })}
+        </ul>
+      </nav>
+
+      <div className="space-y-6 min-w-0">
+        {/* Selector de sección (móvil y tablet) */}
+        <div className="lg:hidden">
+          <label htmlFor="cs-ir-a" className="block text-xs font-semibold text-fg mb-1.5">Ir a la sección</label>
+          <Select id="cs-ir-a" value={seccionActiva} onChange={(e) => irASeccion(e.target.value as SeccionId)}>
+            {seccionesNav.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </Select>
         </div>
-      )}
 
-      {/* View Details / Customize Panel */}
-      {!isEditing && !isAdding && (
-        <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-          <div className="flex justify-between items-start mb-2">
-            <span className="text-[11px] font-bold text-slate-500 uppercase">Identidad de Marca</span>
-            <button
-              onClick={() => setIsEditing(true)}
-              className="text-[11px] font-bold text-teal-700 hover:underline flex items-center gap-1"
-              style={{ color: currentCompany.colorPrimario }}
-            >
-              <Settings className="w-3 h-3" />
-              Editar Marca
-            </button>
-          </div>
-          <div className="grid grid-cols-2 gap-4 text-xs">
-            <div>
-              <span className="text-slate-500 block">Razón Social:</span>
-              <span className="font-medium text-slate-800 block truncate">{currentCompany.razonSocial}</span>
-            </div>
-            <div>
-              <span className="text-slate-500 block">Correo Facturas:</span>
-              <span className="font-medium text-slate-800 block truncate">{currentCompany.correoEmisor}</span>
-            </div>
-            <div>
-              <span className="text-slate-500 block">IVA por Defecto:</span>
-              <span className="font-semibold text-slate-800 block">
-                {currentCompany.ivaPorDefecto}%
-              </span>
-            </div>
-            <div>
-              <span className="text-slate-500 block">Actividad Económica:</span>
-              <span className="font-medium text-slate-800 block truncate">
-                {currentCompany.actividadEconomica || 'No configurada'}
-              </span>
-            </div>
-            <div>
-              <span className="text-slate-500 block">Perfil de Clínica:</span>
-              <span className="font-extrabold text-slate-800 bg-slate-100 border border-slate-200 rounded-md px-1.5 py-0.5 inline-block mt-0.5 text-[11px]">
-                {currentCompany.perfilCompania || 'Ambas'}
-              </span>
-            </div>
-            <div>
-              <span className="text-slate-500 block">Colores Marca:</span>
-              <div className="flex gap-1.5 mt-0.5">
-                <span className="w-4 h-4 rounded-sm border border-slate-300 inline-block" style={{ backgroundColor: currentCompany.colorPrimario }} title="Primario"></span>
-                <span className="w-4 h-4 rounded-sm border border-slate-300 inline-block" style={{ backgroundColor: currentCompany.colorSidebar }} title="Sidebar"></span>
-              </div>
-            </div>
-            <div>
-              <span className="text-slate-500 block">Citas en Línea:</span>
-              <span className="font-medium text-slate-800 block">
-                {currentCompany.requiereConfirmacionCitas ? 'Requieren confirmación manual' : 'Se auto-confirman'}
-              </span>
-            </div>
-            <div>
-              <span className="text-slate-500 block">Plazos de crédito:</span>
-              <span className="font-medium text-slate-800 block">
-                Clientes {currentCompany.plazoCreditoClientesDias ?? '—'} días · Proveedores {currentCompany.plazoCreditoProveedoresDias ?? '—'} días
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SMTP/Notifications configuration per company */}
-      {!isEditing && !isAdding && (
-        <form onSubmit={handleSaveSmtp} className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4 text-xs">
-          <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
-            <Mail className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
-            <div>
-              <h4 className="font-bold text-slate-800">Parámetros SMTP y Alertas por Correo</h4>
-              <p className="text-[11px] text-slate-500">Configura las credenciales de correo de la clínica para enviar recordatorios y confirmaciones automáticas de citas</p>
-            </div>
-          </div>
-
-          {/* Toggle Activo */}
-          <div className="flex items-center justify-between bg-white p-3.5 rounded-xl border border-slate-200">
-            <div>
-              <span className="font-bold text-slate-800 block">Notificaciones de Agenda Activas</span>
-              <span className="text-[11px] text-slate-500 block">Si se apaga, las citas no enviarán correos automáticos de confirmación, modificación o cancelación</span>
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={smtpActivo}
-                onChange={(e) => setSmtpActivo(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-slate-200 rounded-full peer peer-focus:ring-2 peer-focus:ring-teal-300 dark:peer-focus:ring-teal-800 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-600"></div>
-            </label>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-slate-600 mb-1 font-semibold">Proveedor SMTP</label>
-              <select
-                value={smtpProveedor}
-                onChange={(e) => {
-                  const val = e.target.value as CompaniaSmtpConfig['proveedor'];
-                  setSmtpProveedor(val);
-                  if (val === 'GMAIL') {
-                    setSmtpHost('smtp.gmail.com');
-                    setSmtpPort(587);
-                    setSmtpSeguridad('TLS');
-                  } else if (val === 'OUTLOOK') {
-                    setSmtpHost('smtp.office365.com');
-                    setSmtpPort(587);
-                    setSmtpSeguridad('TLS');
-                  }
-                }}
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              >
-                <option value="GMAIL">Google (Gmail)</option>
-                <option value="OUTLOOK">Microsoft (Outlook / Office 365)</option>
-                <option value="OTRO">Servidor SMTP Privado (Otro)</option>
-              </select>
-            </div>
-
-            <div>
-              <label htmlFor="companyset-servidor-host-smtp" className="block text-slate-600 mb-1 font-semibold">Servidor Host SMTP</label>
-              <input id="companyset-servidor-host-smtp"
-                type="text"
-                required
-                value={smtpHost}
-                onChange={(e) => setSmtpHost(e.target.value)}
-                placeholder="ej: smtp.mailgun.org"
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label htmlFor="companyset-puerto" className="block text-slate-600 mb-1 font-semibold">Puerto</label>
-                <input id="companyset-puerto"
-                  type="number"
-                  required
-                  value={smtpPort}
-                  onChange={(e) => setSmtpPort(parseInt(e.target.value))}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-                />
-              </div>
-              <div>
-                <label htmlFor="companyset-seguridad" className="block text-slate-600 mb-1 font-semibold">Seguridad</label>
-                <select id="companyset-seguridad"
-                  value={smtpSeguridad}
-                  onChange={(e) => setSmtpSeguridad(e.target.value as CompaniaSmtpConfig['smtpSeguridad'])}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-                >
-                  <option value="TLS">TLS (Recom.)</option>
-                  <option value="SSL">SSL</option>
-                  <option value="NINGUNA">Ninguna</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="companyset-usuario-de-autenticacion-smtp" className="block text-slate-600 mb-1 font-semibold">Usuario de Autenticación SMTP</label>
-              <input id="companyset-usuario-de-autenticacion-smtp"
-                type="text"
-                required
-                value={smtpUsuario}
-                onChange={(e) => setSmtpUsuario(e.target.value)}
-                placeholder="ej: contacto@miempresa.com"
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              />
-            </div>
-            <div>
-              <label htmlFor="companyset-contrasena-smtp-app-password" className="block text-slate-600 mb-1 font-semibold">Contraseña SMTP / App Password</label>
-              <input id="companyset-contrasena-smtp-app-password"
-                type="password"
-                required={!smtpTieneContrasena}
-                value={smtpPassword}
-                onChange={(e) => setSmtpPassword(e.target.value)}
-                placeholder={smtpTieneContrasena ? '•••••••• (dejar en blanco para mantener la actual)' : 'Ingresa la contraseña o App Password'}
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 border-t border-slate-200/60">
-            <div>
-              <label htmlFor="companyset-nombre-de-remitente" className="block text-slate-600 mb-1 font-semibold">Nombre de Remitente</label>
-              <input id="companyset-nombre-de-remitente"
-                type="text"
-                required
-                value={smtpRemitenteNombre}
-                onChange={(e) => setSmtpRemitenteNombre(e.target.value)}
-                placeholder="ej: Clínica FisioNutri"
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              />
-            </div>
-            <div>
-              <label htmlFor="companyset-correo-de-remitente" className="block text-slate-600 mb-1 font-semibold">Correo de Remitente</label>
-              <input id="companyset-correo-de-remitente"
-                type="email"
-                required
-                value={smtpRemitenteCorreo}
-                onChange={(e) => setSmtpRemitenteCorreo(e.target.value)}
-                placeholder="ej: citas@miempresa.com"
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              />
-            </div>
-            <div>
-              <label htmlFor="companyset-recordatorio-automatico" className="block text-slate-600 mb-1 font-semibold">Recordatorio Automático</label>
-              <select id="companyset-recordatorio-automatico"
-                value={smtpRecordatorioHoras}
-                onChange={(e) => setSmtpRecordatorioHoras(parseInt(e.target.value))}
-                className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              >
-                <option value={12}>12 horas antes de la cita</option>
-                <option value={24}>24 horas antes de la cita</option>
-                <option value={48}>48 horas antes de la cita</option>
-                <option value={72}>72 horas antes de la cita</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="flex justify-end items-center gap-2 pt-1">
-            <button
-              type="button"
-              onClick={handleProbarSmtp}
-              disabled={smtpProbando}
-              className="px-5 py-2 rounded-xl font-bold flex items-center gap-1.5 border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {smtpProbando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-              Enviar correo de prueba
-            </button>
-            <button
-              type="submit"
-              className="text-white px-5 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-              style={{ backgroundColor: currentCompany.colorPrimario }}
-            >
-              <Check className="w-4 h-4" />
-              Guardar Configuración SMTP
-            </button>
-          </div>
-        </form>
-      )}
-
-      {!isEditing && !isAdding && <CorreoEntranteSettings themeColor={currentCompany.colorPrimario} />}
-
-      {/* Hacienda Digital Signature configuration per company — solo Administrador (el servidor
-          también lo exige): credenciales, certificado y ambiente deciden qué se declara a Hacienda. */}
-      {!isEditing && !isAdding && currentUser.rol !== 'Administrador' && (
-        <p className="mt-5 p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-600">
-          La configuración de Hacienda (credenciales ATV, firma digital y ambiente) solo la puede ver y cambiar un usuario Administrador.
-        </p>
-      )}
-      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
-        <form onSubmit={handleSaveHacienda} className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4 text-xs">
-          <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
-            <ShieldCheck className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
-            <div>
-              <h4 className="font-bold text-slate-800">Firma Digital Hacienda (Facturación Electrónica)</h4>
-              <p className="text-[11px] text-slate-500">Certificado criptográfico (.p12) y credenciales ATV para firmar comprobantes electrónicos</p>
-            </div>
-          </div>
-
-          {haciendaMensaje && (
-            <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${haciendaMensaje.tipo === 'ok' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-rose-50 border-rose-100 text-rose-600'}`}>
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{haciendaMensaje.texto}</span>
-            </div>
-          )}
-
-          {haciendaInfoCertificado && (
-            <div className="p-3 rounded-xl border border-slate-200 bg-white text-[11px] space-y-1">
-              <div><span className="font-bold text-slate-600">Sujeto: </span>{haciendaInfoCertificado.sujeto}</div>
-              <div><span className="font-bold text-slate-600">Emisor: </span>{haciendaInfoCertificado.emisor}</div>
-              <div><span className="font-bold text-slate-600">Vence: </span>{new Date(haciendaInfoCertificado.validoHasta).toLocaleDateString('es-CR')}</div>
-              {haciendaInfoCertificado.expirado && <div className="text-rose-600 font-bold">Este certificado está VENCIDO.</div>}
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="companyset-ambiente" className="block text-slate-600 mb-1 font-semibold">Ambiente</label>
-              <select id="companyset-ambiente"
-                value={haciendaAmbiente}
-                onChange={(e) => setHaciendaAmbiente(e.target.value as 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL')}
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              >
-                <option value="PRUEBAS_LOCAL">Pruebas Locales (no envía a Hacienda)</option>
-                <option value="SANDBOX">Sandbox (Pruebas de Hacienda — envía tráfico real)</option>
-                <option value="PRODUCCION">Producción</option>
-              </select>
-            </div>
-            <div>
-              <label htmlFor="companyset-usuario-atv" className="block text-slate-600 mb-1 font-semibold">Usuario ATV</label>
-              <input id="companyset-usuario-atv"
-                type="text"
-                value={haciendaUsuarioAtv}
-                onChange={(e) => setHaciendaUsuarioAtv(e.target.value)}
-                placeholder="ej: cpf-01-1234-5678"
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label htmlFor="companyset-contrasena-atv" className="block text-slate-600 mb-1 font-semibold">Contraseña ATV</label>
-            <input id="companyset-contrasena-atv"
-              type="password"
-              value={haciendaPasswordAtv}
-              onChange={(e) => setHaciendaPasswordAtv(e.target.value)}
-              placeholder={haciendaTienePasswordAtv ? '•••••••• (dejar en blanco para mantener la actual)' : 'Ingresa la contraseña ATV'}
-              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="companyset-certificado-criptografico-p12" className="block text-slate-600 mb-1 font-semibold flex items-center gap-1">
-                <Upload className="w-3 h-3" /> Certificado Criptográfico (.p12)
-              </label>
-              <input id="companyset-certificado-criptografico-p12"
-                type="file"
-                accept=".p12,.pfx"
-                onChange={handleCertificadoFileChange}
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              />
-              <span className="text-[11px] text-slate-500 block mt-1">
-                {haciendaCertificadoNombreNuevo
-                  ? `Nuevo archivo seleccionado: ${haciendaCertificadoNombreNuevo}`
-                  : haciendaTieneCertificado
-                  ? `Archivo actual: ${haciendaCertificadoNombreArchivo || 'certificado.p12'}${haciendaCertificadoVenceEn ? ` · vence ${haciendaCertificadoVenceEn}` : ''}`
-                  : 'Ningún certificado configurado todavía.'}
-              </span>
-            </div>
-            <div>
-              <label htmlFor="companyset-pin-del-certificado" className="block text-slate-600 mb-1 font-semibold">PIN del Certificado</label>
-              <input id="companyset-pin-del-certificado"
-                type="password"
-                value={haciendaCertificadoPin}
-                onChange={(e) => setHaciendaCertificadoPin(e.target.value)}
-                placeholder={haciendaTieneCertificado ? '•••••••• (dejar en blanco para mantener el actual)' : 'PIN del certificado .p12'}
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              />
-            </div>
-          </div>
-
-          {currentUser.rol === 'Administrador' && (
-            <fieldset className="border border-slate-200 rounded-xl p-3 space-y-2">
-              <legend className="px-1 font-semibold text-slate-600">Corrección de numeración</legend>
-              <p className="text-[11px] text-slate-500">
-                Úselo solo si Hacienda rechaza con «el documento ya fue emitido» porque esta empresa ya facturó con otro sistema.
-                Escriba el último número que ya emitió ante Hacienda; el siguiente comprobante usará ese más uno. Solo se puede subir.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                {CAMPOS_CONSECUTIVO.map(({ campo, etiqueta }) => (
-                  <div key={campo}>
-                    <label htmlFor={`companyset-consecutivo-${campo}`} className="block text-slate-600 mb-1 font-semibold">{etiqueta} — último emitido</label>
-                    <input id={`companyset-consecutivo-${campo}`}
-                      type="number" min={haciendaConsecutivos[campo]} step="1" inputMode="numeric"
-                      value={haciendaCorreccion[campo]}
-                      onChange={(e) => setHaciendaCorreccion(prev => ({ ...prev, [campo]: e.target.value }))}
-                      placeholder="Sin cambio"
-                      aria-describedby={`companyset-consecutivo-${campo}-actual`}
-                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-                    />
-                    <span id={`companyset-consecutivo-${campo}-actual`} className="block text-[11px] text-slate-500 mt-0.5">Actual: {haciendaConsecutivos[campo]}</span>
-                  </div>
-                ))}
-              </div>
-            </fieldset>
-          )}
-
-          <div className="flex items-center justify-between pt-1">
-            <button
-              type="button"
-              onClick={handleProbarCertificado}
-              disabled={haciendaProbando || !haciendaTieneCertificado}
-              className="bg-slate-200 hover:bg-slate-300 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 px-4 py-2 rounded-xl font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <ShieldCheck className="w-4 h-4" />
-              {haciendaProbando ? 'Probando...' : 'Probar Configuración'}
-            </button>
-
-            <button
-              type="submit"
-              disabled={haciendaGuardando}
-              className="text-white px-5 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer disabled:opacity-60"
-              style={{ backgroundColor: currentCompany.colorPrimario }}
-            >
-              <Check className="w-4 h-4" />
-              {haciendaGuardando ? 'Guardando...' : 'Guardar Configuración Hacienda'}
-            </button>
-          </div>
-        </form>
-      )}
-
-      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
-        <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4 text-xs">
-          <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
-            <div className="flex items-center gap-2">
-              <UsersIcon className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
-              <div>
-                <h4 className="font-bold text-slate-800">Usuarios y Colaboradores</h4>
-                <p className="text-[11px] text-slate-500">
-                  {activeUserCount} de {currentCompany.maxUsuarios} usuarios activos permitidos por tu plan
-                </p>
-              </div>
-            </div>
-            {!isAddingUser && (
-              <button
-                onClick={() => setIsAddingUser(true)}
-                disabled={userLimitReached}
-                className="flex items-center gap-1 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
-              >
-                <UserPlus className="w-3.5 h-3.5" />
-                Nuevo Colaborador
-              </button>
-            )}
-          </div>
-
-          {userLimitReached && !isAddingUser && (
-            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>Alcanzaste el límite de {currentCompany.maxUsuarios} usuarios de tu plan. Contacta al administrador de la plataforma para ampliarlo.</span>
-            </div>
-          )}
-
-          {isAddingUser && (
-            <form onSubmit={handleCreateUser} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="companyset-nombre-completo" className="block text-slate-600 font-medium mb-1">Nombre Completo *</label>
-                  <input id="companyset-nombre-completo"
-                    type="text"
-                    value={newUserNombre}
-                    onChange={(e) => setNewUserNombre(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
+        {/* Empresa activa */}
+        <Card>
+          <CardBody className="space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                {currentCompany.logoUrl ? (
+                  <img
+                    src={currentCompany.logoUrl}
+                    alt=""
+                    className="w-12 h-12 shrink-0 object-cover rounded-control border border-border"
+                    referrerPolicy="no-referrer"
                   />
-                </div>
-                <div>
-                  <label htmlFor="companyset-correo" className="block text-slate-600 font-medium mb-1">Correo *</label>
-                  <input id="companyset-correo"
-                    type="email"
-                    value={newUserCorreo}
-                    onChange={(e) => setNewUserCorreo(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="companyset-nombre-de-usuario" className="block text-slate-600 font-medium mb-1">Nombre de Usuario *</label>
-                  <input id="companyset-nombre-de-usuario"
-                    type="text"
-                    value={newUserUsuario}
-                    onChange={(e) => setNewUserUsuario(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="companyset-contrasena" className="block text-slate-600 font-medium mb-1">Contraseña *</label>
-                  <input id="companyset-contrasena"
-                    type="password"
-                    value={newUserContrasena}
-                    onChange={(e) => setNewUserContrasena(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                  />
-                </div>
-              </div>
-              <div>
-                <label htmlFor="companyset-rol" className="block text-slate-600 font-medium mb-1">Rol</label>
-                <select id="companyset-rol"
-                  value={newUserRol}
-                  onChange={(e) => setNewUserRol(e.target.value as 'Administrador' | 'Profesional' | 'Contador')}
-                  aria-describedby="companyset-rol-ayuda"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                >
-                  <option value="Profesional">Profesional</option>
-                  <option value="Administrador">Administrador</option>
-                  <option value="Contador">Contador</option>
-                </select>
-                {newUserRol === 'Contador' && (
-                  <p id="companyset-rol-ayuda" className="text-[11px] text-slate-500 mt-1">
-                    Contador: acceso de solo lectura a facturación, CxP y reportes fiscales; sin acceso a expedientes ni citas.
-                  </p>
-                )}
-              </div>
-              <div className="flex gap-2 justify-end pt-1">
-                <button
-                  type="button"
-                  onClick={() => setIsAddingUser(false)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={userLimitReached}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:cursor-not-allowed"
-                >
-                  Guardar Colaborador
-                </button>
-              </div>
-            </form>
-          )}
-
-          <div className="space-y-1.5">
-            {companyUsers.map(u => (
-              <div key={u.id} className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg">
-                <div>
-                  <span className="font-semibold text-slate-800 block">{u.nombre}</span>
-                  <span className="text-[11px] text-slate-500 flex items-center gap-1.5">
-                    {u.usuario}
-                    <Badge tone={u.rol === 'Administrador' ? 'brand' : u.rol === 'Contador' ? 'info' : 'neutral'}>{u.rol}</Badge>
+                ) : (
+                  <span className="w-12 h-12 shrink-0 rounded-control bg-brand-soft text-brand-ink flex items-center justify-center" aria-hidden="true">
+                    <Building className="w-6 h-6" />
                   </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${u.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
-                    {u.activo ? 'Activo' : 'Inactivo'}
-                  </span>
-                  <button
-                    onClick={() => handleToggleUserActivo(u)}
-                    title={u.activo ? 'Desactivar' : 'Activar'}
-                    className="p-2.5 rounded-lg text-slate-500 hover:bg-slate-100"
-                    aria-label={u.activo ? 'Desactivar' : 'Activar'}
-                  >
-                    <Power className="w-3.5 h-3.5" />
-                  </button>
+                )}
+                <div className="min-w-0">
+                  <h3 className="text-heading font-semibold text-fg tracking-tight truncate">{currentCompany.nombreComercial}</h3>
+                  <p className="text-sm text-fg-muted truncate">Clínica / empresa activa · {currentCompany.identificacion}</p>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
-        <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-4 text-xs">
-          <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
-            <div className="flex items-center gap-2">
-              <Receipt className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
-              <div>
-                <h4 className="font-bold text-slate-800">Servicios y Tarifas</h4>
-                <p className="text-[11px] text-slate-500">
-                  Precio e IVA por servicio prestado. Si dejas el IVA en blanco, se usa el {currentCompany.ivaPorDefecto}% por defecto de la empresa.
-                </p>
-              </div>
+              {companies.length > 1 && (
+                <Button variant="secondary" size="sm" onClick={openAddForm} icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
+                  Nueva
+                </Button>
+              )}
             </div>
-            {!isServicioFormOpen && (
-              <div className="flex items-center gap-2">
-                {currentCompany.perfilCompania !== 'Spa' && currentCompany.perfilCompania !== 'Legal' && (
-                  <button
-                    onClick={handleCargarServiciosDefecto}
-                    disabled={cargandoServiciosDefecto}
-                    className="flex items-center gap-1 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-60"
-                  >
-                    {cargandoServiciosDefecto ? 'Cargando...' : 'Cargar Servicios por Defecto'}
-                  </button>
-                )}
-                <button
-                  onClick={openNewServicioForm}
-                  className="flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Nuevo Servicio o Artículo
-                </button>
-              </div>
-            )}
-          </div>
 
-          {mensajeServiciosDefecto && (
-            <p className="text-[11px] text-slate-500">{mensajeServiciosDefecto}</p>
-          )}
-
-          {isServicioFormOpen && (
-            <form onSubmit={handleSubmitServicio} className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => { setServicioTipo('SERVICIO'); if (servicioUnidadMedida === 'Unid') setServicioUnidadMedida('Sp'); }}
-                  className={`py-1.5 rounded-lg text-xs font-bold border-2 ${servicioTipo === 'SERVICIO' ? 'border-slate-800 bg-slate-50' : 'border-slate-200 text-slate-500'}`}
-                >
-                  Servicio (sesión/cita)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setServicioTipo('ARTICULO'); setServicioUnidadMedida('Unid'); }}
-                  className={`py-1.5 rounded-lg text-xs font-bold border-2 ${servicioTipo === 'ARTICULO' ? 'border-slate-800 bg-slate-50' : 'border-slate-200 text-slate-500'}`}
-                >
-                  Artículo (con existencias)
-                </button>
-              </div>
-              <div className={`grid grid-cols-1 sm:grid-cols-4 gap-3`}>
-                <div>
-                  <label htmlFor="companyset-nombre" className="block text-slate-600 font-medium mb-1">Nombre {servicioTipo === 'ARTICULO' ? 'del Artículo' : 'del Servicio'} *</label>
-                  <input id="companyset-nombre"
-                    type="text"
-                    value={servicioNombre}
-                    onChange={(e) => setServicioNombre(e.target.value)}
-                    placeholder={servicioTipo === 'ARTICULO' ? 'ej: Crema Post-Sesión 250ml' : 'ej: Sesión de Sauna'}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="companyset-precio" className="block text-slate-600 font-medium mb-1">Precio sin IVA (₡) *</label>
-                  <input id="companyset-precio"
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={servicioPrecio}
-                    onChange={(e) => handlePrecioBaseChange(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="companyset-precio-con-iva" className="block text-slate-600 font-medium mb-1">Precio con IVA (precio final) (₡)</label>
-                  <input id="companyset-precio-con-iva"
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={servicioPrecioConIva}
-                    onChange={(e) => handlePrecioConIvaChange(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                  />
-                </div>
-                {servicioTipo === 'SERVICIO' && (
-                  <div>
-                    <label htmlFor="companyset-duracion-min" className="block text-slate-600 font-medium mb-1">Duración (min) *</label>
-                    <input id="companyset-duracion-min"
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={servicioDuracion}
-                      onChange={(e) => setServicioDuracion(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                    />
-                  </div>
-                )}
-                <div>
-                  <label htmlFor="companyset-iva-vacio-por-defecto" className="block text-slate-600 font-medium mb-1">% IVA (vacío = por defecto)</label>
-                  <input id="companyset-iva-vacio-por-defecto"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={servicioIva}
-                    onChange={(e) => handleServicioIvaChange(e.target.value)}
-                    placeholder={`${currentCompany.ivaPorDefecto}%`}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                  />
-                </div>
-              </div>
-              {servicioTipo === 'SERVICIO' && (
-                <div role="group" aria-labelledby="companyset-modalidad-label">
-                  <span id="companyset-modalidad-label" className="block text-slate-600 font-medium mb-1">Disponible en</span>
-                  <div className="grid grid-cols-3 gap-2">
-                    {([['CONSULTORIO', 'Consultorio'], ['DOMICILIO', 'A domicilio'], ['AMBOS', 'Ambos']] as const).map(([valor, etiqueta]) => (
-                      <button
-                        key={valor}
-                        type="button"
-                        onClick={() => setServicioModalidad(valor)}
-                        aria-pressed={servicioModalidad === valor}
-                        className={`py-1.5 rounded-lg text-xs font-bold border-2 ${servicioModalidad === valor ? 'border-slate-800 bg-slate-50' : 'border-slate-200 text-slate-500'}`}
-                      >
-                        {etiqueta}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {servicioTipo === 'ARTICULO' && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 border-t border-slate-100">
-                  <div>
-                    <label htmlFor="companyset-campo" className="block text-slate-600 font-medium mb-1">{servicioEditId != null ? 'Existencia Actual' : 'Existencia Inicial'}</label>
-                    <input id="companyset-campo"
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={servicioStock}
-                      onChange={(e) => setServicioStock(e.target.value)}
-                      disabled={servicioEditId != null}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 disabled:opacity-60"
-                    />
-                    {servicioEditId != null && <p className="text-[11px] text-slate-500 mt-1">Use "Ajustar Stock" en la lista para cambiarla.</p>}
-                  </div>
-                  <div>
-                    <label htmlFor="companyset-stock-minimo" className="block text-slate-600 font-medium mb-1">Stock Mínimo</label>
-                    <input id="companyset-stock-minimo"
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={servicioStockMinimo}
-                      onChange={(e) => setServicioStockMinimo(e.target.value)}
-                      placeholder="Alerta de faltante"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="companyset-costo-unitario" className="block text-slate-600 font-medium mb-1">Costo Unitario (₡)</label>
-                    <input id="companyset-costo-unitario"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={servicioCostoUnitario}
-                      onChange={(e) => setServicioCostoUnitario(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="companyset-codigo-de-barras" className="block text-slate-600 font-medium mb-1">Código de Barras</label>
-                    <input id="companyset-codigo-de-barras"
-                      type="text"
-                      value={servicioCodigoBarras}
-                      onChange={(e) => setServicioCodigoBarras(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                    />
-                  </div>
-                </div>
-              )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-slate-100">
-                <div className="relative">
-                  <label htmlFor="companyset-codigo-cabys-obligatorio-para" className="block text-slate-600 font-medium mb-1">Código CABYS * (obligatorio para facturar)</label>
-                  <input id="companyset-codigo-cabys-obligatorio-para"
-                    type="text"
-                    value={servicioCabys}
-                    onChange={(e) => { setServicioCabys(e.target.value); buscarCabys(e.target.value); }}
-                    placeholder="Digite el código de 13 dígitos o busque por nombre..."
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                  />
-                  {servicioCabys && !/^\d{13}$/.test(servicioCabys.trim()) && (
-                    <p className="text-[11px] text-amber-600 mt-1">El código CABYS debe tener exactamente 13 dígitos.</p>
-                  )}
-                  {buscandoCabys && <p className="text-[11px] text-slate-500 mt-1">Buscando...</p>}
-                  {cabysResultados.length > 0 && (
-                    <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg">
-                      {cabysResultados.map(r => (
-                        <button
-                          type="button"
-                          key={r.codigo}
-                          onClick={() => { setServicioCabys(r.codigo); setCabysResultados([]); }}
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 border-b border-slate-100 last:border-b-0"
-                        >
-                          <span className="font-mono text-[11px] text-slate-500 block">{r.codigo}</span>
-                          <span className="text-slate-800">{r.descripcion}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <label htmlFor="companyset-unidad-de-medida-hacienda" className="block text-slate-600 font-medium mb-1">Unidad de Medida (Hacienda)</label>
-                  <select id="companyset-unidad-de-medida-hacienda"
-                    value={servicioUnidadMedida}
-                    onChange={(e) => setServicioUnidadMedida(e.target.value as 'Sp' | 'Spe' | 'St' | 'Os' | 'h' | 'Unid')}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                  >
-                    {servicioTipo === 'ARTICULO' ? (
-                      <option value="Unid">Unidad</option>
-                    ) : (
-                      <>
-                        <option value="Sp">Servicios Profesionales</option>
-                        <option value="Spe">Servicios Personales</option>
-                        <option value="St">Servicios Técnicos</option>
-                        <option value="Os">Otros Servicios</option>
-                        <option value="h">Horas</option>
-                      </>
-                    )}
-                  </select>
-                </div>
-              </div>
-              <div className="flex gap-2 justify-end pt-1">
-                <button
-                  type="button"
-                  onClick={() => setIsServicioFormOpen(false)}
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700"
-                >
-                  {servicioEditId != null ? 'Guardar Cambios' : 'Guardar Servicio'}
-                </button>
-              </div>
-            </form>
-          )}
-
-          <div className="space-y-1.5">
-            {companyServicios.length === 0 && !isServicioFormOpen && (
-              <p className="text-slate-500 text-center py-3">Todavía no has registrado ningún servicio.</p>
-            )}
-            {companyServicios.map(s => {
-              const esArticulo = s.tipo === 'ARTICULO';
-              const faltante = esArticulo && s.stockMinimo != null && (s.stock || 0) <= s.stockMinimo;
-              return (
-                <div key={s.id} className="p-2.5 bg-white border border-slate-200 rounded-lg">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="font-semibold text-slate-800 inline-flex items-center gap-1.5">
-                        {s.nombre}
-                        <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full ${esArticulo ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-100 text-slate-600'}`}>
-                          {esArticulo ? 'Artículo' : 'Servicio'}
+            {companies.length > 1 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {companies.map((c) => {
+                  const isSelected = c.id === selectedCompanyId;
+                  return (
+                    <button
+                      type="button"
+                      key={c.id}
+                      onClick={() => handleSelect(c.id)}
+                      aria-pressed={isSelected}
+                      className={cx(
+                        'min-h-14 p-3 rounded-card border-2 text-left transition-colors flex items-center justify-between gap-3',
+                        isSelected ? 'border-brand bg-brand-soft' : 'border-border hover:border-border-strong bg-surface'
+                      )}
+                    >
+                      <span className="flex items-center gap-3 min-w-0">
+                        <img
+                          src={c.logoUrl}
+                          alt=""
+                          className="w-10 h-10 object-cover rounded-control border border-border"
+                          referrerPolicy="no-referrer"
+                        />
+                        <span className="min-w-0">
+                          <span className="font-semibold text-sm text-fg block truncate">{c.nombreComercial}</span>
+                          <span className="text-xs text-fg-muted block truncate">{c.identificacion}</span>
                         </span>
                       </span>
-                      <span className="text-[11px] text-slate-500 block">
-                        <span className="text-xs font-bold text-slate-800">{formatearColones(precioConIva(s.precio, ivaEfectivo(s, currentCompany.ivaPorDefecto)))}</span>
-                        {esArticulo ? ` · Existencia: ${s.stock ?? 0}` : ` · ${s.duracionMinutos} min`}
-                      </span>
-                      <span className="text-[11px] text-slate-500 block">
-                        sin IVA {formatearColones(Number(s.precio))} · IVA {ivaEfectivo(s, currentCompany.ivaPorDefecto)}%{s.porcentajeIva == null ? ' (por defecto)' : ''}
-                      </span>
-                      <div className="flex items-center gap-1.5 mt-1">
-                        {!esArticulo && s.modalidad && s.modalidad !== 'AMBOS' ? (
-                          <Badge tone="info">{s.modalidad === 'DOMICILIO' ? 'A domicilio' : 'Consultorio'}</Badge>
-                        ) : !esArticulo && (
-                          <Badge tone="neutral">Consultorio y domicilio</Badge>
-                        )}
-                        {!s.codigoCabys && (
-                          <span className="text-[11px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full inline-block">Sin código CABYS — no se puede facturar</span>
-                        )}
-                        {faltante && (
-                          <span className="text-[11px] font-bold text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded-full inline-block">Faltante (mín: {s.stockMinimo})</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${s.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
-                        {s.activo ? 'Activo' : 'Inactivo'}
-                      </span>
-                      {esArticulo && (
-                        <button
-                          onClick={() => openAjustarStock(s)}
-                          className="text-[11px] font-semibold text-indigo-700 hover:underline"
-                        >
-                          Ajustar Stock
-                        </button>
+                      {isSelected && (
+                        <span className="w-6 h-6 shrink-0 rounded-full bg-brand-solid text-brand-fg flex items-center justify-center" aria-hidden="true">
+                          <Check className="w-3.5 h-3.5" />
+                        </span>
                       )}
-                      <button
-                        onClick={() => openEditServicioForm(s)}
-                        title="Editar"
-                        className="p-2.5 rounded-lg text-slate-500 hover:bg-slate-100"
-                        aria-label="Editar"
-                      >
-                        <Edit className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleToggleServicioActivo(s)}
-                        title={s.activo ? 'Desactivar' : 'Activar'}
-                        className="p-2.5 rounded-lg text-slate-500 hover:bg-slate-100"
-                        aria-label={s.activo ? 'Desactivar' : 'Activar'}
-                      >
-                        <Power className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                  {ajustandoStockId === s.id && (
-                    <form onSubmit={handleGuardarAjusteStock} className="mt-2.5 pt-2.5 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-4 gap-2 items-end">
-                      <div>
-                        <label className="block text-slate-600 font-medium mb-1">Nueva Existencia</label>
-                        <input
-                          type="number"
-                          min="0"
-                          step="1"
-                          value={ajusteStockValor}
-                          onChange={(e) => setAjusteStockValor(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                        />
-                      </div>
-                      <div className="sm:col-span-2">
-                        <label className="block text-slate-600 font-medium mb-1">Motivo (opcional)</label>
-                        <input
-                          type="text"
-                          value={ajusteStockNotas}
-                          onChange={(e) => setAjusteStockNotas(e.target.value)}
-                          placeholder="ej: Conteo físico, merma, compra"
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
-                        />
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setAjustandoStockId(null)}
-                          className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                        >
-                          Cancelar
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={ajusteStockGuardando}
-                          className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60"
-                        >
-                          {ajusteStockGuardando ? 'Guardando…' : 'Guardar'}
-                        </button>
-                      </div>
-                    </form>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
-        <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-xs">
-          <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
-            <Clock className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
-            <div>
-              <h4 className="font-bold text-slate-800">Horario de Atención</h4>
-              <p className="text-[11px] text-slate-500">Usado para calcular los horarios disponibles en la página pública de citas</p>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            {(Object.keys(diasLabel) as Array<keyof HorarioAtencion>).map(dia => {
-              const cerrado = horario[dia].abre == null;
-              return (
-                <div key={dia} className="flex items-center gap-2.5 p-2 bg-white border border-slate-200 rounded-lg">
-                  <span className="w-20 font-semibold text-slate-700">{diasLabel[dia]}</span>
-                  <label className="flex items-center gap-1.5 text-slate-500">
-                    <input type="checkbox" checked={cerrado} onChange={(e) => handleToggleCerrado(dia, e.target.checked)} />
-                    Cerrado
-                  </label>
-                  {!cerrado && (
-                    <>
-                      <input
-                        type="time"
-                        value={horario[dia].abre || ''}
-                        onChange={(e) => handleCambiarDia(dia, 'abre', e.target.value)}
-                        className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1"
-                      />
-                      <span className="text-slate-500">a</span>
-                      <input
-                        type="time"
-                        value={horario[dia].cierra || ''}
-                        onChange={(e) => handleCambiarDia(dia, 'cierra', e.target.value)}
-                        className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1"
-                      />
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={handleGuardarHorario}
-              disabled={hayErroresDomicilio}
-              className="text-white px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ backgroundColor: currentCompany.colorPrimario }}
-            >
-              Guardar Horario
-            </button>
-            {horarioGuardado && (
-              <span className="text-emerald-600 font-semibold flex items-center gap-1">
-                <Check className="w-3.5 h-3.5" /> Horario guardado
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
-        <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-xs">
-          <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
-            <Clock className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
-            <div>
-              <h4 className="font-bold text-slate-800">Horario de citas a domicilio</h4>
-              <p className="text-[11px] text-slate-500">Ej.: 08:00–12:00 y 14:00–18:00. Se usa para las horas disponibles de citas a domicilio en la página pública.</p>
-            </div>
-          </div>
-
-          <label className="flex items-center gap-2 text-slate-700 font-semibold">
-            <input type="checkbox" checked={domicilioActivo} onChange={(e) => handleToggleDomicilio(e.target.checked)} />
-            Usar un horario distinto para citas a domicilio
-          </label>
-
-          {domicilioActivo && (
-            <>
-              <div>
-                <button
-                  type="button"
-                  onClick={handleCopiarHorarioAtencion}
-                  className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white font-semibold text-slate-700 hover:bg-slate-100"
-                >
-                  Copiar horario de atención
-                </button>
-              </div>
-
-              <div className="space-y-1.5">
-                {DIAS_ORDEN.map(dia => {
-                  const tramos = horarioDom[dia];
-                  const error = erroresDomicilio[dia];
-                  return (
-                    <div key={dia} className="p-2 bg-white border border-slate-200 rounded-lg space-y-1.5">
-                      <div className="flex items-start gap-2.5">
-                        <span className="w-20 pt-1 font-semibold text-slate-700">{diasLabel[dia]}</span>
-                        <div className="flex-1 space-y-1.5">
-                          {tramos.length === 0 && <p className="pt-1 text-slate-500">Sin atención a domicilio</p>}
-                          {tramos.map((t, i) => (
-                            <div key={i} className="flex items-center gap-2">
-                              <input
-                                type="time"
-                                value={t.abre}
-                                aria-label={`${diasLabel[dia]} tramo ${i + 1}: abre`}
-                                onChange={(e) => handleCambiarTramo(dia, i, 'abre', e.target.value)}
-                                className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1"
-                              />
-                              <span className="text-slate-500">a</span>
-                              <input
-                                type="time"
-                                value={t.cierra}
-                                aria-label={`${diasLabel[dia]} tramo ${i + 1}: cierra`}
-                                onChange={(e) => handleCambiarTramo(dia, i, 'cierra', e.target.value)}
-                                className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => handleQuitarTramo(dia, i)}
-                                aria-label={`Quitar tramo ${i + 1} de ${diasLabel[dia]}`}
-                                className="p-1 rounded-lg text-slate-500 hover:text-red-600 hover:bg-red-50"
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          ))}
-                          {tramos.length < MAX_TRAMOS_DOMICILIO && (
-                            <button
-                              type="button"
-                              onClick={() => handleAgregarTramo(dia)}
-                              className="font-semibold"
-                              style={{ color: currentCompany.colorPrimario }}
-                            >
-                              + Agregar tramo
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {error && <p className="text-red-600 font-semibold" role="alert">{error}</p>}
-                    </div>
+                    </button>
                   );
                 })}
               </div>
-            </>
-          )}
-
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={handleGuardarHorario}
-              disabled={hayErroresDomicilio}
-              className="text-white px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ backgroundColor: currentCompany.colorPrimario }}
-            >
-              Guardar Horario
-            </button>
-            {hayErroresDomicilio && <span className="text-red-600 font-semibold">Corrija los tramos marcados para guardar.</span>}
-          </div>
-        </div>
-      )}
-
-      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
-        <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-xs">
-          <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5">
-            <Sparkles className="w-4 h-4 text-slate-600" style={{ color: currentCompany.colorPrimario }} />
-            <div>
-              <h4 className="font-bold text-slate-800">Porcentajes de Déficit/Superávit para Dietas</h4>
-              <p className="text-[11px] text-slate-500">Los nutricionistas de esta empresa eligen entre estos porcentajes al calcular la prescripción calórica de una dieta. Puede incluir 0% (mantenimiento).</p>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {porcentajesDeEstaEmpresa.length === 0 && (
-              <span className="text-slate-500">Sin porcentajes configurados — se usará el respaldo 10% / 15% / 20%.</span>
             )}
-            {porcentajesDeEstaEmpresa.map(p => (
-              <span key={p.id} className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-full pl-3 pr-1.5 py-1">
-                {Number(p.porcentaje)}%
-                <button
-                  type="button"
-                  onClick={() => onDeletePorcentajeDieta(p.id)}
-                  className="text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-full p-2"
-                  title="Eliminar"
-                  aria-label="Eliminar"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
-          </div>
+          </CardBody>
+        </Card>
 
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              min={0}
-              step="0.5"
-              value={nuevoPorcentaje}
-              onChange={(e) => setNuevoPorcentaje(e.target.value)}
-              placeholder="ej: 25"
-              className="w-28 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5"
-            />
-            <button
-              type="button"
-              onClick={handleAgregarPorcentaje}
-              className="text-white px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1"
-              style={{ backgroundColor: currentCompany.colorPrimario }}
-            >
-              <Plus className="w-3.5 h-3.5" /> Agregar
-            </button>
-          </div>
-        </div>
-      )}
+        {/* ============ VISTA DE LECTURA + SECCIONES ============ */}
+        {enVista && (
+          <>
+            {/* Empresa */}
+            <Seccion id="empresa">
+              <Card>
+                <CardHeader
+                  title={tituloConIcono(<Building />, 'Empresa')}
+                  description="Datos fiscales y de facturación de la clínica."
+                  actions={
+                    <Button variant="outline" size="sm" onClick={() => setIsEditing(true)} icon={<Settings className="w-4 h-4" aria-hidden="true" />}>
+                      Editar
+                    </Button>
+                  }
+                />
+                <CardBody>
+                  <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+                    {renderDato('Razón social', currentCompany.razonSocial)}
+                    {renderDato('Correo de facturas', currentCompany.correoEmisor)}
+                    {renderDato('IVA por defecto', `${currentCompany.ivaPorDefecto}%`)}
+                    {renderDato('Actividad económica', currentCompany.actividadEconomica || 'No configurada')}
+                    {renderDato('Perfil de la clínica', <Badge tone="brand">{currentCompany.perfilCompania || 'Ambas'}</Badge>)}
+                    {renderDato('Plazos de crédito', `Clientes ${currentCompany.plazoCreditoClientesDias ?? '—'} días · Proveedores ${currentCompany.plazoCreditoProveedoresDias ?? '—'} días`)}
+                  </dl>
+                </CardBody>
+              </Card>
+            </Seccion>
 
-      {!isEditing && !isAdding && currentUser.rol === 'Administrador' && (
-        <PlantillaDietaManager
-          idCompania={currentCompany.id}
-          plantillasDieta={plantillasDieta}
-          onSavePlantillaDieta={onSavePlantillaDieta}
-          onDeletePlantillaDieta={onDeletePlantillaDieta}
-          themeColor={currentCompany.colorPrimario}
-        />
-      )}
+            {/* Marca */}
+            <Seccion id="marca">
+              <Card>
+                <CardHeader
+                  title={tituloConIcono(<Palette />, 'Marca')}
+                  description="Logo y colores que identifican a la clínica en la aplicación."
+                  actions={
+                    <Button variant="outline" size="sm" onClick={() => setIsEditing(true)} icon={<Settings className="w-4 h-4" aria-hidden="true" />}>
+                      Editar marca
+                    </Button>
+                  }
+                />
+                <CardBody>
+                  <dl className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-4">
+                    {renderDato('Logo', currentCompany.logoUrl
+                      ? <img src={currentCompany.logoUrl} alt={`Logo de ${currentCompany.nombreComercial}`} className="w-14 h-14 rounded-control object-cover border border-border mt-1" referrerPolicy="no-referrer" />
+                      : 'Sin logo')}
+                    {renderDato('Color primario', (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-md border border-border-strong inline-block" style={{ backgroundColor: currentCompany.colorPrimario }} aria-hidden="true" />
+                        <span className="font-mono text-xs">{currentCompany.colorPrimario}</span>
+                      </span>
+                    ))}
+                    {renderDato('Color del menú lateral', (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="w-6 h-6 rounded-md border border-border-strong inline-block" style={{ backgroundColor: currentCompany.colorSidebar }} aria-hidden="true" />
+                        <span className="font-mono text-xs">{currentCompany.colorSidebar}</span>
+                      </span>
+                    ))}
+                  </dl>
+                </CardBody>
+              </Card>
+            </Seccion>
 
-      {/* Editing / Creating Form */}
-      {(isEditing || isAdding) && (
-        <div className="mt-4 bg-slate-50 p-4 rounded-xl border border-slate-200/60 space-y-3 text-xs">
-          <div className="font-bold text-slate-700 uppercase tracking-wide">
-            {isAdding ? 'Registrar Nueva Sucursal / Clínica' : 'Personalizar Colores y Logos'}
-          </div>
+            {/* Horarios (solo Administrador) */}
+            {esAdmin && (
+              <Seccion id="horarios">
+                <Card>
+                  <CardHeader
+                    title={tituloConIcono(<Clock />, 'Horarios')}
+                    description="Se usan para calcular los horarios disponibles en la página pública de citas."
+                  />
+                  <CardBody className="space-y-8">
+                    <div className="space-y-3">
+                      <div>
+                        <h4 className="text-sm font-semibold text-fg">Horario de atención</h4>
+                        <p className="text-xs text-fg-muted">Horario general de la clínica.</p>
+                      </div>
+                      <div className="space-y-2">
+                        {(Object.keys(diasLabel) as Array<keyof HorarioAtencion>).map(dia => {
+                          const cerrado = horario[dia].abre == null;
+                          return (
+                            <div key={dia} className="flex flex-wrap items-center gap-x-4 gap-y-2 p-3 border border-border rounded-control bg-surface">
+                              <span className="w-24 text-sm font-semibold text-fg">{diasLabel[dia]}</span>
+                              <label className="inline-flex items-center gap-2 min-h-10 text-sm text-fg-muted">
+                                <input type="checkbox" checked={cerrado} onChange={(e) => handleToggleCerrado(dia, e.target.checked)} className={cajaCheck.replace('mt-0.5 ', '')} />
+                                Cerrado
+                              </label>
+                              {!cerrado && (
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    type="time"
+                                    aria-label={`${diasLabel[dia]}: hora de apertura`}
+                                    value={horario[dia].abre || ''}
+                                    onChange={(e) => handleCambiarDia(dia, 'abre', e.target.value)}
+                                    wrapperClassName="w-32"
+                                  />
+                                  <span className="text-sm text-fg-muted">a</span>
+                                  <Input
+                                    type="time"
+                                    aria-label={`${diasLabel[dia]}: hora de cierre`}
+                                    value={horario[dia].cierra || ''}
+                                    onChange={(e) => handleCambiarDia(dia, 'cierra', e.target.value)}
+                                    wrapperClassName="w-32"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-slate-600 mb-1">Nombre Comercial</label>
-              <input
-                type="text"
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              />
-            </div>
-            <div>
-              <label htmlFor="companyset-razon-social-juridica" className="block text-slate-600 mb-1">Razón Social Jurídica</label>
-              <input id="companyset-razon-social-juridica"
-                type="text"
-                value={editRazon}
-                onChange={(e) => setEditRazon(e.target.value)}
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
-            <div>
-              <label htmlFor="companyset-cedula-fisica-juridica-cr" className="block text-slate-600 mb-1">Cédula Física / Jurídica (CR)</label>
-              <input id="companyset-cedula-fisica-juridica-cr"
-                type="text"
-                value={editIdent}
-                onChange={(e) => setEditIdent(e.target.value)}
-                placeholder="ej: 3-101-234567"
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
-            <div>
-              <label htmlFor="companyset-email-emisor-hacienda" className="block text-slate-600 mb-1">Email Emisor (Hacienda)</label>
-              <input id="companyset-email-emisor-hacienda"
-                type="text"
-                value={editCorreo}
-                onChange={(e) => setEditCorreo(e.target.value)}
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
-            <div>
-              <label htmlFor="companyset-perfil-de-la-clinica" className="block text-slate-600 mb-1">Perfil de la Clínica / Empresa</label>
-              <select id="companyset-perfil-de-la-clinica"
-                value={editPerfil}
-                onChange={(e) => setEditPerfil(e.target.value as PerfilCompania)}
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-              >
-                <option value="Ambas">Ambas (Fisioterapia y Nutrición)</option>
-                <option value="Fisioterapia">Sólo Fisioterapia</option>
-                <option value="Nutrición">Sólo Nutrición</option>
-                <option value="Spa">Spa / Bienestar (Sauna, Cold Plunge, Masajes...)</option>
-                <option value="Legal">Despacho de Abogados</option>
-              </select>
-            </div>
-            <div>
-              <label htmlFor="companyset-codigo-de-actividad-economica" className="block text-slate-600 mb-1">Código de Actividad Económica (Hacienda)</label>
-              <input id="companyset-codigo-de-actividad-economica"
-                type="text"
-                value={editActividad}
-                onChange={(e) => setEditActividad(e.target.value)}
-                placeholder="ej: 869001"
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
-            <div>
-              <label htmlFor="companyset-iva-por-defecto" className="block text-slate-600 mb-1">% IVA por Defecto</label>
-              <input id="companyset-iva-por-defecto"
-                type="number"
-                min="0"
-                max="100"
-                step="0.01"
-                value={editIva}
-                onChange={(e) => setEditIva(parseFloat(e.target.value) || 0)}
-                className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
-              />
-            </div>
-            <div className="flex items-center gap-2 pt-5">
-              <label className="flex items-center gap-2 text-slate-600 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={editRequiereConfirmacion}
-                  onChange={(e) => setEditRequiereConfirmacion(e.target.checked)}
-                  className="w-3.5 h-3.5"
-                />
-                Las citas en línea requieren confirmación manual (no se auto-confirman)
-              </label>
-            </div>
-            <div className="flex items-center gap-2 pt-1 sm:col-span-2">
-              <label className="flex items-center gap-2 text-slate-600 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={editRegimenSimplificado}
-                  onChange={(e) => setEditRegimenSimplificado(e.target.checked)}
-                  className="w-3.5 h-3.5"
-                />
-                Empresa inscrita en Régimen de Tributación Simplificada (no declara IVA por D-104 tradicional)
-              </label>
-            </div>
-          </div>
+                    <div className="space-y-3 pt-6 border-t border-border">
+                      <div>
+                        <h4 className="text-sm font-semibold text-fg">Horario de citas a domicilio</h4>
+                        <p className="text-xs text-fg-muted">Ej.: 08:00–12:00 y 14:00–18:00. Se usa para las horas disponibles de citas a domicilio en la página pública.</p>
+                      </div>
 
-          <fieldset className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-            <legend className="px-1 text-[11px] font-bold text-slate-700 uppercase">Reservas en línea por tipo de visita</legend>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className="flex items-center gap-2 text-slate-600 cursor-pointer min-h-10">
-                <input
-                  type="checkbox"
-                  role="switch"
-                  checked={editReservaAutoConsultorio}
-                  onChange={(e) => setEditReservaAutoConsultorio(e.target.checked)}
-                  className="w-3.5 h-3.5"
-                />
-                Reserva automática en consultorio
-              </label>
-              <label className="flex items-center gap-2 text-slate-600 cursor-pointer min-h-10">
-                <input
-                  type="checkbox"
-                  role="switch"
-                  checked={editReservaAutoDomicilio}
-                  onChange={(e) => setEditReservaAutoDomicilio(e.target.checked)}
-                  className="w-3.5 h-3.5"
-                />
-                Reserva automática a domicilio
-              </label>
-            </div>
-            <p className="text-[11px] text-slate-500">Si lo apaga, la página pública mostrará un botón de WhatsApp para solicitar espacio en lugar de agendar automáticamente.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label htmlFor="companyset-whatsapp-reservas" className="block text-slate-600 mb-1">WhatsApp para solicitudes</label>
-                <input id="companyset-whatsapp-reservas"
-                  type="tel"
-                  inputMode="tel"
-                  value={editWhatsappReservas}
-                  onChange={(e) => setEditWhatsappReservas(e.target.value)}
-                  placeholder="8888-8888"
-                  className="w-full min-h-10 bg-white border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
-                />
-                <p className="text-[11px] text-slate-500 mt-0.5">Un número de 8 dígitos se toma como de Costa Rica (+506).</p>
-              </div>
-              <div className="sm:col-span-2">
-                <label htmlFor="companyset-mensaje-whatsapp" className="block text-slate-600 mb-1">Mensaje predeterminado (opcional)</label>
-                <textarea id="companyset-mensaje-whatsapp"
-                  rows={3}
-                  maxLength={500}
-                  value={editMensajeWhatsapp}
-                  onChange={(e) => setEditMensajeWhatsapp(e.target.value)}
-                  placeholder="Si lo deja vacío se genera un mensaje con el tipo de cita y el servicio elegido."
-                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500 resize-y"
-                />
-              </div>
-            </div>
-            {(!editReservaAutoConsultorio || !editReservaAutoDomicilio) && editWhatsappReservas.trim() === '' && (
-              <p role="alert" className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
-                Hay una reserva automática apagada y no hay número de WhatsApp: los pacientes verán solo "Comuníquese con la clínica para agendar".
-              </p>
+                      <label className={filaCheck}>
+                        <input type="checkbox" checked={domicilioActivo} onChange={(e) => handleToggleDomicilio(e.target.checked)} className={cajaCheck} />
+                        <span className="font-semibold">Usar un horario distinto para citas a domicilio</span>
+                      </label>
+
+                      {domicilioActivo && (
+                        <>
+                          <div>
+                            <Button variant="outline" size="sm" onClick={handleCopiarHorarioAtencion}>
+                              Copiar horario de atención
+                            </Button>
+                          </div>
+
+                          <div className="space-y-2">
+                            {DIAS_ORDEN.map(dia => {
+                              const tramos = horarioDom[dia];
+                              const error = erroresDomicilio[dia];
+                              return (
+                                <div
+                                  key={dia}
+                                  className={cx('p-3 bg-surface border rounded-control space-y-2', error ? 'border-danger' : 'border-border')}
+                                >
+                                  <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
+                                    <span className="sm:w-24 sm:pt-2.5 text-sm font-semibold text-fg">{diasLabel[dia]}</span>
+                                    <div className="flex-1 space-y-2">
+                                      {tramos.length === 0 && <p className="sm:pt-2.5 text-sm text-fg-muted">Sin atención a domicilio</p>}
+                                      {tramos.map((t, i) => (
+                                        <div key={i} className="flex items-center gap-2">
+                                          <Input
+                                            type="time"
+                                            value={t.abre}
+                                            aria-label={`${diasLabel[dia]} tramo ${i + 1}: abre`}
+                                            onChange={(e) => handleCambiarTramo(dia, i, 'abre', e.target.value)}
+                                            wrapperClassName="w-32"
+                                          />
+                                          <span className="text-sm text-fg-muted">a</span>
+                                          <Input
+                                            type="time"
+                                            value={t.cierra}
+                                            aria-label={`${diasLabel[dia]} tramo ${i + 1}: cierra`}
+                                            onChange={(e) => handleCambiarTramo(dia, i, 'cierra', e.target.value)}
+                                            wrapperClassName="w-32"
+                                          />
+                                          <IconButton
+                                            label={`Quitar tramo ${i + 1} de ${diasLabel[dia]}`}
+                                            icon={<X className="w-4 h-4" aria-hidden="true" />}
+                                            onClick={() => handleQuitarTramo(dia, i)}
+                                            className="hover:text-danger! hover:bg-danger-soft!"
+                                          />
+                                        </div>
+                                      ))}
+                                      {tramos.length < MAX_TRAMOS_DOMICILIO && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="text-brand-ink!"
+                                          onClick={() => handleAgregarTramo(dia)}
+                                          icon={<Plus className="w-4 h-4" aria-hidden="true" />}
+                                        >
+                                          Agregar tramo
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {error && <p className="text-sm text-danger font-semibold" role="alert">{error}</p>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </CardBody>
+                  <CardFooter>
+                    {horarioGuardado && (
+                      <span className="mr-auto text-sm text-success font-semibold flex items-center gap-1" role="status">
+                        <Check className="w-4 h-4" aria-hidden="true" /> Horario guardado
+                      </span>
+                    )}
+                    {hayErroresDomicilio && <span className="mr-auto text-sm text-danger font-semibold">Corrija los tramos marcados para guardar.</span>}
+                    <Button onClick={handleGuardarHorario} disabled={hayErroresDomicilio}>
+                      Guardar horarios
+                    </Button>
+                  </CardFooter>
+                </Card>
+              </Seccion>
             )}
-          </fieldset>
 
-          <fieldset className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
-            <legend className="px-1 text-[11px] font-bold text-slate-700 uppercase">Parámetros contables</legend>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label htmlFor="companyset-plazo-clientes" className="block text-slate-600 mb-1">Plazo de crédito a clientes (días)</label>
-                <input id="companyset-plazo-clientes" type="number" min="1" step="1" inputMode="numeric" value={editPlazoClientes} onChange={(e) => setEditPlazoClientes(e.target.value)} className="w-full min-h-10 bg-white border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500" />
-                <p className="text-[11px] text-slate-500 mt-0.5">Valor sugerido al facturar a crédito; se puede cambiar en cada factura. Va en el XML y define el vencimiento de la cuenta por cobrar.</p>
-              </div>
-              <div>
-                <label htmlFor="companyset-plazo-proveedores" className="block text-slate-600 mb-1">Plazo de pago a proveedores (días)</label>
-                <input id="companyset-plazo-proveedores" type="number" min="1" step="1" inputMode="numeric" value={editPlazoProveedores} onChange={(e) => setEditPlazoProveedores(e.target.value)} className="w-full min-h-10 bg-white border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500" />
-                <p className="text-[11px] text-slate-500 mt-0.5">Valor sugerido al registrar una compra en Cuentas por Pagar, y el que se usa si el XML de crédito del proveedor no trae plazo.</p>
-              </div>
-            </div>
-          </fieldset>
+            {/* Servicios (solo Administrador) */}
+            {esAdmin && (
+              <Seccion id="servicios">
+                <Card>
+                  <CardHeader
+                    title={tituloConIcono(<Receipt />, 'Servicios y tarifas')}
+                    description={`Precio e IVA por servicio prestado. Si dejas el IVA en blanco, se usa el ${currentCompany.ivaPorDefecto}% por defecto de la empresa.`}
+                    actions={!isServicioFormOpen ? (
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {currentCompany.perfilCompania !== 'Spa' && currentCompany.perfilCompania !== 'Legal' && (
+                          <Button variant="outline" size="sm" onClick={handleCargarServiciosDefecto} loading={cargandoServiciosDefecto}>
+                            {cargandoServiciosDefecto ? 'Cargando...' : 'Cargar servicios por defecto'}
+                          </Button>
+                        )}
+                        <Button size="sm" onClick={openNewServicioForm} icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
+                          Nuevo servicio o artículo
+                        </Button>
+                      </div>
+                    ) : undefined}
+                  />
+                  <CardBody className="space-y-5">
+                    {mensajeServiciosDefecto && (
+                      <p className="text-sm text-fg-muted bg-surface-muted rounded-control px-3 py-2" role="status">{mensajeServiciosDefecto}</p>
+                    )}
 
-          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
-            <p className="text-[11px] font-bold text-amber-800 uppercase mb-2">Ubicación Fiscal (requerida para Facturar)</p>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-              <div>
-                <label className="block text-slate-600 mb-1">Provincia</label>
-                <select
-                  value={editProvincia}
-                  onChange={(e) => handleCambiarProvinciaFiscal(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
-                >
-                  <option value="">Seleccione...</option>
-                  {COSTA_RICA_PROVINCIAS.map(p => (
-                    <option key={p.codigo} value={p.codigo}>{p.nombre}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="companyset-canton" className="block text-slate-600 mb-1">Cantón</label>
-                <select id="companyset-canton"
-                  value={editCanton}
-                  onChange={(e) => handleCambiarCantonFiscal(e.target.value)}
-                  disabled={!editProvincia}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500 disabled:opacity-60"
-                >
-                  <option value="">Seleccione...</option>
-                  {cantonesDisponiblesCompania.map(c => (
-                    <option key={c.codigo} value={c.codigo}>{c.nombre}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="companyset-distrito" className="block text-slate-600 mb-1">Distrito</label>
-                <select id="companyset-distrito"
-                  value={editDistrito}
-                  onChange={(e) => setEditDistrito(e.target.value)}
-                  disabled={!editCanton}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500 disabled:opacity-60"
-                >
-                  <option value="">Seleccione...</option>
-                  {distritosDisponiblesCompania.map(d => (
-                    <option key={d.codigo} value={d.codigo}>{d.nombre}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="companyset-otras-senas-direccion-exacta" className="block text-slate-600 mb-1">Otras Señas (dirección exacta)</label>
-                <input id="companyset-otras-senas-direccion-exacta"
-                  type="text"
-                  value={editOtrasSenas}
-                  onChange={(e) => setEditOtrasSenas(e.target.value)}
-                  placeholder="ej: 200m norte del parque central"
-                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
-                />
-              </div>
-            </div>
-          </div>
+                    {isServicioFormOpen && (
+                      <form onSubmit={handleSubmitServicio} className="p-4 sm:p-5 bg-surface-muted/50 border border-border rounded-card space-y-5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            aria-pressed={servicioTipo === 'SERVICIO'}
+                            onClick={() => { setServicioTipo('SERVICIO'); if (servicioUnidadMedida === 'Unid') setServicioUnidadMedida('Sp'); }}
+                            className={segmento(servicioTipo === 'SERVICIO')}
+                          >
+                            Servicio (sesión/cita)
+                          </button>
+                          <button
+                            type="button"
+                            aria-pressed={servicioTipo === 'ARTICULO'}
+                            onClick={() => { setServicioTipo('ARTICULO'); setServicioUnidadMedida('Unid'); }}
+                            className={segmento(servicioTipo === 'ARTICULO')}
+                          >
+                            Artículo (con existencias)
+                          </button>
+                        </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-slate-600 mb-1">Color Primario Clínico</label>
-              <div className="flex gap-2">
-                <input
-                  type="color"
-                  value={editColorPri}
-                  onChange={(e) => setEditColorPri(e.target.value)}
-                  className="w-8 h-8 rounded-md cursor-pointer border border-slate-200 p-0"
-                />
-                <input
-                  type="text"
-                  value={editColorPri}
-                  onChange={(e) => setEditColorPri(e.target.value)}
-                  className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-slate-600 mb-1">Color Controles Sidebar</label>
-              <div className="flex gap-2">
-                <input
-                  type="color"
-                  value={editColorSide}
-                  onChange={(e) => setEditColorSide(e.target.value)}
-                  className="w-8 h-8 rounded-md cursor-pointer border border-slate-200 p-0"
-                />
-                <input
-                  type="text"
-                  value={editColorSide}
-                  onChange={(e) => setEditColorSide(e.target.value)}
-                  className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs"
-                />
-              </div>
-            </div>
-          </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                          <Field label={`Nombre ${servicioTipo === 'ARTICULO' ? 'del artículo' : 'del servicio'}`} required className="sm:col-span-2 lg:col-span-4">
+                            <Input
+                              type="text"
+                              value={servicioNombre}
+                              onChange={(e) => setServicioNombre(e.target.value)}
+                              placeholder={servicioTipo === 'ARTICULO' ? 'ej: Crema Post-Sesión 250ml' : 'ej: Sesión de Sauna'}
+                            />
+                          </Field>
+                          <Field label="Precio sin IVA (₡)" required>
+                            <Input type="number" min="0" step="any" inputMode="decimal" value={servicioPrecio} onChange={(e) => handlePrecioBaseChange(e.target.value)} />
+                          </Field>
+                          <Field label="Precio con IVA (precio final) (₡)">
+                            <Input type="number" min="0" step="any" inputMode="decimal" value={servicioPrecioConIva} onChange={(e) => handlePrecioConIvaChange(e.target.value)} />
+                          </Field>
+                          <Field label="% IVA (vacío = por defecto)">
+                            <Input type="number" min="0" max="100" step="0.01" inputMode="decimal" value={servicioIva} onChange={(e) => handleServicioIvaChange(e.target.value)} placeholder={`${currentCompany.ivaPorDefecto}%`} />
+                          </Field>
+                          {servicioTipo === 'SERVICIO' && (
+                            <Field label="Duración (min)" required>
+                              <Input type="number" min="1" step="1" inputMode="numeric" value={servicioDuracion} onChange={(e) => setServicioDuracion(e.target.value)} />
+                            </Field>
+                          )}
+                        </div>
 
-          <div>
-            <label className="block text-slate-600 mb-1">Logo de la Empresa</label>
-            <div className="flex items-center gap-3 mb-2">
-              {editLogo && (
-                <img src={editLogo} alt="Logo actual" className="w-14 h-14 rounded-xl object-cover border border-slate-200" />
+                        {servicioTipo === 'SERVICIO' && (
+                          <div role="group" aria-labelledby="companyset-modalidad-label">
+                            <span id="companyset-modalidad-label" className="block text-xs font-semibold text-fg mb-1.5">Disponible en</span>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              {([['CONSULTORIO', 'Consultorio'], ['DOMICILIO', 'A domicilio'], ['AMBOS', 'Ambos']] as const).map(([valor, etiqueta]) => (
+                                <button
+                                  key={valor}
+                                  type="button"
+                                  onClick={() => setServicioModalidad(valor)}
+                                  aria-pressed={servicioModalidad === valor}
+                                  className={segmento(servicioModalidad === valor)}
+                                >
+                                  {etiqueta}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {servicioTipo === 'ARTICULO' && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-5 border-t border-border">
+                            <Field
+                              label={servicioEditId != null ? 'Existencia actual' : 'Existencia inicial'}
+                              hint={servicioEditId != null ? 'Use "Ajustar Stock" en la lista para cambiarla.' : undefined}
+                            >
+                              <Input type="number" min="0" step="1" inputMode="numeric" value={servicioStock} onChange={(e) => setServicioStock(e.target.value)} disabled={servicioEditId != null} />
+                            </Field>
+                            <Field label="Stock mínimo">
+                              <Input type="number" min="0" step="1" inputMode="numeric" value={servicioStockMinimo} onChange={(e) => setServicioStockMinimo(e.target.value)} placeholder="Alerta de faltante" />
+                            </Field>
+                            <Field label="Costo unitario (₡)">
+                              <Input type="number" min="0" step="0.01" inputMode="decimal" value={servicioCostoUnitario} onChange={(e) => setServicioCostoUnitario(e.target.value)} />
+                            </Field>
+                            <Field label="Código de barras">
+                              <Input type="text" value={servicioCodigoBarras} onChange={(e) => setServicioCodigoBarras(e.target.value)} />
+                            </Field>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-5 border-t border-border">
+                          <Field
+                            label="Código CABYS (obligatorio para facturar)"
+                            required
+                            hint={
+                              (servicioCabys && !/^\d{13}$/.test(servicioCabys.trim())) || buscandoCabys ? (
+                                <>
+                                  {servicioCabys && !/^\d{13}$/.test(servicioCabys.trim()) && (
+                                    <span className="block text-warning font-medium">El código CABYS debe tener exactamente 13 dígitos.</span>
+                                  )}
+                                  {buscandoCabys && <span className="block">Buscando...</span>}
+                                </>
+                              ) : undefined
+                            }
+                          >
+                            {(p) => (
+                              <div className="relative">
+                                <Input
+                                  {...p}
+                                  type="text"
+                                  value={servicioCabys}
+                                  onChange={(e) => { setServicioCabys(e.target.value); buscarCabys(e.target.value); }}
+                                  placeholder="Digite el código de 13 dígitos o busque por nombre..."
+                                />
+                                {cabysResultados.length > 0 && (
+                                  <div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-surface border border-border rounded-control shadow-lg">
+                                    {cabysResultados.map(r => (
+                                      <button
+                                        type="button"
+                                        key={r.codigo}
+                                        onClick={() => { setServicioCabys(r.codigo); setCabysResultados([]); }}
+                                        className="w-full min-h-11 text-left px-3.5 py-2 text-sm hover:bg-surface-muted border-b border-border last:border-b-0"
+                                      >
+                                        <span className="font-mono text-xs text-fg-muted block">{r.codigo}</span>
+                                        <span className="text-fg">{r.descripcion}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </Field>
+                          <Field label="Unidad de medida (Hacienda)">
+                            <Select
+                              value={servicioUnidadMedida}
+                              onChange={(e) => setServicioUnidadMedida(e.target.value as 'Sp' | 'Spe' | 'St' | 'Os' | 'h' | 'Unid')}
+                            >
+                              {servicioTipo === 'ARTICULO' ? (
+                                <option value="Unid">Unidad</option>
+                              ) : (
+                                <>
+                                  <option value="Sp">Servicios Profesionales</option>
+                                  <option value="Spe">Servicios Personales</option>
+                                  <option value="St">Servicios Técnicos</option>
+                                  <option value="Os">Otros Servicios</option>
+                                  <option value="h">Horas</option>
+                                </>
+                              )}
+                            </Select>
+                          </Field>
+                        </div>
+
+                        <div className="flex gap-2 justify-end">
+                          <Button variant="ghost" onClick={() => setIsServicioFormOpen(false)}>
+                            Cancelar
+                          </Button>
+                          <Button type="submit">
+                            {servicioEditId != null ? 'Guardar cambios' : 'Guardar servicio'}
+                          </Button>
+                        </div>
+                      </form>
+                    )}
+
+                    {companyServicios.length === 0 && !isServicioFormOpen && (
+                      <EmptyState
+                        icon={<Receipt />}
+                        title="Todavía no has registrado ningún servicio"
+                        description="Agrega los servicios o artículos que facturas para poder usarlos en citas y facturas."
+                        className="py-8"
+                      />
+                    )}
+
+                    {companyServicios.length > 0 && (
+                      <ul className="divide-y divide-border border border-border rounded-card overflow-hidden">
+                        {companyServicios.map(s => {
+                          const esArticulo = s.tipo === 'ARTICULO';
+                          const faltante = esArticulo && s.stockMinimo != null && (s.stock || 0) <= s.stockMinimo;
+                          return (
+                            <li key={s.id} className="p-4 bg-surface">
+                              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                                <div className="min-w-0 space-y-1.5">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="font-semibold text-fg">{s.nombre}</span>
+                                    <Badge tone={esArticulo ? 'info' : 'neutral'}>{esArticulo ? 'Artículo' : 'Servicio'}</Badge>
+                                    <Badge tone={s.activo ? 'success' : 'neutral'}>{s.activo ? 'Activo' : 'Inactivo'}</Badge>
+                                  </div>
+                                  <p className="text-sm text-fg-muted">
+                                    <span className="font-semibold text-fg">{formatearColones(precioConIva(s.precio, ivaEfectivo(s, currentCompany.ivaPorDefecto)))}</span>
+                                    {esArticulo ? ` · Existencia: ${s.stock ?? 0}` : ` · ${s.duracionMinutos} min`}
+                                  </p>
+                                  <p className="text-xs text-fg-muted">
+                                    sin IVA {formatearColones(Number(s.precio))} · IVA {ivaEfectivo(s, currentCompany.ivaPorDefecto)}%{s.porcentajeIva == null ? ' (por defecto)' : ''}
+                                  </p>
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    {!esArticulo && s.modalidad && s.modalidad !== 'AMBOS' ? (
+                                      <Badge tone="info">{s.modalidad === 'DOMICILIO' ? 'A domicilio' : 'Consultorio'}</Badge>
+                                    ) : !esArticulo && (
+                                      <Badge tone="neutral">Consultorio y domicilio</Badge>
+                                    )}
+                                    {!s.codigoCabys && (
+                                      <Badge tone="warning">Sin código CABYS — no se puede facturar</Badge>
+                                    )}
+                                    {faltante && (
+                                      <Badge tone="danger">Faltante (mín: {s.stockMinimo})</Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {esArticulo && (
+                                    <Button variant="ghost" size="sm" className="text-brand-ink!" onClick={() => openAjustarStock(s)}>
+                                      Ajustar stock
+                                    </Button>
+                                  )}
+                                  <IconButton label="Editar" icon={<Edit className="w-4 h-4" aria-hidden="true" />} onClick={() => openEditServicioForm(s)} />
+                                  <IconButton
+                                    label={s.activo ? 'Desactivar' : 'Activar'}
+                                    icon={<Power className="w-4 h-4" aria-hidden="true" />}
+                                    onClick={() => handleToggleServicioActivo(s)}
+                                  />
+                                </div>
+                              </div>
+                              {ajustandoStockId === s.id && (
+                                <form onSubmit={handleGuardarAjusteStock} className="mt-4 pt-4 border-t border-border grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+                                  <Field label="Nueva existencia">
+                                    <Input type="number" min="0" step="1" inputMode="numeric" value={ajusteStockValor} onChange={(e) => setAjusteStockValor(e.target.value)} />
+                                  </Field>
+                                  <Field label="Motivo (opcional)" className="sm:col-span-2">
+                                    <Input type="text" value={ajusteStockNotas} onChange={(e) => setAjusteStockNotas(e.target.value)} placeholder="ej: Conteo físico, merma, compra" />
+                                  </Field>
+                                  <div className="flex gap-2">
+                                    <Button variant="ghost" onClick={() => setAjustandoStockId(null)}>
+                                      Cancelar
+                                    </Button>
+                                    <Button type="submit" loading={ajusteStockGuardando}>
+                                      {ajusteStockGuardando ? 'Guardando…' : 'Guardar'}
+                                    </Button>
+                                  </div>
+                                </form>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </CardBody>
+                </Card>
+              </Seccion>
+            )}
+
+            {/* Usuarios (solo Administrador) */}
+            {esAdmin && (
+              <Seccion id="usuarios">
+                <Card>
+                  <CardHeader
+                    title={tituloConIcono(<UsersIcon />, 'Usuarios y colaboradores')}
+                    description={`${activeUserCount} de ${currentCompany.maxUsuarios} usuarios activos permitidos por tu plan.`}
+                    actions={!isAddingUser ? (
+                      <Button size="sm" onClick={() => setIsAddingUser(true)} disabled={userLimitReached} icon={<UserPlus className="w-4 h-4" aria-hidden="true" />}>
+                        Nuevo colaborador
+                      </Button>
+                    ) : undefined}
+                  />
+                  <CardBody className="space-y-5">
+                    {userLimitReached && !isAddingUser && (
+                      <div className="p-3 rounded-control bg-warning-soft border border-warning/25 text-warning text-sm flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                        <span>Alcanzaste el límite de {currentCompany.maxUsuarios} usuarios de tu plan. Contacta al administrador de la plataforma para ampliarlo.</span>
+                      </div>
+                    )}
+
+                    {isAddingUser && (
+                      <form onSubmit={handleCreateUser} className="p-4 sm:p-5 bg-surface-muted/50 border border-border rounded-card space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <Field label="Nombre completo" required>
+                            <Input type="text" value={newUserNombre} onChange={(e) => setNewUserNombre(e.target.value)} />
+                          </Field>
+                          <Field label="Correo" required>
+                            <Input type="email" value={newUserCorreo} onChange={(e) => setNewUserCorreo(e.target.value)} />
+                          </Field>
+                          <Field label="Nombre de usuario" required>
+                            <Input type="text" value={newUserUsuario} onChange={(e) => setNewUserUsuario(e.target.value)} />
+                          </Field>
+                          <Field label="Contraseña" required>
+                            <Input type="password" value={newUserContrasena} onChange={(e) => setNewUserContrasena(e.target.value)} />
+                          </Field>
+                        </div>
+                        <Field
+                          label="Rol"
+                          hint={newUserRol === 'Contador' ? 'Contador: acceso de solo lectura a facturación, CxP y reportes fiscales; sin acceso a expedientes ni citas.' : undefined}
+                        >
+                          <Select value={newUserRol} onChange={(e) => setNewUserRol(e.target.value as 'Administrador' | 'Profesional' | 'Contador')}>
+                            <option value="Profesional">Profesional</option>
+                            <option value="Administrador">Administrador</option>
+                            <option value="Contador">Contador</option>
+                          </Select>
+                        </Field>
+                        <div className="flex gap-2 justify-end">
+                          <Button variant="ghost" onClick={() => setIsAddingUser(false)}>
+                            Cancelar
+                          </Button>
+                          <Button type="submit" disabled={userLimitReached}>
+                            Guardar colaborador
+                          </Button>
+                        </div>
+                      </form>
+                    )}
+
+                    <ul className="divide-y divide-border border border-border rounded-card overflow-hidden">
+                      {companyUsers.map(u => (
+                        <li key={u.id} className="flex items-center justify-between gap-3 p-3 sm:p-4 bg-surface">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <Avatar name={u.nombre} />
+                            <div className="min-w-0">
+                              <span className="font-semibold text-sm text-fg block truncate">{u.nombre}</span>
+                              <span className="text-xs text-fg-muted flex flex-wrap items-center gap-1.5">
+                                <span className="truncate">{u.usuario}</span>
+                                <Badge tone={u.rol === 'Administrador' ? 'brand' : u.rol === 'Contador' ? 'info' : 'neutral'}>{u.rol}</Badge>
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Badge tone={u.activo ? 'success' : 'neutral'}>{u.activo ? 'Activo' : 'Inactivo'}</Badge>
+                            <IconButton
+                              label={u.activo ? 'Desactivar' : 'Activar'}
+                              icon={<Power className="w-4 h-4" aria-hidden="true" />}
+                              onClick={() => handleToggleUserActivo(u)}
+                            />
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </CardBody>
+                </Card>
+              </Seccion>
+            )}
+
+            {/* Correo SMTP */}
+            <Seccion id="smtp">
+              <form onSubmit={handleSaveSmtp}>
+                <Card>
+                  <CardHeader
+                    title={tituloConIcono(<Mail />, 'Parámetros SMTP y alertas por correo')}
+                    description="Configura las credenciales de correo de la clínica para enviar recordatorios y confirmaciones automáticas de citas."
+                    actions={<Badge tone={smtpActivo ? 'success' : 'neutral'}>{smtpActivo ? 'Activo' : 'Apagado'}</Badge>}
+                  />
+                  <CardBody className="space-y-5">
+                    <label className="flex items-center justify-between gap-4 bg-surface-muted/50 p-4 rounded-card border border-border cursor-pointer">
+                      <span>
+                        <span className="font-semibold text-sm text-fg block">Notificaciones de agenda activas</span>
+                        <span className="text-xs text-fg-muted block mt-0.5">Si se apaga, las citas no enviarán correos automáticos de confirmación, modificación o cancelación.</span>
+                      </span>
+                      <span className="relative inline-flex shrink-0">
+                        <input
+                          type="checkbox"
+                          role="switch"
+                          checked={smtpActivo}
+                          onChange={(e) => setSmtpActivo(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <span
+                          aria-hidden="true"
+                          className="w-11 h-6 rounded-full bg-border-strong transition-colors peer-checked:bg-brand-solid peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-(--focus-ring) after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-5 after:w-5 after:shadow-xs after:transition-transform peer-checked:after:translate-x-5"
+                        />
+                      </span>
+                    </label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <Field label="Proveedor SMTP" className="sm:col-span-2 lg:col-span-2">
+                        <Select
+                          value={smtpProveedor}
+                          onChange={(e) => {
+                            const val = e.target.value as CompaniaSmtpConfig['proveedor'];
+                            setSmtpProveedor(val);
+                            if (val === 'GMAIL') {
+                              setSmtpHost('smtp.gmail.com');
+                              setSmtpPort(587);
+                              setSmtpSeguridad('TLS');
+                            } else if (val === 'OUTLOOK') {
+                              setSmtpHost('smtp.office365.com');
+                              setSmtpPort(587);
+                              setSmtpSeguridad('TLS');
+                            }
+                          }}
+                        >
+                          <option value="GMAIL">Google (Gmail)</option>
+                          <option value="OUTLOOK">Microsoft (Outlook / Office 365)</option>
+                          <option value="OTRO">Servidor SMTP Privado (Otro)</option>
+                        </Select>
+                      </Field>
+                      <Field label="Servidor host SMTP" required className="sm:col-span-2 lg:col-span-2">
+                        <Input type="text" required value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} placeholder="ej: smtp.mailgun.org" />
+                      </Field>
+                      <Field label="Puerto" required>
+                        <Input type="number" required inputMode="numeric" value={smtpPort} onChange={(e) => setSmtpPort(parseInt(e.target.value))} />
+                      </Field>
+                      <Field label="Seguridad">
+                        <Select value={smtpSeguridad} onChange={(e) => setSmtpSeguridad(e.target.value as CompaniaSmtpConfig['smtpSeguridad'])}>
+                          <option value="TLS">TLS (Recom.)</option>
+                          <option value="SSL">SSL</option>
+                          <option value="NINGUNA">Ninguna</option>
+                        </Select>
+                      </Field>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <Field label="Usuario de autenticación SMTP" required>
+                        <Input type="text" required value={smtpUsuario} onChange={(e) => setSmtpUsuario(e.target.value)} placeholder="ej: contacto@miempresa.com" />
+                      </Field>
+                      <Field label="Contraseña SMTP / App Password" required={!smtpTieneContrasena}>
+                        <Input
+                          type="password"
+                          required={!smtpTieneContrasena}
+                          value={smtpPassword}
+                          onChange={(e) => setSmtpPassword(e.target.value)}
+                          placeholder={smtpTieneContrasena ? '•••••••• (dejar en blanco para mantener la actual)' : 'Ingresa la contraseña o App Password'}
+                        />
+                      </Field>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-5 border-t border-border">
+                      <Field label="Nombre de remitente" required>
+                        <Input type="text" required value={smtpRemitenteNombre} onChange={(e) => setSmtpRemitenteNombre(e.target.value)} placeholder="ej: Clínica FisioNutri" />
+                      </Field>
+                      <Field label="Correo de remitente" required>
+                        <Input type="email" required value={smtpRemitenteCorreo} onChange={(e) => setSmtpRemitenteCorreo(e.target.value)} placeholder="ej: citas@miempresa.com" />
+                      </Field>
+                      <Field label="Recordatorio automático">
+                        <Select value={smtpRecordatorioHoras} onChange={(e) => setSmtpRecordatorioHoras(parseInt(e.target.value))}>
+                          <option value={12}>12 horas antes de la cita</option>
+                          <option value={24}>24 horas antes de la cita</option>
+                          <option value={48}>48 horas antes de la cita</option>
+                          <option value={72}>72 horas antes de la cita</option>
+                        </Select>
+                      </Field>
+                    </div>
+                  </CardBody>
+                  <CardFooter className="flex-wrap">
+                    <Button
+                      variant="outline"
+                      onClick={handleProbarSmtp}
+                      disabled={smtpProbando}
+                      loading={smtpProbando}
+                      icon={<Mail className="w-4 h-4" aria-hidden="true" />}
+                    >
+                      Enviar correo de prueba
+                    </Button>
+                    <Button type="submit" icon={<Check className="w-4 h-4" aria-hidden="true" />}>
+                      Guardar configuración SMTP
+                    </Button>
+                  </CardFooter>
+                </Card>
+              </form>
+            </Seccion>
+
+            {/* Correo entrante */}
+            <Seccion id="correo-entrante">
+              <CorreoEntranteSettings themeColor={currentCompany.colorPrimario} />
+            </Seccion>
+
+            {/* Hacienda — solo Administrador (el servidor también lo exige): credenciales, certificado
+                y ambiente deciden qué se declara a Hacienda. */}
+            <Seccion id="hacienda">
+              {!esAdmin ? (
+                <Card>
+                  <CardBody>
+                    <p className="text-sm text-fg-muted">
+                      La configuración de Hacienda (credenciales ATV, firma digital y ambiente) solo la puede ver y cambiar un usuario Administrador.
+                    </p>
+                  </CardBody>
+                </Card>
+              ) : (
+                <form onSubmit={handleSaveHacienda}>
+                  <Card>
+                    <CardHeader
+                      title={tituloConIcono(<ShieldCheck />, 'Firma digital Hacienda (facturación electrónica)')}
+                      description="Certificado criptográfico (.p12) y credenciales ATV para firmar comprobantes electrónicos."
+                      actions={<Badge tone={haciendaTieneCertificado ? 'success' : 'warning'}>{haciendaTieneCertificado ? 'Certificado cargado' : 'Sin certificado'}</Badge>}
+                    />
+                    <CardBody className="space-y-5">
+                      {haciendaMensaje && (
+                        <div
+                          role={haciendaMensaje.tipo === 'error' ? 'alert' : 'status'}
+                          className={cx(
+                            'p-3 rounded-control border text-sm flex items-center gap-2',
+                            haciendaMensaje.tipo === 'ok' ? 'bg-success-soft border-success/20 text-success' : 'bg-danger-soft border-danger/20 text-danger'
+                          )}
+                        >
+                          <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                          <span>{haciendaMensaje.texto}</span>
+                        </div>
+                      )}
+
+                      {haciendaInfoCertificado && (
+                        <dl className="p-4 rounded-card border border-border bg-surface-muted/50 text-sm space-y-1">
+                          <div><dt className="inline font-semibold text-fg-muted">Sujeto: </dt><dd className="inline text-fg">{haciendaInfoCertificado.sujeto}</dd></div>
+                          <div><dt className="inline font-semibold text-fg-muted">Emisor: </dt><dd className="inline text-fg">{haciendaInfoCertificado.emisor}</dd></div>
+                          <div><dt className="inline font-semibold text-fg-muted">Vence: </dt><dd className="inline text-fg">{new Date(haciendaInfoCertificado.validoHasta).toLocaleDateString('es-CR')}</dd></div>
+                          {haciendaInfoCertificado.expirado && <div className="text-danger font-semibold">Este certificado está VENCIDO.</div>}
+                        </dl>
+                      )}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <Field label="Ambiente">
+                          <Select
+                            value={haciendaAmbiente}
+                            onChange={(e) => setHaciendaAmbiente(e.target.value as 'SANDBOX' | 'PRODUCCION' | 'PRUEBAS_LOCAL')}
+                          >
+                            <option value="PRUEBAS_LOCAL">Pruebas Locales (no envía a Hacienda)</option>
+                            <option value="SANDBOX">Sandbox (Pruebas de Hacienda — envía tráfico real)</option>
+                            <option value="PRODUCCION">Producción</option>
+                          </Select>
+                        </Field>
+                        <Field label="Usuario ATV">
+                          <Input type="text" value={haciendaUsuarioAtv} onChange={(e) => setHaciendaUsuarioAtv(e.target.value)} placeholder="ej: cpf-01-1234-5678" />
+                        </Field>
+                        <Field label="Contraseña ATV" className="sm:col-span-2">
+                          <Input
+                            type="password"
+                            value={haciendaPasswordAtv}
+                            onChange={(e) => setHaciendaPasswordAtv(e.target.value)}
+                            placeholder={haciendaTienePasswordAtv ? '•••••••• (dejar en blanco para mantener la actual)' : 'Ingresa la contraseña ATV'}
+                          />
+                        </Field>
+                        <Field
+                          label={<span className="inline-flex items-center gap-1.5"><Upload className="w-3.5 h-3.5" aria-hidden="true" /> Certificado criptográfico (.p12)</span>}
+                          hint={haciendaCertificadoNombreNuevo
+                            ? `Nuevo archivo seleccionado: ${haciendaCertificadoNombreNuevo}`
+                            : haciendaTieneCertificado
+                            ? `Archivo actual: ${haciendaCertificadoNombreArchivo || 'certificado.p12'}${haciendaCertificadoVenceEn ? ` · vence ${haciendaCertificadoVenceEn}` : ''}`
+                            : 'Ningún certificado configurado todavía.'}
+                        >
+                          {(p) => (
+                            <input
+                              id={p.id}
+                              aria-describedby={p['aria-describedby']}
+                              type="file"
+                              accept=".p12,.pfx"
+                              onChange={handleCertificadoFileChange}
+                              className="w-full min-h-11 bg-surface border border-border-strong rounded-control text-sm text-fg-muted file:mr-3 file:min-h-11 file:px-4 file:border-0 file:border-r file:border-border-strong file:bg-surface-muted file:text-fg file:font-semibold file:cursor-pointer"
+                            />
+                          )}
+                        </Field>
+                        <Field label="PIN del certificado">
+                          <Input
+                            type="password"
+                            value={haciendaCertificadoPin}
+                            onChange={(e) => setHaciendaCertificadoPin(e.target.value)}
+                            placeholder={haciendaTieneCertificado ? '•••••••• (dejar en blanco para mantener el actual)' : 'PIN del certificado .p12'}
+                          />
+                        </Field>
+                      </div>
+
+                      {currentUser.rol === 'Administrador' && (
+                        <fieldset className="border border-border rounded-card p-4 space-y-3">
+                          <legend className={leyenda}>Corrección de numeración</legend>
+                          <p className="text-xs text-fg-muted">
+                            Úselo solo si Hacienda rechaza con «el documento ya fue emitido» porque esta empresa ya facturó con otro sistema.
+                            Escriba el último número que ya emitió ante Hacienda; el siguiente comprobante usará ese más uno. Solo se puede subir.
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            {CAMPOS_CONSECUTIVO.map(({ campo, etiqueta }) => (
+                              <Field key={campo} label={`${etiqueta} — último emitido`} hint={`Actual: ${haciendaConsecutivos[campo]}`}>
+                                <Input
+                                  type="number" min={haciendaConsecutivos[campo]} step="1" inputMode="numeric"
+                                  value={haciendaCorreccion[campo]}
+                                  onChange={(e) => setHaciendaCorreccion(prev => ({ ...prev, [campo]: e.target.value }))}
+                                  placeholder="Sin cambio"
+                                />
+                              </Field>
+                            ))}
+                          </div>
+                        </fieldset>
+                      )}
+                    </CardBody>
+                    <CardFooter className="justify-between flex-wrap">
+                      <Button
+                        variant="outline"
+                        onClick={handleProbarCertificado}
+                        disabled={haciendaProbando || !haciendaTieneCertificado}
+                        loading={haciendaProbando}
+                        icon={<ShieldCheck className="w-4 h-4" aria-hidden="true" />}
+                      >
+                        {haciendaProbando ? 'Probando...' : 'Probar configuración'}
+                      </Button>
+                      <Button type="submit" loading={haciendaGuardando} icon={<Check className="w-4 h-4" aria-hidden="true" />}>
+                        {haciendaGuardando ? 'Guardando...' : 'Guardar configuración Hacienda'}
+                      </Button>
+                    </CardFooter>
+                  </Card>
+                </form>
               )}
-              <label className="cursor-pointer bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5">
-                <Upload className="w-3.5 h-3.5" />
-                {editLogo ? 'Cambiar imagen' : 'Subir imagen'}
-                <input type="file" accept="image/*" onChange={handleLogoFileChange} className="hidden" />
-              </label>
-            </div>
-            {logoError && <p className="text-[11px] text-rose-600 mb-2">{logoError}</p>}
-            <span className="text-[11px] text-slate-500 block mb-1">O elija un logo predeterminado:</span>
-            <div className="flex flex-wrap gap-2">
-              {presetLogos.map((pl, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => setEditLogo(pl.url)}
-                  className="bg-white hover:bg-slate-100 border border-slate-200 text-[11px] text-slate-600 px-2 py-1 rounded-md"
-                >
-                  {pl.name}
-                </button>
-              ))}
-            </div>
-          </div>
+            </Seccion>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              onClick={() => { setIsEditing(false); setIsAdding(false); }}
-              className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg font-semibold"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={isAdding ? createCompany : saveEdit}
-              className="text-white px-4 py-1.5 rounded-lg font-semibold flex items-center gap-1.5"
-              style={{ backgroundColor: editColorPri }}
-            >
-              <Check className="w-3.5 h-3.5" />
-              {isAdding ? 'Registrar' : 'Guardar Cambios'}
-            </button>
-          </div>
-        </div>
-      )}
+            {/* Reservas en línea (lectura; se edita junto con los datos de la empresa) */}
+            <Seccion id="reservas">
+              <Card>
+                <CardHeader
+                  title={tituloConIcono(<CalendarCheck />, 'Reservas en línea')}
+                  description="Cómo se confirman las citas que los pacientes reservan desde la página pública."
+                  actions={
+                    <Button variant="outline" size="sm" onClick={() => setIsEditing(true)} icon={<Settings className="w-4 h-4" aria-hidden="true" />}>
+                      Editar
+                    </Button>
+                  }
+                />
+                <CardBody>
+                  <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+                    {renderDato('Citas en línea', currentCompany.requiereConfirmacionCitas ? 'Requieren confirmación manual' : 'Se auto-confirman')}
+                    {renderDato('Reserva automática en consultorio', (
+                      <Badge tone={reservaActiva(currentCompany.reservaAutoConsultorio) ? 'success' : 'neutral'}>
+                        {reservaActiva(currentCompany.reservaAutoConsultorio) ? 'Activa' : 'Apagada'}
+                      </Badge>
+                    ))}
+                    {renderDato('Reserva automática a domicilio', (
+                      <Badge tone={reservaActiva(currentCompany.reservaAutoDomicilio) ? 'success' : 'neutral'}>
+                        {reservaActiva(currentCompany.reservaAutoDomicilio) ? 'Activa' : 'Apagada'}
+                      </Badge>
+                    ))}
+                    {renderDato('WhatsApp para solicitudes', currentCompany.whatsappReservas || 'No configurado')}
+                  </dl>
+                </CardBody>
+              </Card>
+            </Seccion>
+
+            {/* Dietas (solo Administrador y perfiles con nutrición) */}
+            {esAdmin && muestraDietas && (
+              <Seccion id="dietas">
+                <div className="space-y-6">
+                  <Card>
+                    <CardHeader
+                      title={tituloConIcono(<Sparkles />, 'Porcentajes de déficit/superávit para dietas')}
+                      description="Los nutricionistas de esta empresa eligen entre estos porcentajes al calcular la prescripción calórica de una dieta. Puede incluir 0% (mantenimiento)."
+                    />
+                    <CardBody className="space-y-4">
+                      <ul className="flex flex-wrap gap-2">
+                        {porcentajesDeEstaEmpresa.length === 0 && (
+                          <li className="text-sm text-fg-muted">Sin porcentajes configurados — se usará el respaldo 10% / 15% / 20%.</li>
+                        )}
+                        {porcentajesDeEstaEmpresa.map(p => (
+                          <li key={p.id} className="flex items-center gap-1 bg-surface-muted border border-border rounded-full pl-4 pr-1 text-sm font-semibold text-fg">
+                            {Number(p.porcentaje)}%
+                            <IconButton
+                              label={`Eliminar ${Number(p.porcentaje)}%`}
+                              icon={<X className="w-3.5 h-3.5" aria-hidden="true" />}
+                              onClick={() => onDeletePorcentajeDieta(p.id)}
+                              className="w-10! h-10! rounded-full hover:text-danger! hover:bg-danger-soft!"
+                            />
+                          </li>
+                        ))}
+                      </ul>
+
+                      <div className="flex flex-wrap items-end gap-2">
+                        <Field label="Nuevo porcentaje" className="w-36">
+                          <Input
+                            type="number"
+                            min={0}
+                            step="0.5"
+                            inputMode="decimal"
+                            value={nuevoPorcentaje}
+                            onChange={(e) => setNuevoPorcentaje(e.target.value)}
+                            placeholder="ej: 25"
+                          />
+                        </Field>
+                        <Button onClick={handleAgregarPorcentaje} icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
+                          Agregar
+                        </Button>
+                      </div>
+                    </CardBody>
+                  </Card>
+
+                  <PlantillaDietaManager
+                    idCompania={currentCompany.id}
+                    plantillasDieta={plantillasDieta}
+                    onSavePlantillaDieta={onSavePlantillaDieta}
+                    onDeletePlantillaDieta={onDeletePlantillaDieta}
+                    themeColor={currentCompany.colorPrimario}
+                  />
+                </div>
+              </Seccion>
+            )}
+          </>
+        )}
+
+        {/* ============ FORMULARIO DE EDICIÓN / ALTA ============ */}
+        {!enVista && (
+          <>
+            <Seccion id="empresa">
+              <Card>
+                <CardHeader
+                  title={tituloConIcono(<Building />, isAdding ? 'Registrar nueva sucursal / clínica' : 'Datos de la empresa')}
+                  description="Los cambios de empresa, marca y reservas en línea se guardan juntos con el botón del final."
+                />
+                <CardBody className="space-y-5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <Field label="Nombre comercial">
+                      <Input type="text" value={editName} onChange={(e) => setEditName(e.target.value)} />
+                    </Field>
+                    <Field label="Razón social jurídica">
+                      <Input type="text" value={editRazon} onChange={(e) => setEditRazon(e.target.value)} />
+                    </Field>
+                    <Field label="Cédula física / jurídica (CR)">
+                      <Input type="text" value={editIdent} onChange={(e) => setEditIdent(e.target.value)} placeholder="ej: 3-101-234567" />
+                    </Field>
+                    <Field label="Email emisor (Hacienda)">
+                      <Input type="text" value={editCorreo} onChange={(e) => setEditCorreo(e.target.value)} />
+                    </Field>
+                    <Field label="Perfil de la clínica / empresa">
+                      <Select value={editPerfil} onChange={(e) => setEditPerfil(e.target.value as PerfilCompania)}>
+                        <option value="Ambas">Ambas (Fisioterapia y Nutrición)</option>
+                        <option value="Fisioterapia">Sólo Fisioterapia</option>
+                        <option value="Nutrición">Sólo Nutrición</option>
+                        <option value="Spa">Spa / Bienestar (Sauna, Cold Plunge, Masajes...)</option>
+                        <option value="Legal">Despacho de Abogados</option>
+                      </Select>
+                    </Field>
+                    <Field label="Código de actividad económica (Hacienda)">
+                      <Input type="text" value={editActividad} onChange={(e) => setEditActividad(e.target.value)} placeholder="ej: 869001" />
+                    </Field>
+                    <Field label="% IVA por defecto">
+                      <Input type="number" min="0" max="100" step="0.01" inputMode="decimal" value={editIva} onChange={(e) => setEditIva(parseFloat(e.target.value) || 0)} />
+                    </Field>
+                  </div>
+
+                  <label className={filaCheck}>
+                    <input type="checkbox" checked={editRegimenSimplificado} onChange={(e) => setEditRegimenSimplificado(e.target.checked)} className={cajaCheck} />
+                    <span>Empresa inscrita en Régimen de Tributación Simplificada (no declara IVA por D-104 tradicional)</span>
+                  </label>
+
+                  <fieldset className="p-4 border border-border rounded-card">
+                    <legend className={leyenda}>Parámetros contables</legend>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <Field
+                        label="Plazo de crédito a clientes (días)"
+                        hint="Valor sugerido al facturar a crédito; se puede cambiar en cada factura. Va en el XML y define el vencimiento de la cuenta por cobrar."
+                      >
+                        <Input type="number" min="1" step="1" inputMode="numeric" value={editPlazoClientes} onChange={(e) => setEditPlazoClientes(e.target.value)} />
+                      </Field>
+                      <Field
+                        label="Plazo de pago a proveedores (días)"
+                        hint="Valor sugerido al registrar una compra en Cuentas por Pagar, y el que se usa si el XML de crédito del proveedor no trae plazo."
+                      >
+                        <Input type="number" min="1" step="1" inputMode="numeric" value={editPlazoProveedores} onChange={(e) => setEditPlazoProveedores(e.target.value)} />
+                      </Field>
+                    </div>
+                  </fieldset>
+
+                  <fieldset className="p-4 bg-warning-soft border border-warning/25 rounded-card">
+                    <legend className="px-1.5 text-xs font-semibold uppercase tracking-wide text-warning">Ubicación fiscal (requerida para facturar)</legend>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <Field label="Provincia">
+                        <Select value={editProvincia} onChange={(e) => handleCambiarProvinciaFiscal(e.target.value)}>
+                          <option value="">Seleccione...</option>
+                          {COSTA_RICA_PROVINCIAS.map(p => (
+                            <option key={p.codigo} value={p.codigo}>{p.nombre}</option>
+                          ))}
+                        </Select>
+                      </Field>
+                      <Field label="Cantón">
+                        <Select value={editCanton} onChange={(e) => handleCambiarCantonFiscal(e.target.value)} disabled={!editProvincia}>
+                          <option value="">Seleccione...</option>
+                          {cantonesDisponiblesCompania.map(c => (
+                            <option key={c.codigo} value={c.codigo}>{c.nombre}</option>
+                          ))}
+                        </Select>
+                      </Field>
+                      <Field label="Distrito">
+                        <Select value={editDistrito} onChange={(e) => setEditDistrito(e.target.value)} disabled={!editCanton}>
+                          <option value="">Seleccione...</option>
+                          {distritosDisponiblesCompania.map(d => (
+                            <option key={d.codigo} value={d.codigo}>{d.nombre}</option>
+                          ))}
+                        </Select>
+                      </Field>
+                      <Field label="Otras señas (dirección exacta)">
+                        <Input type="text" value={editOtrasSenas} onChange={(e) => setEditOtrasSenas(e.target.value)} placeholder="ej: 200m norte del parque central" />
+                      </Field>
+                    </div>
+                  </fieldset>
+                </CardBody>
+              </Card>
+            </Seccion>
+
+            <Seccion id="marca">
+              <Card>
+                <CardHeader
+                  title={tituloConIcono(<Palette />, 'Marca')}
+                  description="Colores y logo de la clínica."
+                />
+                <CardBody className="space-y-5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {renderColor('cs-color-primario', 'Color primario clínico', editColorPri, setEditColorPri)}
+                    {renderColor('cs-color-sidebar', 'Color controles sidebar', editColorSide, setEditColorSide)}
+                  </div>
+
+                  <div>
+                    <span className="block text-xs font-semibold text-fg mb-1.5">Logo de la empresa</span>
+                    <div className="flex items-center gap-3 mb-3">
+                      {editLogo && (
+                        <img src={editLogo} alt="Logo actual" className="w-16 h-16 rounded-control object-cover border border-border" />
+                      )}
+                      <label className="relative inline-flex cursor-pointer">
+                        <input type="file" accept="image/*" onChange={handleLogoFileChange} className="peer sr-only" />
+                        <span
+                          className={cx(
+                            'inline-flex items-center justify-center rounded-control font-semibold whitespace-nowrap transition-colors',
+                            buttonVariants.outline,
+                            buttonSizes.md,
+                            'peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-(--focus-ring)'
+                          )}
+                        >
+                          <Upload className="w-4 h-4" aria-hidden="true" />
+                          {editLogo ? 'Cambiar imagen' : 'Subir imagen'}
+                        </span>
+                      </label>
+                    </div>
+                    {logoError && <p className="text-xs font-medium text-danger mb-2" role="alert">{logoError}</p>}
+                    <span className="text-xs text-fg-muted block mb-2">O elija un logo predeterminado:</span>
+                    <div className="flex flex-wrap gap-2">
+                      {presetLogos.map((pl, idx) => (
+                        <Button key={idx} variant="outline" size="sm" onClick={() => setEditLogo(pl.url)} aria-pressed={editLogo === pl.url}>
+                          {pl.name}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </CardBody>
+              </Card>
+            </Seccion>
+
+            <Seccion id="reservas">
+              <Card>
+                <CardHeader
+                  title={tituloConIcono(<CalendarCheck />, 'Reservas en línea por tipo de visita')}
+                  description="Define si las citas reservadas por los pacientes se confirman solas o por WhatsApp."
+                />
+                <CardBody className="space-y-5">
+                  <label className={filaCheck}>
+                    <input type="checkbox" checked={editRequiereConfirmacion} onChange={(e) => setEditRequiereConfirmacion(e.target.checked)} className={cajaCheck} />
+                    <span>Las citas en línea requieren confirmación manual (no se auto-confirman)</span>
+                  </label>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label className={filaCheck}>
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        checked={editReservaAutoConsultorio}
+                        onChange={(e) => setEditReservaAutoConsultorio(e.target.checked)}
+                        className={cajaCheck}
+                      />
+                      <span>Reserva automática en consultorio</span>
+                    </label>
+                    <label className={filaCheck}>
+                      <input
+                        type="checkbox"
+                        role="switch"
+                        checked={editReservaAutoDomicilio}
+                        onChange={(e) => setEditReservaAutoDomicilio(e.target.checked)}
+                        className={cajaCheck}
+                      />
+                      <span>Reserva automática a domicilio</span>
+                    </label>
+                  </div>
+                  <p className="text-xs text-fg-muted">Si lo apaga, la página pública mostrará un botón de WhatsApp para solicitar espacio en lugar de agendar automáticamente.</p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <Field label="WhatsApp para solicitudes" hint="Un número de 8 dígitos se toma como de Costa Rica (+506).">
+                      <Input type="tel" inputMode="tel" value={editWhatsappReservas} onChange={(e) => setEditWhatsappReservas(e.target.value)} placeholder="8888-8888" />
+                    </Field>
+                    <Field label="Mensaje predeterminado (opcional)" className="sm:col-span-2">
+                      <Textarea
+                        rows={3}
+                        maxLength={500}
+                        value={editMensajeWhatsapp}
+                        onChange={(e) => setEditMensajeWhatsapp(e.target.value)}
+                        placeholder="Si lo deja vacío se genera un mensaje con el tipo de cita y el servicio elegido."
+                      />
+                    </Field>
+                  </div>
+
+                  {(!editReservaAutoConsultorio || !editReservaAutoDomicilio) && editWhatsappReservas.trim() === '' && (
+                    <p role="alert" className="text-sm text-warning bg-warning-soft border border-warning/25 rounded-control p-3 flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+                      Hay una reserva automática apagada y no hay número de WhatsApp: los pacientes verán solo "Comuníquese con la clínica para agendar".
+                    </p>
+                  )}
+                </CardBody>
+                <CardFooter>
+                  <Button variant="ghost" onClick={() => { setIsEditing(false); setIsAdding(false); }}>
+                    Cancelar
+                  </Button>
+                  <Button onClick={isAdding ? createCompany : saveEdit} icon={<Check className="w-4 h-4" aria-hidden="true" />}>
+                    {isAdding ? 'Registrar' : 'Guardar cambios'}
+                  </Button>
+                </CardFooter>
+              </Card>
+            </Seccion>
+          </>
+        )}
+      </div>
     </div>
   );
 }

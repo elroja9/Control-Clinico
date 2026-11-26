@@ -3,6 +3,14 @@ import { PlantillaDieta } from '../data/mockData';
 import { DireccionPrescripcion } from '../utils/calorieFormulas';
 import { Plus, X, Check } from 'lucide-react';
 import { notify } from './ui/Feedback';
+import { Badge } from './ui/Badge';
+import { Button } from './ui/Button';
+import { EmptyState } from './ui/EmptyState';
+import { Field } from './ui/Field';
+import { IconButton } from './ui/IconButton';
+import { Input } from './ui/Input';
+import { Select } from './ui/Select';
+import { Textarea } from './ui/Textarea';
 
 interface PlantillaDietaManagerProps {
   idCompania: number;
@@ -128,40 +136,40 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
   const todosLosPctLlenos = carbohidratosPct !== '' && proteinasPct !== '' && grasasPct !== '';
 
   return (
-    <div className="mt-5 p-5 bg-slate-50 border border-slate-200 rounded-2xl space-y-3 text-xs">
-      <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
-        <div>
-          <h4 className="font-bold text-slate-800">Plantillas de Dieta</h4>
-          <p className="text-[11px] text-slate-500">Se sugieren automáticamente en la calculadora cuando el rango de calorías y el objetivo coinciden.</p>
+    <div className="mt-5 p-5 sm:p-6 bg-surface-muted border border-border rounded-panel space-y-4 text-body" style={{ '--brand': themeColor } as React.CSSProperties}>
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
+        <div className="min-w-0">
+          <h4 className="text-heading font-semibold tracking-tight text-fg">Plantillas de Dieta</h4>
+          <p className="text-body text-fg-muted">Se sugieren automáticamente en la calculadora cuando el rango de calorías y el objetivo coinciden.</p>
         </div>
         {!isFormOpen && (
-          <button
-            type="button"
-            onClick={handleNueva}
-            className="text-white px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1"
-            style={{ backgroundColor: themeColor }}
-          >
-            <Plus className="w-3.5 h-3.5" /> Nueva Plantilla
-          </button>
+          <Button onClick={handleNueva} icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
+            Nueva Plantilla
+          </Button>
         )}
       </div>
 
       {!isFormOpen && (
-        <div className="space-y-2">
+        <div className="space-y-2.5">
           {plantillasDeEstaEmpresa.length === 0 && (
-            <p className="text-slate-500">Sin plantillas configuradas todavía.</p>
+            <EmptyState
+              icon={<Plus />}
+              title="Sin plantillas configuradas todavía"
+              description="Cree una plantilla para sugerirla automáticamente según el objetivo y el rango de calorías."
+            />
           )}
           {plantillasDeEstaEmpresa.map(p => (
-            <div key={p.id} className="flex items-center justify-between bg-white border border-slate-200 rounded-lg p-2.5">
-              <div>
-                <div className="font-semibold text-slate-700">{p.nombre} — {ETIQUETAS_DIRECCION[p.direccion]}</div>
-                <div className="text-[11px] text-slate-500">{p.caloriaMin}-{p.caloriaMax} kcal · Carbohidratos {p.carbohidratosPct ?? '—'}% · Proteínas {p.proteinasPct ?? '—'}% · Grasas {p.grasasPct ?? '—'}%</div>
+            <div key={p.id} className="flex items-center justify-between gap-3 bg-surface border border-border rounded-card shadow-xs p-4">
+              <div className="min-w-0">
+                <div className="font-semibold text-fg flex flex-wrap items-center gap-2">
+                  {p.nombre}
+                  <Badge tone="brand">{ETIQUETAS_DIRECCION[p.direccion]}</Badge>
+                </div>
+                <div className="mt-1 text-xs text-fg-muted">{p.caloriaMin}-{p.caloriaMax} kcal · Carbohidratos {p.carbohidratosPct ?? '—'}% · Proteínas {p.proteinasPct ?? '—'}% · Grasas {p.grasasPct ?? '—'}%</div>
               </div>
-              <div className="flex gap-1">
-                <button type="button" onClick={() => handleEditar(p)} className="text-slate-500 hover:text-teal-600 px-2 py-1">Editar</button>
-                <button type="button" onClick={() => onDeletePlantillaDieta(p.id)} className="text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-full p-2" title="Eliminar" aria-label="Eliminar">
-                  <X className="w-3.5 h-3.5" />
-                </button>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button variant="ghost" size="sm" onClick={() => handleEditar(p)}>Editar</Button>
+                <IconButton label="Eliminar" icon={<X className="w-4 h-4" aria-hidden="true" />} className="hover:text-danger hover:bg-danger-soft" onClick={() => onDeletePlantillaDieta(p.id)} />
               </div>
             </div>
           ))}
@@ -169,88 +177,75 @@ export default function PlantillaDietaManager({ idCompania, plantillasDieta, onS
       )}
 
       {isFormOpen && (
-        <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label htmlFor="plantillad-nombre" className="block text-slate-600 font-semibold mb-1">Nombre</label>
-              <input id="plantillad-nombre" type="text" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="ej: Déficit clásico 1500-1800" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-            </div>
-            <div>
-              <label htmlFor="plantillad-objetivo" className="block text-slate-600 font-semibold mb-1">Objetivo</label>
-              <select id="plantillad-objetivo" value={direccion} onChange={(e) => setDireccion(e.target.value as DireccionPrescripcion)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+        <div className="bg-surface border border-border rounded-card shadow-xs p-4 sm:p-5 space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <Field label="Nombre">
+              <Input type="text" value={nombre} onChange={(e: any) => setNombre(e.target.value)} placeholder="ej: Déficit clásico 1500-1800" />
+            </Field>
+            <Field label="Objetivo">
+              <Select value={direccion} onChange={(e: any) => setDireccion(e.target.value as DireccionPrescripcion)}>
                 <option value="DEFICIT">Déficit</option>
                 <option value="MANTENIMIENTO">Mantenimiento</option>
                 <option value="SUPERAVIT">Superávit</option>
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label htmlFor="plantillad-kcal-min" className="block text-slate-600 font-semibold mb-1">Kcal mín.</label>
-                <input id="plantillad-kcal-min" type="number" min={0} step={50} value={caloriaMin} onChange={(e) => setCaloriaMin(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-              </div>
-              <div>
-                <label htmlFor="plantillad-kcal-max" className="block text-slate-600 font-semibold mb-1">Kcal máx.</label>
-                <input id="plantillad-kcal-max" type="number" min={0} step={50} value={caloriaMax} onChange={(e) => setCaloriaMax(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-              </div>
+              </Select>
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Kcal mín.">
+                <Input type="number" min={0} step={50} value={caloriaMin} onChange={(e: any) => setCaloriaMin(e.target.value)} />
+              </Field>
+              <Field label="Kcal máx.">
+                <Input type="number" min={0} step={50} value={caloriaMax} onChange={(e: any) => setCaloriaMax(e.target.value)} />
+              </Field>
             </div>
           </div>
 
           <div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label htmlFor="plantillad-carbohidratos" className="block text-slate-600 font-semibold mb-1">Carbohidratos (%)</label>
-                <input id="plantillad-carbohidratos" type="number" min={0} max={100} value={carbohidratosPct} onChange={(e) => setCarbohidratosPct(e.target.value)} placeholder="ej: 40" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-              </div>
-              <div>
-                <label htmlFor="plantillad-proteinas" className="block text-slate-600 font-semibold mb-1">Proteínas (%)</label>
-                <input id="plantillad-proteinas" type="number" min={0} max={100} value={proteinasPct} onChange={(e) => setProteinasPct(e.target.value)} placeholder="ej: 35" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-              </div>
-              <div>
-                <label htmlFor="plantillad-grasas" className="block text-slate-600 font-semibold mb-1">Grasas (%)</label>
-                <input id="plantillad-grasas" type="number" min={0} max={100} value={grasasPct} onChange={(e) => setGrasasPct(e.target.value)} placeholder="ej: 25" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-              </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <Field label="Carbohidratos (%)">
+                <Input type="number" min={0} max={100} value={carbohidratosPct} onChange={(e: any) => setCarbohidratosPct(e.target.value)} placeholder="ej: 40" />
+              </Field>
+              <Field label="Proteínas (%)">
+                <Input type="number" min={0} max={100} value={proteinasPct} onChange={(e: any) => setProteinasPct(e.target.value)} placeholder="ej: 35" />
+              </Field>
+              <Field label="Grasas (%)">
+                <Input type="number" min={0} max={100} value={grasasPct} onChange={(e: any) => setGrasasPct(e.target.value)} placeholder="ej: 25" />
+              </Field>
             </div>
             {(carbohidratosPct !== '' || proteinasPct !== '' || grasasPct !== '') && (
-              <p className={`text-[11px] mt-1 font-semibold ${todosLosPctLlenos && sumaPct !== 100 ? 'text-rose-600' : 'text-slate-500'}`}>
-                Suma actual: {sumaPct}% {todosLosPctLlenos ? (sumaPct === 100 ? <Check className="inline w-3.5 h-3.5 text-emerald-600 align-text-bottom" aria-label="correcto" /> : '(debe sumar 100%)') : '(opcional dejar campos en blanco)'}
+              <p className={`text-xs mt-2 font-semibold ${todosLosPctLlenos && sumaPct !== 100 ? 'text-danger' : 'text-fg-muted'}`} aria-live="polite">
+                Suma actual: {sumaPct}% {todosLosPctLlenos ? (sumaPct === 100 ? <Check className="inline w-3.5 h-3.5 text-success align-text-bottom" aria-label="correcto" /> : '(debe sumar 100%)') : '(opcional dejar campos en blanco)'}
               </p>
             )}
           </div>
 
-          <div className="space-y-2">
-            <div>
-              <label htmlFor="plantillad-desayuno" className="block text-slate-600 font-semibold mb-1">Desayuno</label>
-              <textarea id="plantillad-desayuno" rows={2} value={desayuno} onChange={(e) => setDesayuno(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-            </div>
-            <div>
-              <label htmlFor="plantillad-merienda-de-la-manana" className="block text-slate-600 font-semibold mb-1">Merienda de la mañana</label>
-              <textarea id="plantillad-merienda-de-la-manana" rows={1} value={meriendaManana} onChange={(e) => setMeriendaManana(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-            </div>
-            <div>
-              <label htmlFor="plantillad-almuerzo" className="block text-slate-600 font-semibold mb-1">Almuerzo</label>
-              <textarea id="plantillad-almuerzo" rows={2} value={almuerzo} onChange={(e) => setAlmuerzo(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-            </div>
-            <div>
-              <label htmlFor="plantillad-merienda-de-la-tarde" className="block text-slate-600 font-semibold mb-1">Merienda de la tarde</label>
-              <textarea id="plantillad-merienda-de-la-tarde" rows={1} value={meriendaTarde} onChange={(e) => setMeriendaTarde(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-            </div>
-            <div>
-              <label htmlFor="plantillad-cena" className="block text-slate-600 font-semibold mb-1">Cena</label>
-              <textarea id="plantillad-cena" rows={2} value={cena} onChange={(e) => setCena(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-            </div>
-            <div>
-              <label htmlFor="plantillad-indicaciones" className="block text-slate-600 font-semibold mb-1">Indicaciones</label>
-              <textarea id="plantillad-indicaciones" rows={2} value={indicaciones} onChange={(e) => setIndicaciones(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5" />
-            </div>
+          <div className="space-y-4">
+            <Field label="Desayuno">
+              <Textarea rows={2} value={desayuno} onChange={(e: any) => setDesayuno(e.target.value)} />
+            </Field>
+            <Field label="Merienda de la mañana">
+              <Textarea rows={1} value={meriendaManana} onChange={(e: any) => setMeriendaManana(e.target.value)} />
+            </Field>
+            <Field label="Almuerzo">
+              <Textarea rows={2} value={almuerzo} onChange={(e: any) => setAlmuerzo(e.target.value)} />
+            </Field>
+            <Field label="Merienda de la tarde">
+              <Textarea rows={1} value={meriendaTarde} onChange={(e: any) => setMeriendaTarde(e.target.value)} />
+            </Field>
+            <Field label="Cena">
+              <Textarea rows={2} value={cena} onChange={(e: any) => setCena(e.target.value)} />
+            </Field>
+            <Field label="Indicaciones">
+              <Textarea rows={2} value={indicaciones} onChange={(e: any) => setIndicaciones(e.target.value)} />
+            </Field>
           </div>
 
-          <div className="flex gap-2">
-            <button type="button" onClick={handleGuardar} className="text-white px-3 py-1.5 rounded-lg font-semibold" style={{ backgroundColor: themeColor }}>
-              Guardar Plantilla
-            </button>
-            <button type="button" onClick={() => { setIsFormOpen(false); limpiarFormulario(); }} className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-3 py-1.5 rounded-lg font-semibold">
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5 pt-1">
+            <Button variant="secondary" onClick={() => { setIsFormOpen(false); limpiarFormulario(); }}>
               Cancelar
-            </button>
+            </Button>
+            <Button onClick={handleGuardar}>
+              Guardar Plantilla
+            </Button>
           </div>
         </div>
       )}

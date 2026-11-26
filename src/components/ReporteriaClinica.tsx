@@ -1,5 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { Company } from '../data/mockData';
+import { Badge } from './ui/Badge';
+import { Button } from './ui/Button';
+import { Card } from './ui/Card';
+import { EmptyState } from './ui/EmptyState';
+import { Input } from './ui/Input';
+import { Skeleton } from './ui/Skeleton';
+import { StatCard } from './ui/StatCard';
 import { BarChart3, Users, UserPlus, CheckCircle2, TrendingUp, Download } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
@@ -81,125 +88,114 @@ export default function ReporteriaClinica({ company }: ReporteriaClinicaProps) {
     URL.revokeObjectURL(url);
   };
 
+  const segmento = (activo: boolean) =>
+    `min-h-10 px-4 rounded-lg text-sm font-semibold transition-colors ${activo ? 'bg-surface shadow-sm text-fg' : 'text-fg-muted hover:text-fg'}`;
+
   return (
-    <div className="space-y-4">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2 mr-auto">
-          <BarChart3 className="w-4 h-4" style={{ color: company.colorPrimario }} />
-          <h3 className="text-sm font-bold text-slate-800">Reportería de Clientes y Sesiones</h3>
+    <div className="space-y-5" style={{ '--brand': company.colorPrimario } as CSSProperties}>
+      <Card className="p-4 sm:p-5 flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-3 mr-auto min-w-0">
+          <span className="w-10 h-10 shrink-0 rounded-control bg-brand-soft text-brand-ink flex items-center justify-center" aria-hidden="true">
+            <BarChart3 className="w-5 h-5" />
+          </span>
+          <h3 className="text-heading font-semibold tracking-tight text-fg">Reportería de Clientes y Sesiones</h3>
         </div>
-        <div className="flex bg-slate-100 rounded-xl p-1 text-xs font-semibold">
-          <button
-            onClick={() => setModo('mensual')}
-            className={`px-3 py-1.5 rounded-lg transition-all ${modo === 'mensual' ? 'bg-white shadow-xs text-slate-800' : 'text-slate-500'}`}
-          >
+        <div className="flex bg-surface-muted rounded-control p-1" role="group" aria-label="Tipo de período">
+          <button type="button" onClick={() => setModo('mensual')} aria-pressed={modo === 'mensual'} className={segmento(modo === 'mensual')}>
             Mensual
           </button>
-          <button
-            onClick={() => setModo('rango')}
-            className={`px-3 py-1.5 rounded-lg transition-all ${modo === 'rango' ? 'bg-white shadow-xs text-slate-800' : 'text-slate-500'}`}
-          >
+          <button type="button" onClick={() => setModo('rango')} aria-pressed={modo === 'rango'} className={segmento(modo === 'rango')}>
             Rango personalizado
           </button>
         </div>
         {modo === 'mensual' ? (
-          <input
+          <Input
             type="month"
+            aria-label="Mes del reporte"
             value={mes}
-            onChange={(e) => setMes(e.target.value)}
-            className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs"
+            onChange={(e: any) => setMes(e.target.value)}
+            wrapperClassName="w-full sm:w-44"
           />
         ) : (
           <div className="flex flex-wrap items-center gap-2">
-            <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs" />
-            <span className="text-xs text-slate-500">a</span>
-            <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs" />
+            <Input type="date" aria-label="Desde" value={desde} onChange={(e: any) => setDesde(e.target.value)} wrapperClassName="w-full sm:w-44" />
+            <span className="text-sm text-fg-muted">a</span>
+            <Input type="date" aria-label="Hasta" value={hasta} onChange={(e: any) => setHasta(e.target.value)} wrapperClassName="w-full sm:w-44" />
           </div>
         )}
-      </div>
+      </Card>
 
       {error && (
-        <div className="p-3 rounded-xl bg-rose-50 border border-rose-100 text-rose-600 text-xs">{error}</div>
+        <div role="alert" className="p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-sm">{error}</div>
       )}
 
       {cargando ? (
-        <div className="text-center text-xs text-slate-500 py-10">Cargando reporte...</div>
+        <div className="space-y-5" role="status" aria-label="Cargando reporte">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-28 rounded-card" />)}
+          </div>
+          <Skeleton className="h-72 rounded-card" />
+        </div>
       ) : reporte && (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-              <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-bold uppercase tracking-wider mb-1">
-                <UserPlus className="w-3.5 h-3.5" /> Pacientes Nuevos
-              </div>
-              <span className="text-2xl font-bold text-slate-900">{reporte.resumen.pacientesNuevos}</span>
-            </div>
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-              <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-bold uppercase tracking-wider mb-1">
-                <Users className="w-3.5 h-3.5" /> Pacientes Atendidos
-              </div>
-              <span className="text-2xl font-bold text-slate-900">{reporte.resumen.pacientesAtendidos}</span>
-            </div>
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-              <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-bold uppercase tracking-wider mb-1">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Sesiones Completadas
-              </div>
-              <span className="text-2xl font-bold text-slate-900">{reporte.resumen.sesionesCompletadas}</span>
-            </div>
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-              <div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-bold uppercase tracking-wider mb-1">
-                <TrendingUp className="w-3.5 h-3.5" /> Tasa de Asistencia
-              </div>
-              <span className="text-2xl font-bold text-slate-900">{reporte.resumen.tasaAsistencia}%</span>
-            </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatCard label="Pacientes Nuevos" icon={<UserPlus />} value={reporte.resumen.pacientesNuevos} />
+            <StatCard label="Pacientes Atendidos" icon={<Users />} value={reporte.resumen.pacientesAtendidos} />
+            <StatCard label="Sesiones Completadas" icon={<CheckCircle2 />} value={reporte.resumen.sesionesCompletadas} />
+            <StatCard label="Tasa de Asistencia" icon={<TrendingUp />} value={`${reporte.resumen.tasaAsistencia}%`} />
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-            <h4 className="text-xs font-bold text-slate-600 mb-3">Tendencia Mensual</h4>
+          <Card className="p-4 sm:p-5">
+            <h4 className="text-body font-semibold text-fg mb-4">Tendencia Mensual</h4>
             <div style={{ width: '100%', height: 260 }}>
               <ResponsiveContainer>
                 <BarChart data={reporte.tendenciaMensual}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="mes" tick={{ fontSize: 10 }} />
-                  <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-                  <Tooltip />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="pacientesNuevos" name="Pacientes Nuevos" fill="#0ea5e9" />
-                  <Bar dataKey="sesionesCompletadas" name="Sesiones Completadas" fill="#0f766e" />
+                  <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="mes" tick={{ fontSize: 11, fill: '#64748b' }} stroke="#cbd5e1" />
+                  <YAxis tick={{ fontSize: 11, fill: '#64748b' }} stroke="#cbd5e1" allowDecimals={false} />
+                  <Tooltip
+                    cursor={{ fill: '#f1f3f6' }}
+                    contentStyle={{ borderRadius: 12, border: '1px solid #e5e7eb', boxShadow: '0 4px 12px -2px rgb(15 23 42 / 0.07)', fontSize: 12 }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  {/* Serie 1: info (#0369a1). Serie 2: color de la clínica (--brand), definido en :root */}
+                  <Bar dataKey="pacientesNuevos" name="Pacientes Nuevos" fill="#0369a1" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="sesionesCompletadas" name="Sesiones Completadas" fill="var(--brand)" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
-          </div>
+          </Card>
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-            <div className="flex justify-between items-center mb-3">
-              <h4 className="text-xs font-bold text-slate-600">Detalle por Paciente</h4>
-              <button
-                onClick={exportarCsv}
-                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-1.5 px-3 rounded-xl border border-slate-200 transition-all flex items-center gap-1.5 text-xs"
-              >
-                <Download className="w-3.5 h-3.5" />
+          <Card className="overflow-hidden">
+            <div className="flex flex-wrap justify-between items-center gap-3 p-4 sm:p-5">
+              <h4 className="text-body font-semibold text-fg">Detalle por Paciente</h4>
+              <Button variant="outline" size="sm" onClick={exportarCsv} icon={<Download className="w-4 h-4" aria-hidden="true" />}>
                 Exportar CSV
-              </button>
+              </Button>
             </div>
             {reporte.pacientes.length === 0 ? (
-              <p className="text-xs text-slate-500 text-center py-6">No hay datos para el período seleccionado.</p>
+              <EmptyState
+                icon={<Users />}
+                title="Sin datos para el período"
+                description="No hay pacientes con sesiones en el período seleccionado. Pruebe con otro rango de fechas."
+              />
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-left text-slate-500 uppercase text-[11px] tracking-wider border-b border-slate-100">
-                      <th className="py-2 pr-3">Paciente</th>
-                      <th className="py-2 pr-3">Sesiones Completadas</th>
-                      <th className="py-2 pr-3">Nuevo</th>
+                <table className="w-full text-sm">
+                  <thead className="bg-surface-muted">
+                    <tr className="text-left text-fg-muted text-xs font-semibold border-y border-border">
+                      <th scope="col" className="py-3 px-4 sm:px-5">Paciente</th>
+                      <th scope="col" className="py-3 px-4 sm:px-5">Sesiones Completadas</th>
+                      <th scope="col" className="py-3 px-4 sm:px-5">Nuevo</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-border">
                     {reporte.pacientes.map(p => (
-                      <tr key={p.idPaciente} className="border-b border-slate-50">
-                        <td className="py-2 pr-3 font-semibold text-slate-800">{p.nombreCompleto}</td>
-                        <td className="py-2 pr-3 text-slate-600">{p.sesionesCompletadas}</td>
-                        <td className="py-2 pr-3">
-                          {p.esNuevo && <span className="bg-sky-50 text-sky-700 border border-sky-200 px-2 py-0.5 rounded-full text-[11px] font-bold">Nuevo</span>}
+                      <tr key={p.idPaciente} className="hover:bg-surface-muted/60 transition-colors">
+                        <td className="py-3 px-4 sm:px-5 font-semibold text-fg">{p.nombreCompleto}</td>
+                        <td className="py-3 px-4 sm:px-5 text-fg-muted">{p.sesionesCompletadas}</td>
+                        <td className="py-3 px-4 sm:px-5">
+                          {p.esNuevo && <Badge tone="info">Nuevo</Badge>}
                         </td>
                       </tr>
                     ))}
@@ -207,7 +203,7 @@ export default function ReporteriaClinica({ company }: ReporteriaClinicaProps) {
                 </table>
               </div>
             )}
-          </div>
+          </Card>
         </>
       )}
     </div>

@@ -17,6 +17,8 @@ export interface FieldProps {
   /** Acción pequeña a la derecha de la etiqueta (p. ej. "¿Olvidó su contraseña?"). */
   labelAction?: ReactNode;
   className?: string;
+  /** Sin @types/react, `key` (que React consume en listas) debe declararse para que TS lo acepte. */
+  key?: string | number;
   /** Un control (Input/Select/Textarea) al que se inyectan id y aria-*, o una función que los recibe. */
   children: ReactElement<Partial<FieldControlProps>> | ((props: FieldControlProps) => ReactNode);
 }

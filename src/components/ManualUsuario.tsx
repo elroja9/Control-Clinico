@@ -1,4 +1,6 @@
+import { useEffect, useState, type CSSProperties } from 'react';
 import { ArrowLeft, Printer } from 'lucide-react';
+import { Button } from './ui/Button';
 
 interface Bloque {
   sub: string;
@@ -450,77 +452,114 @@ export default function ManualUsuario({ perfil, nombreEmpresa, themeColor, onClo
   // El índice usa scrollIntoView: un enlace #id rompería la navegación, que vive en el hash (#/manual)
   const irA = (id: string) => document.getElementById(`manual-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
+  // Sección resaltada en el índice lateral según el scroll
+  const [activa, setActiva] = useState<string>(contenido[0]?.id ?? '');
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entradas) => {
+        const visibles = entradas.filter(en => en.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visibles.length > 0) setActiva(visibles[0].target.id.replace('manual-', ''));
+      },
+      { rootMargin: '-80px 0px -65% 0px' }
+    );
+    contenido.forEach(s => {
+      const el = document.getElementById(`manual-${s.id}`);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perfil]);
+
   return (
-    <div className="bg-slate-50 min-h-screen p-4 sm:p-6 print:bg-white print:p-0">
-      <div className="max-w-4xl mx-auto mb-6 bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
+    <div className="bg-bg min-h-screen p-4 sm:p-6 print:bg-white print:p-0 text-fg" style={{ '--brand': themeColor } as CSSProperties}>
+      <div className="max-w-6xl mx-auto mb-6 bg-surface rounded-card border border-border shadow-xs p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
         <div className="flex items-center gap-3 min-w-0">
-          <button
-            type="button"
-            onClick={onClose}
-            className="min-h-10 min-w-10 shrink-0 flex items-center justify-center gap-1.5 px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold border border-slate-200 transition-colors"
-            aria-label="Volver al inicio"
-          >
-            <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+          <Button variant="secondary" onClick={onClose} aria-label="Volver al inicio" icon={<ArrowLeft className="w-4 h-4" aria-hidden="true" />}>
             <span className="hidden sm:inline">Volver</span>
-          </button>
+          </Button>
           <div className="min-w-0">
-            <h2 className="text-sm font-bold text-slate-900">Manual de usuario</h2>
-            <p className="text-xs text-slate-600">Para descargarlo, pulse "Descargar PDF" y elija "Guardar como PDF"</p>
+            <h2 className="text-body font-semibold text-fg">Manual de usuario</h2>
+            <p className="text-xs text-fg-muted">Para descargarlo, pulse "Descargar PDF" y elija "Guardar como PDF"</p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => window.print()}
-          className="min-h-10 flex items-center gap-1.5 px-3 rounded-xl text-white text-xs font-bold transition-opacity hover:opacity-90"
-          style={{ backgroundColor: themeColor }}
-        >
-          <Printer className="w-4 h-4" aria-hidden="true" />
+        <Button onClick={() => window.print()} icon={<Printer className="w-4 h-4" aria-hidden="true" />}>
           Descargar PDF
-        </button>
+        </Button>
       </div>
 
-      <article className="max-w-4xl mx-auto bg-white rounded-2xl border border-slate-200 shadow-md p-6 sm:p-8 space-y-8 print:border-none print:shadow-none print:p-0">
-        <header className="border-b border-slate-200 pb-5">
-          <p className="text-xs font-bold uppercase tracking-wider" style={{ color: themeColor }}>TuanisBooking · {nombreEmpresa}</p>
-          <h1 className="text-2xl font-bold text-slate-900 mt-1">Manual de usuario</h1>
-          <p className="text-sm text-slate-600 mt-1">Guía paso a paso de cada sección del sistema.</p>
-        </header>
+      <div className="max-w-6xl mx-auto lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] lg:gap-8 lg:items-start print:block">
+        {/* Índice lateral (escritorio) */}
+        <aside className="hidden lg:block print:hidden sticky top-6">
+          <nav aria-label="Contenido del manual" className="bg-surface rounded-card border border-border shadow-xs p-3 max-h-[calc(100vh-3rem)] overflow-y-auto scrollbar-thin">
+            <h2 className="px-2 pt-1 pb-2 text-xs font-semibold text-fg-muted">Contenido</h2>
+            <ol className="space-y-0.5">
+              {contenido.map((s, i) => {
+                const actual = activa === s.id;
+                return (
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      onClick={() => irA(s.id)}
+                      aria-current={actual ? 'location' : undefined}
+                      className={`w-full min-h-10 px-2.5 py-1.5 rounded-control text-left text-sm flex items-start gap-2 transition-colors ${
+                        actual ? 'bg-brand-soft text-brand-ink font-semibold' : 'text-fg-muted hover:bg-surface-muted hover:text-fg'
+                      }`}
+                    >
+                      <span className="tabular-nums text-xs mt-0.5 w-5 shrink-0">{i + 1}.</span>
+                      <span>{s.titulo}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          </nav>
+        </aside>
 
-        <nav aria-label="Contenido del manual" className="print:break-after-page">
-          <h2 className="text-sm font-bold text-slate-900 mb-2">Contenido</h2>
-          <ol className="grid sm:grid-cols-2 gap-x-6 gap-y-1 text-sm list-decimal pl-5">
-            {contenido.map(s => (
-              <li key={s.id}>
-                <button type="button" onClick={() => irA(s.id)} className="block text-slate-700 hover:underline text-left">{s.titulo}</button>
-              </li>
-            ))}
-          </ol>
-        </nav>
+        <article className="min-w-0 bg-surface rounded-panel border border-border shadow-sm p-6 sm:p-10 space-y-10 print:border-none print:shadow-none print:p-0">
+          <header className="border-b border-border pb-6">
+            <p className="text-xs font-semibold text-brand-ink">TuanisBooking · {nombreEmpresa}</p>
+            <h1 className="text-display font-semibold tracking-tight text-fg mt-1">Manual de usuario</h1>
+            <p className="text-base text-fg-muted mt-2">Guía paso a paso de cada sección del sistema.</p>
+          </header>
 
-        {contenido.map((s, i) => (
-          <section key={s.id} id={`manual-${s.id}`} className="scroll-mt-24 space-y-3 break-inside-avoid-page">
-            <h2 className="text-lg font-bold text-slate-900">{i + 1}. {s.titulo}</h2>
-            <p className="text-sm text-slate-600">{s.intro}</p>
-            {s.bloques.map(b => (
-              <div key={b.sub} className="break-inside-avoid">
-                <h3 className="text-sm font-bold text-slate-800 mt-3 mb-1">{b.sub}</h3>
-                <ul className="list-disc pl-5 space-y-1 text-sm text-slate-700">
-                  {b.pasos.map(p => <li key={p}>{p}</li>)}
-                </ul>
-                {b.img && (
-                  <figure className="mt-3">
-                    <img src={b.img} alt={`Pantalla: ${b.sub}`} width={1280} height={800} className="w-full h-auto rounded-xl border border-slate-200 shadow-xs" />
-                    <figcaption className="text-xs text-slate-500 mt-1.5">{b.sub}</figcaption>
-                  </figure>
-                )}
-              </div>
-            ))}
-            {s.nota && (
-              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">{s.nota}</p>
-            )}
-          </section>
-        ))}
-      </article>
+          {/* Índice en línea (móvil e impresión) */}
+          <nav aria-label="Contenido del manual (resumen)" className="lg:hidden print:block print:break-after-page">
+            <h2 className="text-body font-semibold text-fg mb-2">Contenido</h2>
+            <ol className="grid sm:grid-cols-2 gap-x-6 gap-y-0.5 text-sm list-decimal pl-5 marker:text-fg-subtle">
+              {contenido.map(s => (
+                <li key={s.id}>
+                  <button type="button" onClick={() => irA(s.id)} className="block min-h-10 text-fg-muted hover:text-brand-ink hover:underline underline-offset-2 text-left">{s.titulo}</button>
+                </li>
+              ))}
+            </ol>
+          </nav>
+
+          {contenido.map((s, i) => (
+            <section key={s.id} id={`manual-${s.id}`} className="scroll-mt-24 space-y-4 break-inside-avoid-page">
+              <h2 className="text-title font-semibold tracking-tight text-fg">{i + 1}. {s.titulo}</h2>
+              <p className="text-base leading-7 text-fg-muted max-w-prose">{s.intro}</p>
+              {s.bloques.map(b => (
+                <div key={b.sub} className="break-inside-avoid">
+                  <h3 className="text-heading font-semibold text-fg mt-5 mb-2">{b.sub}</h3>
+                  <ul className="list-disc pl-5 space-y-2 text-base leading-7 text-fg-muted marker:text-brand max-w-prose">
+                    {b.pasos.map(p => <li key={p}>{p}</li>)}
+                  </ul>
+                  {b.img && (
+                    <figure className="mt-4">
+                      <img src={b.img} alt={`Pantalla: ${b.sub}`} width={1280} height={800} className="w-full h-auto rounded-card border border-border shadow-sm" />
+                      <figcaption className="text-xs text-fg-subtle mt-2">{b.sub}</figcaption>
+                    </figure>
+                  )}
+                </div>
+              ))}
+              {s.nota && (
+                <p className="text-sm leading-6 text-warning bg-warning-soft border border-warning/25 rounded-card p-4">{s.nota}</p>
+              )}
+            </section>
+          ))}
+        </article>
+      </div>
     </div>
   );
 }

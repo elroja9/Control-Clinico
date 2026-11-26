@@ -3,6 +3,12 @@ import { ArrowLeft, Archive, Edit, FolderOpen, Mail, Plus, Save, Search, Trash2,
 import { CasoLegal, DocumentoCaso, NotificationLog, Patient } from '../data/mockData';
 import { notify, confirmar } from './ui/Feedback';
 import { fechaCR } from '../utils/fechaCR';
+import { Badge } from './ui/Badge';
+import { Button } from './ui/Button';
+import { Card } from './ui/Card';
+import { EmptyState } from './ui/EmptyState';
+import { IconButton } from './ui/IconButton';
+import { controlBase } from './ui/Input';
 
 interface CasosLegalesManagerProps {
   casos: CasoLegal[];
@@ -34,8 +40,8 @@ async function pedir<T>(url: string, method: string, body?: unknown): Promise<T>
   return data as T;
 }
 
-const inputBase = 'w-full min-h-10 bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-sm text-slate-800 focus:bg-white';
-const labelBase = 'block text-xs text-slate-600 font-medium mb-1';
+const inputBase = `${controlBase} px-3.5`;
+const labelBase = 'block text-xs font-semibold text-fg mb-1.5';
 
 export default function CasosLegalesManager({
   casos, clientes, themeColor, idClienteFiltro, onQuitarFiltroCliente, onCasoGuardado, onCasoEliminado, onNotificacion
@@ -142,14 +148,15 @@ export default function CasosLegalesManager({
   if (borradorCaso) {
     const set = <K extends keyof BorradorCaso>(k: K, v: BorradorCaso[K]) => setBorradorCaso({ ...borradorCaso, [k]: v });
     return (
-      <form onSubmit={guardarCaso} className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-clip">
-        <div className="p-4 text-white font-bold flex justify-between items-center" style={{ backgroundColor: themeColor }}>
-          <h2 className="flex items-center gap-2"><FolderOpen className="w-5 h-5" aria-hidden="true" />{borradorCaso.id ? 'Editar caso' : 'Nuevo caso'}</h2>
-          <button type="button" onClick={() => setBorradorCaso(null)} className="hover:bg-black/15 w-9 h-9 -m-1.5 flex items-center justify-center rounded-full" aria-label="Cerrar sin guardar">
-            <X className="w-5 h-5" />
-          </button>
+      <form onSubmit={guardarCaso} className="bg-surface rounded-card border border-border shadow-xs overflow-clip" style={{ '--brand': themeColor } as React.CSSProperties}>
+        <div className="px-5 sm:px-6 py-4 border-b border-border flex justify-between items-center gap-3">
+          <h2 className="flex items-center gap-3 text-heading font-semibold tracking-tight text-fg">
+            <span className="w-10 h-10 rounded-control bg-brand-soft text-brand-ink flex items-center justify-center" aria-hidden="true"><FolderOpen className="w-5 h-5" /></span>
+            {borradorCaso.id ? 'Editar caso' : 'Nuevo caso'}
+          </h2>
+          <IconButton label="Cerrar sin guardar" icon={<X className="w-5 h-5" aria-hidden="true" />} onClick={() => setBorradorCaso(null)} />
         </div>
-        <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="p-5 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-5">
           <div>
             <label htmlFor="caso-cliente" className={labelBase}>Cliente *</label>
             <select id="caso-cliente" required value={borradorCaso.idPaciente || ''} onChange={e => set('idPaciente', parseInt(e.target.value))} className={inputBase}>
@@ -176,7 +183,7 @@ export default function CasosLegalesManager({
           <div>
             <label htmlFor="caso-recordatorio" className={labelBase}>Recordar documentos pendientes cada (días)</label>
             <input id="caso-recordatorio" type="number" min={0} max={365} value={borradorCaso.recordatorioCadaDias} onChange={e => set('recordatorioCadaDias', parseInt(e.target.value) || 0)} className={inputBase} aria-describedby="caso-recordatorio-ayuda" />
-            <p id="caso-recordatorio-ayuda" className="text-[11px] text-slate-500 mt-1">0 = no enviar recordatorios automáticos.</p>
+            <p id="caso-recordatorio-ayuda" className="text-xs text-fg-muted mt-1.5">0 = no enviar recordatorios automáticos.</p>
           </div>
           <div>
             <label htmlFor="caso-estado" className={labelBase}>Estado</label>
@@ -190,11 +197,9 @@ export default function CasosLegalesManager({
             <textarea id="caso-notas" rows={3} value={borradorCaso.notas} onChange={e => set('notas', e.target.value)} className={`${inputBase} py-2`} />
           </div>
         </div>
-        <div className="p-4 border-t border-slate-200 flex justify-end gap-2.5">
-          <button type="button" onClick={() => setBorradorCaso(null)} className="min-h-11 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-4 rounded-xl">Cancelar</button>
-          <button type="submit" disabled={ocupado} className="min-h-11 text-white font-semibold px-5 rounded-xl flex items-center gap-1.5 hover:brightness-110 disabled:opacity-60" style={{ backgroundColor: themeColor }}>
-            <Save className="w-4 h-4" aria-hidden="true" />Guardar caso
-          </button>
+        <div className="px-5 sm:px-6 py-4 border-t border-border bg-surface-muted/60 flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5">
+          <Button variant="secondary" onClick={() => setBorradorCaso(null)}>Cancelar</Button>
+          <Button type="submit" loading={ocupado} icon={ocupado ? undefined : <Save className="w-4 h-4" aria-hidden="true" />}>Guardar caso</Button>
         </div>
       </form>
     );
@@ -214,74 +219,73 @@ export default function CasosLegalesManager({
     };
 
     return (
-      <div className="space-y-4">
-        <button type="button" onClick={() => { setCasoAbiertoId(null); setBorradorDoc(null); }} className="min-h-10 px-3 -ml-3 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-100 inline-flex items-center gap-1.5">
+      <div className="space-y-5" style={{ '--brand': themeColor } as React.CSSProperties}>
+        <button type="button" onClick={() => { setCasoAbiertoId(null); setBorradorDoc(null); }} className="min-h-10 px-3 -ml-3 rounded-control text-sm font-semibold text-fg-muted hover:text-fg hover:bg-surface-muted inline-flex items-center gap-1.5 transition-colors">
           <ArrowLeft className="w-4 h-4" aria-hidden="true" />Volver a los casos
         </button>
 
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-4" aria-labelledby="caso-detalle-titulo">
+        <Card className="p-5 sm:p-6 space-y-5" aria-labelledby="caso-detalle-titulo" role="region">
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
             <div className="min-w-0">
-              <h2 id="caso-detalle-titulo" className="text-lg font-bold text-slate-900">{casoAbierto.titulo}</h2>
-              <p className="text-sm text-slate-600">{cliente?.nombreCompleto || 'Cliente no encontrado'}{casoAbierto.materia ? ` · ${casoAbierto.materia}` : ''}</p>
+              <h2 id="caso-detalle-titulo" className="text-title font-semibold tracking-tight text-fg">{casoAbierto.titulo}</h2>
+              <p className="text-body text-fg-muted">{cliente?.nombreCompleto || 'Cliente no encontrado'}{casoAbierto.materia ? ` · ${casoAbierto.materia}` : ''}</p>
             </div>
-            <span className={`self-start text-xs font-bold px-2.5 py-1 rounded-lg ${casoAbierto.estado === 'ABIERTO' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>
+            <Badge tone={casoAbierto.estado === 'ABIERTO' ? 'success' : 'neutral'} className="self-start">
               {casoAbierto.estado === 'ABIERTO' ? 'Abierto' : 'Cerrado'}
-            </span>
+            </Badge>
           </div>
           <dl className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-              <dt className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Expediente</dt>
-              <dd className="font-semibold text-slate-800 font-mono">{casoAbierto.numeroExpediente || '—'}</dd>
+            <div className="bg-surface-muted rounded-card p-4 border border-border">
+              <dt className="text-xs font-semibold text-fg-muted">Expediente</dt>
+              <dd className="mt-1 font-semibold text-fg font-mono">{casoAbierto.numeroExpediente || '—'}</dd>
             </div>
-            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-              <dt className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Ubicación física</dt>
-              <dd className="font-semibold text-slate-800">{casoAbierto.ubicacionFisica || 'Sin registrar'}</dd>
+            <div className="bg-surface-muted rounded-card p-4 border border-border">
+              <dt className="text-xs font-semibold text-fg-muted">Ubicación física</dt>
+              <dd className="mt-1 font-semibold text-fg">{casoAbierto.ubicacionFisica || 'Sin registrar'}</dd>
             </div>
-            <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
-              <dt className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Recordatorio</dt>
-              <dd className="font-semibold text-slate-800">
+            <div className="bg-surface-muted rounded-card p-4 border border-border">
+              <dt className="text-xs font-semibold text-fg-muted">Recordatorio</dt>
+              <dd className="mt-1 font-semibold text-fg">
                 {casoAbierto.recordatorioCadaDias > 0 ? `Cada ${casoAbierto.recordatorioCadaDias} día(s)` : 'Desactivado'}
-                <span className="block text-xs font-normal text-slate-600">
+                <span className="block text-xs font-normal text-fg-muted">
                   {casoAbierto.ultimoRecordatorioEn ? `Último: ${new Date(casoAbierto.ultimoRecordatorioEn).toLocaleString('es-CR')}` : 'Aún no se ha enviado'}
                 </span>
               </dd>
             </div>
           </dl>
-          {casoAbierto.notas && <p className="text-sm text-slate-700 whitespace-pre-line">{casoAbierto.notas}</p>}
+          {casoAbierto.notas && <p className="text-sm text-fg-muted whitespace-pre-line">{casoAbierto.notas}</p>}
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setBorradorCaso({ ...casoAbierto })} className="min-h-10 px-3.5 rounded-xl text-sm font-semibold bg-slate-100 hover:bg-slate-200 text-slate-800 inline-flex items-center gap-1.5">
-              <Edit className="w-4 h-4" aria-hidden="true" />Editar caso
-            </button>
-            <button
-              type="button"
+            <Button variant="secondary" size="sm" onClick={() => setBorradorCaso({ ...casoAbierto })} icon={<Edit className="w-4 h-4" aria-hidden="true" />}>
+              Editar caso
+            </Button>
+            <Button
+              size="sm"
               disabled={ocupado || !!motivoSinRecordatorio}
               onClick={() => enviarRecordatorio(casoAbierto)}
               title={motivoSinRecordatorio || 'Enviar ahora al cliente la lista de documentos pendientes'}
-              className="min-h-10 px-3.5 rounded-xl text-sm font-semibold text-white inline-flex items-center gap-1.5 hover:brightness-110 disabled:opacity-50"
-              style={{ backgroundColor: themeColor }}
+              icon={<Mail className="w-4 h-4" aria-hidden="true" />}
             >
-              <Mail className="w-4 h-4" aria-hidden="true" />Enviar recordatorio ahora
-            </button>
-            <button type="button" onClick={() => eliminarCaso(casoAbierto)} className="min-h-10 px-3.5 rounded-xl text-sm font-semibold text-rose-700 hover:bg-rose-50 inline-flex items-center gap-1.5 sm:ml-auto">
-              <Trash2 className="w-4 h-4" aria-hidden="true" />Eliminar caso
-            </button>
+              Enviar recordatorio ahora
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => eliminarCaso(casoAbierto)} icon={<Trash2 className="w-4 h-4" aria-hidden="true" />} className="text-danger hover:bg-danger-soft hover:text-danger sm:ml-auto">
+              Eliminar caso
+            </Button>
           </div>
-          {motivoSinRecordatorio && <p className="text-xs text-slate-600" role="note">No se puede enviar recordatorio: {motivoSinRecordatorio}</p>}
-        </section>
+          {motivoSinRecordatorio && <p className="text-xs text-fg-muted" role="note">No se puede enviar recordatorio: {motivoSinRecordatorio}</p>}
+        </Card>
 
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden" aria-labelledby="caso-documentos">
-          <div className="px-5 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/60">
-            <h3 id="caso-documentos" className="text-sm font-bold text-slate-900">Documentos ({pendientes.length} pendiente{pendientes.length === 1 ? '' : 's'})</h3>
+        <Card className="overflow-hidden" aria-labelledby="caso-documentos" role="region">
+          <div className="px-5 sm:px-6 py-3 border-b border-border flex justify-between items-center gap-3 bg-surface-muted/60">
+            <h3 id="caso-documentos" className="text-body font-semibold text-fg">Documentos ({pendientes.length} pendiente{pendientes.length === 1 ? '' : 's'})</h3>
             {!borradorDoc && (
-              <button type="button" onClick={() => setBorradorDoc(documentoVacio())} className="min-h-9 px-3 rounded-lg text-sm font-semibold inline-flex items-center gap-1" style={{ color: themeColor }}>
-                <Plus className="w-4 h-4" aria-hidden="true" />Agregar
-              </button>
+              <Button variant="ghost" size="sm" onClick={() => setBorradorDoc(documentoVacio())} icon={<Plus className="w-4 h-4" aria-hidden="true" />} className="text-brand-ink">
+                Agregar
+              </Button>
             )}
           </div>
 
           {borradorDoc && (
-            <form onSubmit={enviarDoc} className="p-4 border-b border-slate-100 grid grid-cols-1 sm:grid-cols-4 gap-3 bg-slate-50/40">
+            <form onSubmit={enviarDoc} className="p-4 sm:p-5 border-b border-border grid grid-cols-1 sm:grid-cols-4 gap-4 bg-surface-muted/40">
               <div className="sm:col-span-2">
                 <label htmlFor="doc-nombre" className={labelBase}>Documento *</label>
                 <input id="doc-nombre" required autoFocus maxLength={150} value={borradorDoc.nombre} onChange={e => setBorradorDoc({ ...borradorDoc, nombre: e.target.value })} placeholder="ej: Cédula, Certificación de nacimiento" className={inputBase} />
@@ -299,20 +303,24 @@ export default function CasosLegalesManager({
                 <input id="doc-notas" value={borradorDoc.notas} onChange={e => setBorradorDoc({ ...borradorDoc, notas: e.target.value })} className={inputBase} />
               </div>
               <div className="flex items-end gap-2">
-                <button type="button" onClick={() => setBorradorDoc(null)} className="flex-1 min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 text-sm font-semibold rounded-xl">Cancelar</button>
-                <button type="submit" disabled={ocupado} className="flex-1 min-h-10 text-white text-sm font-semibold rounded-xl hover:brightness-110 disabled:opacity-60" style={{ backgroundColor: themeColor }}>Guardar</button>
+                <Button variant="secondary" size="sm" className="flex-1" onClick={() => setBorradorDoc(null)}>Cancelar</Button>
+                <Button type="submit" size="sm" className="flex-1" loading={ocupado}>Guardar</Button>
               </div>
             </form>
           )}
 
           {casoAbierto.documentos.length === 0 ? (
-            <p className="p-6 text-center text-sm text-slate-600">Aún no hay documentos en este caso.</p>
+            <EmptyState
+              icon={<FolderOpen />}
+              title="Aún no hay documentos en este caso"
+              description="Agregue los documentos que el cliente debe entregar para llevar su control."
+            />
           ) : (
-            <ul className="divide-y divide-slate-100">
+            <ul className="divide-y divide-border">
               {casoAbierto.documentos.map(d => {
                 const vencido = d.estado === 'PENDIENTE' && !!d.fechaLimite && d.fechaLimite < hoy;
                 return (
-                  <li key={d.id} className="px-5 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                  <li key={d.id} className="px-5 sm:px-6 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
                     <label className="flex items-start gap-3 flex-1 min-w-0 cursor-pointer">
                       <input
                         type="checkbox"
@@ -324,37 +332,37 @@ export default function CasosLegalesManager({
                         aria-label={`Marcar "${d.nombre}" como recibido`}
                       />
                       <span className="min-w-0">
-                        <span className={`block text-sm font-semibold ${d.estado === 'RECIBIDO' ? 'text-slate-500 line-through' : 'text-slate-900'}`}>{d.nombre}</span>
-                        <span className="block text-xs text-slate-600">
+                        <span className={`block text-sm font-semibold ${d.estado === 'RECIBIDO' ? 'text-fg-subtle line-through' : 'text-fg'}`}>{d.nombre}</span>
+                        <span className="block text-xs text-fg-muted">
                           {d.folio ? `Folio ${d.folio}` : 'Sin folio'}
                           {d.estado === 'RECIBIDO' && d.fechaRecibido ? ` · Recibido ${d.fechaRecibido}` : ''}
                           {d.estado === 'PENDIENTE' && d.fechaLimite ? ' · ' : ''}
                           {d.estado === 'PENDIENTE' && d.fechaLimite && (
-                            <span className={vencido ? 'text-rose-700 font-semibold' : ''}>{vencido ? 'Vencido' : 'Entregar antes del'} {d.fechaLimite}</span>
+                            <span className={vencido ? 'text-danger font-semibold' : ''}>{vencido ? 'Vencido' : 'Entregar antes del'} {d.fechaLimite}</span>
                           )}
                           {d.notas ? ` · ${d.notas}` : ''}
                         </span>
                       </span>
                     </label>
                     <div className="flex gap-1 self-end sm:self-auto">
-                      <button
-                        type="button"
+                      <IconButton
+                        label={`Editar ${d.nombre}`}
+                        icon={<Edit className="w-4 h-4" aria-hidden="true" />}
                         onClick={() => setBorradorDoc({ id: d.id, nombre: d.nombre, folio: d.folio, fechaLimite: d.fechaLimite || '', notas: d.notas, estado: d.estado, fechaRecibido: d.fechaRecibido })}
-                        className="p-2.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl"
-                        aria-label={`Editar ${d.nombre}`}
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      <button type="button" onClick={() => eliminarDocumento(casoAbierto, d)} className="p-2.5 text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl" aria-label={`Eliminar ${d.nombre}`}>
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      />
+                      <IconButton
+                        label={`Eliminar ${d.nombre}`}
+                        icon={<Trash2 className="w-4 h-4" aria-hidden="true" />}
+                        className="hover:text-danger hover:bg-danger-soft"
+                        onClick={() => eliminarDocumento(casoAbierto, d)}
+                      />
                     </div>
                   </li>
                 );
               })}
             </ul>
           )}
-        </section>
+        </Card>
       </div>
     );
   }
@@ -362,11 +370,11 @@ export default function CasosLegalesManager({
   // ---------- Lista de casos ----------
   const clienteFiltrado = idClienteFiltro != null ? clientePorId.get(idClienteFiltro) : undefined;
   return (
-    <div className="space-y-4">
-      <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row gap-3 sm:items-center">
+    <div className="space-y-5" style={{ '--brand': themeColor } as React.CSSProperties}>
+      <Card className="p-4 flex flex-col sm:flex-row gap-3 sm:items-center">
         <div className="relative flex-1">
           <label htmlFor="buscar-casos" className="sr-only">Buscar casos</label>
-          <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
+          <Search className="w-4 h-4 text-fg-subtle absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
           <input
             id="buscar-casos"
             type="search"
@@ -374,44 +382,42 @@ export default function CasosLegalesManager({
             onChange={e => setBusqueda(e.target.value)}
             placeholder="Buscar por cliente, expediente o ubicación…"
             autoComplete="off"
-            className="w-full min-h-11 bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 text-sm text-slate-800 placeholder:text-slate-500 focus:bg-white"
+            className={`${controlBase} pl-10 pr-3.5`}
           />
         </div>
         <label htmlFor="filtro-estado-casos" className="sr-only">Estado</label>
-        <select id="filtro-estado-casos" value={filtroEstado} onChange={e => setFiltroEstado(e.target.value as typeof filtroEstado)} className="min-h-11 bg-slate-50 border border-slate-200 rounded-xl px-3 text-sm text-slate-800">
+        <select id="filtro-estado-casos" value={filtroEstado} onChange={e => setFiltroEstado(e.target.value as typeof filtroEstado)} className={`${controlBase} px-3.5 sm:w-auto`}>
           <option value="ABIERTO">Abiertos</option>
           <option value="CERRADO">Cerrados</option>
           <option value="TODOS">Todos</option>
         </select>
-        <button
-          type="button"
+        <Button
           disabled={clientes.length === 0}
           title={clientes.length === 0 ? 'Registre primero un cliente' : undefined}
           onClick={() => setBorradorCaso(casoVacio(idClienteFiltro ?? 0))}
-          className="min-h-11 text-white text-sm font-semibold px-4 rounded-xl flex items-center justify-center gap-2 hover:brightness-110 disabled:opacity-50"
-          style={{ backgroundColor: themeColor }}
+          icon={<Plus className="w-4 h-4" aria-hidden="true" />}
         >
-          <Plus className="w-4 h-4" aria-hidden="true" />Nuevo caso
-        </button>
-      </div>
+          Nuevo caso
+        </Button>
+      </Card>
 
       {clienteFiltrado && (
-        <p className="text-sm text-slate-700 flex items-center gap-2">
-          Casos de <strong>{clienteFiltrado.nombreCompleto}</strong>
-          <button type="button" onClick={onQuitarFiltroCliente} className="min-h-9 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold inline-flex items-center gap-1">
-            <X className="w-3.5 h-3.5" aria-hidden="true" />Ver todos
-          </button>
+        <p className="text-sm text-fg-muted flex items-center gap-2">
+          Casos de <strong className="text-fg">{clienteFiltrado.nombreCompleto}</strong>
+          <Button variant="secondary" size="sm" onClick={onQuitarFiltroCliente} icon={<X className="w-3.5 h-3.5" aria-hidden="true" />}>
+            Ver todos
+          </Button>
         </p>
       )}
 
       {casosFiltrados.length === 0 ? (
-        <div className="text-center py-12 px-4 bg-white rounded-2xl border border-dashed border-slate-300">
-          <Archive className="w-8 h-8 text-slate-400 mx-auto mb-2" aria-hidden="true" />
-          <p className="text-sm font-semibold text-slate-800">{casos.length === 0 ? 'Aún no hay casos' : 'Ningún caso coincide con el filtro'}</p>
-          <p className="text-sm text-slate-600 mt-1">
-            {casos.length === 0 ? 'Cree un caso para llevar el control de los documentos del cliente y dónde están archivados.' : 'Pruebe otra búsqueda o cambie el estado.'}
-          </p>
-        </div>
+        <Card className="border-dashed border-border-strong">
+          <EmptyState
+            icon={<Archive />}
+            title={casos.length === 0 ? 'Aún no hay casos' : 'Ningún caso coincide con el filtro'}
+            description={casos.length === 0 ? 'Cree un caso para llevar el control de los documentos del cliente y dónde están archivados.' : 'Pruebe otra búsqueda o cambie el estado.'}
+          />
+        </Card>
       ) : (
         <ul className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {casosFiltrados.map(c => {
@@ -419,23 +425,23 @@ export default function CasosLegalesManager({
             const vencidos = vencidosDe(c).length;
             return (
               <li key={c.id}>
-                <button type="button" onClick={() => setCasoAbiertoId(c.id)} className="w-full text-left bg-white rounded-2xl border border-slate-200 p-4 shadow-xs hover:border-slate-300 hover:shadow-sm transition-[border-color,box-shadow] space-y-2">
+                <button type="button" onClick={() => setCasoAbiertoId(c.id)} className="w-full h-full text-left bg-surface rounded-card border border-border p-5 shadow-xs hover:border-brand/40 hover:shadow-md transition-[border-color,box-shadow] space-y-3">
                   <span className="flex justify-between items-start gap-2">
                     <span className="min-w-0">
-                      <span className="block font-bold text-slate-900 text-sm truncate">{c.titulo}</span>
-                      <span className="block text-xs text-slate-600 truncate">{clientePorId.get(c.idPaciente)?.nombreCompleto || 'Cliente no encontrado'}</span>
+                      <span className="block font-semibold text-fg text-body truncate">{c.titulo}</span>
+                      <span className="block text-xs text-fg-muted truncate">{clientePorId.get(c.idPaciente)?.nombreCompleto || 'Cliente no encontrado'}</span>
                     </span>
-                    {c.estado === 'CERRADO' && <span className="text-[11px] font-bold bg-slate-100 text-slate-700 rounded-md px-2 py-0.5">Cerrado</span>}
+                    {c.estado === 'CERRADO' && <Badge>Cerrado</Badge>}
                   </span>
-                  <span className="block text-xs text-slate-600">
+                  <span className="block text-xs text-fg-muted">
                     {c.numeroExpediente && <span className="font-mono">{c.numeroExpediente} · </span>}
                     <Archive className="w-3.5 h-3.5 inline -mt-0.5" aria-hidden="true" /> {c.ubicacionFisica || 'Ubicación sin registrar'}
                   </span>
-                  <span className="flex flex-wrap gap-1.5 text-[11px] font-bold">
-                    <span className={`rounded-md px-2 py-0.5 ${pendientes ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                  <span className="flex flex-wrap gap-1.5">
+                    <Badge tone={pendientes ? 'warning' : 'success'}>
                       {pendientes ? `${pendientes} pendiente${pendientes === 1 ? '' : 's'}` : 'Documentos completos'}
-                    </span>
-                    {vencidos > 0 && <span className="rounded-md px-2 py-0.5 bg-rose-100 text-rose-800">{vencidos} vencido{vencidos === 1 ? '' : 's'}</span>}
+                    </Badge>
+                    {vencidos > 0 && <Badge tone="danger">{vencidos} vencido{vencidos === 1 ? '' : 's'}</Badge>}
                   </span>
                 </button>
               </li>

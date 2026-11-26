@@ -1,9 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Building, User as UserIcon, Calendar, MapPin, Check, ArrowLeft, ArrowRight, Loader2, AlertCircle, ListChecks, Clock, Navigation, MessageCircle } from 'lucide-react';
+import { Building, Building2, Home, User as UserIcon, Calendar, MapPin, Check, ArrowLeft, ArrowRight, Loader2, AlertCircle, ListChecks, Clock, Navigation, MessageCircle, ChevronUp, ReceiptText, PartyPopper } from 'lucide-react';
 import { loadGoogleMapsScript } from '../utils/loadGoogleMaps';
 import { servicioCompatible } from '../utils/modalidad';
 import { enlaceWhatsapp } from '../utils/whatsapp';
 import { formatearColones } from '../utils/precios';
+import { Avatar } from './ui/Avatar';
+import { Badge } from './ui/Badge';
+import { Button } from './ui/Button';
+import { Field } from './ui/Field';
+import { Input } from './ui/Input';
+import { cx } from './ui/cx';
 
 interface ClinicaPublica {
   id: number;
@@ -40,21 +46,22 @@ interface ServicioPublico {
 type Paso = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 // Fecha local YYYY-MM-DD: toISOString() usa UTC y de noche en Costa Rica ya marcaba el día siguiente
-const fechaLocalHoy = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
+const aFechaLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const fechaLocalHoy = () => aFechaLocal(new Date());
 
 export default function PublicBooking() {
   const [paso, setPaso] = useState<Paso>(1);
   const [error, setError] = useState('');
   const [cargandoClinicas, setCargandoClinicas] = useState(true);
+  // Hoja inferior con el resumen de la reserva (solo móvil)
+  const [resumenAbierto, setResumenAbierto] = useState(false);
 
   // Cambiar de paso limpia el error del paso anterior y vuelve arriba (en móvil el
   // botón "Continuar" suele quedar al fondo de la pantalla)
   const irAPaso = (p: Paso) => {
     setError('');
     setPaso(p);
+    setResumenAbierto(false);
     window.scrollTo({ top: 0 });
   };
   const [submitting, setSubmitting] = useState(false);
@@ -265,27 +272,37 @@ export default function PublicBooking() {
     || `Hola, quisiera solicitar un espacio para una cita ${tipoVisita === 'DOMICILIO' ? 'a domicilio' : 'en consultorio'}${servicio ? ` de ${servicio.nombre}` : ''}.${nombreCompleto.trim() ? ` Mi nombre es ${nombreCompleto.trim()}.` : ''}`;
   const enlaceSolicitud = enlaceWhatsapp(clinica?.whatsappReservas, mensajeSolicitud);
 
+  const opcionTipoVisita = (valor: 'CONSULTORIO' | 'DOMICILIO', etiqueta: string, icono: React.ReactNode, deshabilitado: boolean, titulo?: string) => {
+    const activo = tipoVisita === valor;
+    return (
+      <button
+        type="button"
+        onClick={() => cambiarTipoVisita(valor)}
+        disabled={deshabilitado}
+        aria-pressed={activo}
+        title={titulo}
+        className={cx(
+          'min-h-14 p-3 rounded-card border-2 text-sm font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-40',
+          activo ? 'border-brand bg-brand-soft text-brand-ink' : 'border-border bg-surface text-fg hover:border-border-strong hover:bg-surface-muted'
+        )}
+      >
+        {icono}
+        {etiqueta}
+      </button>
+    );
+  };
+
   const selectorTipoVisita = (
-    <div className="grid grid-cols-2 gap-2" role="group" aria-label="Tipo de visita">
-      <button
-        type="button"
-        onClick={() => cambiarTipoVisita('CONSULTORIO')}
-        aria-pressed={tipoVisita === 'CONSULTORIO'}
-        className={`min-h-12 p-3 rounded-xl border-2 text-sm font-bold transition-colors ${tipoVisita === 'CONSULTORIO' ? 'border-slate-800 bg-slate-50 text-slate-900' : 'border-slate-200 text-slate-700 hover:border-slate-400'}`}
-      >
-        En consultorio
-      </button>
-      <button
-        type="button"
-        onClick={() => cambiarTipoVisita('DOMICILIO')}
-        // Si la reserva a domicilio es por WhatsApp, no se exige que el profesional tenga ubicación configurada.
-        disabled={clinica?.reservaAutoDomicilio !== false && !profesional?.aceptaDomicilio}
-        aria-pressed={tipoVisita === 'DOMICILIO'}
-        title={clinica?.reservaAutoDomicilio !== false && !profesional?.aceptaDomicilio ? 'Este profesional no atiende a domicilio' : undefined}
-        className={`min-h-12 p-3 rounded-xl border-2 text-sm font-bold transition-colors disabled:opacity-40 ${tipoVisita === 'DOMICILIO' ? 'border-slate-800 bg-slate-50 text-slate-900' : 'border-slate-200 text-slate-700 hover:border-slate-400'}`}
-      >
-        A domicilio
-      </button>
+    <div className="grid grid-cols-2 gap-3" role="group" aria-label="Tipo de visita">
+      {opcionTipoVisita('CONSULTORIO', 'En consultorio', <Building2 className="w-5 h-5" aria-hidden="true" />, false)}
+      {/* Si la reserva a domicilio es por WhatsApp, no se exige que el profesional tenga ubicación configurada. */}
+      {opcionTipoVisita(
+        'DOMICILIO',
+        'A domicilio',
+        <Home className="w-5 h-5" aria-hidden="true" />,
+        clinica?.reservaAutoDomicilio !== false && !profesional?.aceptaDomicilio,
+        clinica?.reservaAutoDomicilio !== false && !profesional?.aceptaDomicilio ? 'Este profesional no atiende a domicilio' : undefined
+      )}
     </div>
   );
 
@@ -301,11 +318,22 @@ export default function PublicBooking() {
     return new Date(y, m - 1, d).toLocaleDateString('es-CR', { weekday: 'long', day: 'numeric', month: 'long' });
   };
 
-  const inputClass = 'w-full min-h-11 bg-slate-50 border border-slate-300 rounded-xl px-3 text-sm text-slate-900 placeholder:text-slate-500 focus:bg-white transition-colors';
-  const labelClass = 'block text-slate-700 text-sm font-semibold mb-1.5';
-  const backBtn = 'min-h-10 -ml-2 px-2 rounded-lg text-sm text-slate-600 hover:text-slate-900 hover:bg-slate-100 inline-flex items-center gap-1.5 transition-colors';
-  const optionBtn = 'w-full min-h-14 flex items-center gap-3 p-3 rounded-xl border-2 transition-colors text-left';
-  const primaryBtn = 'w-full min-h-12 text-white font-bold text-sm rounded-xl disabled:opacity-40 flex items-center justify-center gap-2 hover:brightness-110 transition-[filter,opacity] shadow-sm';
+  // Próximos 14 días como chips táctiles (el selector de fecha nativo cubre el resto)
+  const diasRapidos = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() + i);
+    return {
+      iso: aFechaLocal(d),
+      semana: d.toLocaleDateString('es-CR', { weekday: 'short' }).replace('.', ''),
+      dia: d.getDate(),
+      mes: d.toLocaleDateString('es-CR', { month: 'short' }).replace('.', '')
+    };
+  });
+
+  const backBtn = 'min-h-10 -ml-2 px-2 rounded-lg text-sm text-fg-muted hover:text-fg hover:bg-surface-muted inline-flex items-center gap-1.5 transition-colors';
+  const optionBtn = 'w-full flex items-center gap-3 p-4 rounded-card border-2 transition-colors text-left bg-surface';
+  const optionIdle = 'border-border hover:border-brand/50 hover:bg-surface-muted';
+  const optionActive = 'border-brand bg-brand-soft';
 
   const nuevaReserva = () => {
     setCitaCreada(null);
@@ -317,347 +345,515 @@ export default function PublicBooking() {
     irAPaso(clinicaId ? 2 : 1);
   };
 
+  const tituloPaso = (icono: React.ReactNode, texto: string, ayuda?: string) => (
+    <div className="flex items-start gap-3">
+      <span className="w-10 h-10 shrink-0 rounded-control bg-brand-soft text-brand-ink flex items-center justify-center" aria-hidden="true">{icono}</span>
+      <div className="min-w-0">
+        <h2 id="paso-titulo" className="text-heading font-semibold tracking-tight text-fg">{texto}</h2>
+        {ayuda && <p className="text-body text-fg-muted">{ayuda}</p>}
+      </div>
+    </div>
+  );
+
+  const totalConIva = servicio ? formatearColones(servicio.precioConIva ?? servicio.precio) : null;
+  const mostrarResumen = !!clinica && paso >= 2 && paso <= 6;
+
+  // Contenido del resumen: columna lateral en escritorio y hoja inferior en móvil
+  const resumenContenido = (
+    <dl className="space-y-3 text-sm">
+      {clinica && (
+        <div className="flex items-center gap-3">
+          <img src={clinica.logoUrl} alt="" width={36} height={36} className="w-9 h-9 rounded-control object-cover border border-border shrink-0" referrerPolicy="no-referrer" />
+          <div className="min-w-0">
+            <dt className="sr-only">Clínica</dt>
+            <dd className="font-semibold text-fg truncate">{clinica.nombreComercial}</dd>
+          </div>
+        </div>
+      )}
+      {profesional && (
+        <div className="flex items-center gap-3">
+          <Avatar name={profesional.nombre} size="sm" />
+          <div className="min-w-0">
+            <dt className="text-xs text-fg-subtle">Profesional</dt>
+            <dd className="font-semibold text-fg">{profesional.nombre}</dd>
+          </div>
+        </div>
+      )}
+      {servicio && (
+        <div>
+          <dt className="text-xs text-fg-subtle">Servicio</dt>
+          <dd className="font-semibold text-fg">{servicio.nombre}</dd>
+          <dd className="text-xs text-fg-muted">{servicio.duracionMinutos} min</dd>
+        </div>
+      )}
+      {paso >= 4 && (
+        <div>
+          <dt className="text-xs text-fg-subtle">Tipo de visita</dt>
+          <dd className="font-semibold text-fg">{tipoVisita === 'DOMICILIO' ? 'A domicilio' : 'En consultorio'}</dd>
+        </div>
+      )}
+      {horaSeleccionada && (
+        <div>
+          <dt className="text-xs text-fg-subtle">Fecha y hora</dt>
+          <dd className="font-semibold text-fg first-letter:uppercase">{fechaLegible(fecha)}, {horaSeleccionada}</dd>
+        </div>
+      )}
+      {tipoVisita === 'DOMICILIO' && direccionDomicilio && paso >= 6 && (
+        <div>
+          <dt className="text-xs text-fg-subtle">Dirección</dt>
+          <dd className="font-semibold text-fg">{direccionDomicilio}</dd>
+        </div>
+      )}
+      {totalConIva && (
+        <div className="pt-3 border-t border-border flex items-end justify-between gap-2">
+          <div>
+            <dt className="text-xs text-fg-subtle">Total</dt>
+            <dd className="text-xs text-fg-muted">IVA incluido</dd>
+          </div>
+          <dd className="text-heading font-semibold text-fg tabular-nums">{totalConIva}</dd>
+        </div>
+      )}
+    </dl>
+  );
+
   return (
-    <div className="min-h-screen bg-slate-50 flex items-start sm:items-center justify-center px-4 py-6 sm:py-10 font-sans">
-      <main className="w-full max-w-xl bg-white rounded-3xl border border-slate-200 shadow-xl p-5 sm:p-8">
-        <header className="text-center mb-6">
+    <div className="min-h-screen bg-bg font-sans text-fg" style={{ '--brand': colorPrimario } as React.CSSProperties}>
+      <div className="w-full max-w-5xl mx-auto px-4 py-6 sm:py-10">
+        <header className="flex items-center gap-3 mb-6 sm:mb-8">
           {clinica ? (
-            <img src={clinica.logoUrl} alt="" width={56} height={56} className="w-14 h-14 mx-auto mb-2 rounded-2xl object-cover border border-slate-200" referrerPolicy="no-referrer" />
+            <img src={clinica.logoUrl} alt="" width={48} height={48} className="w-12 h-12 rounded-card object-cover border border-border bg-surface" referrerPolicy="no-referrer" />
           ) : (
-            <img src="/logo-tuanis-192.webp" alt="" width={56} height={56} className="w-14 h-14 mx-auto mb-2" />
+            <img src="/logo-tuanis-192.webp" alt="" width={48} height={48} className="w-12 h-12" />
           )}
-          <h1 className="text-xl font-extrabold text-slate-900">{clinica ? clinica.nombreComercial : 'Agendar cita'}</h1>
-          <p className="text-sm text-slate-600 mt-1">{clinica ? 'Reserve su cita en línea' : 'TuanisBooking · Reserva en línea'}</p>
+          <div className="min-w-0">
+            <h1 className="text-heading font-semibold tracking-tight text-fg truncate">{clinica ? clinica.nombreComercial : 'Agendar cita'}</h1>
+            <p className="text-body text-fg-muted">{clinica ? 'Reserve su cita en línea' : 'TuanisBooking · Reserva en línea'}</p>
+          </div>
         </header>
 
-        {/* Progreso */}
+        {/* Indicador de pasos */}
         {paso !== 7 && indicePaso >= 0 && (
-          <div className="mb-6">
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-600 mb-2">
-              <span>Paso {indicePaso + 1} de {pasosVisibles.length}</span>
-              <span>{NOMBRE_PASO[paso]}</span>
-            </div>
-            <div
-              className="h-1.5 rounded-full bg-slate-100 overflow-hidden"
-              role="progressbar"
-              aria-label="Progreso de la reserva"
-              aria-valuemin={1}
-              aria-valuemax={pasosVisibles.length}
-              aria-valuenow={indicePaso + 1}
-            >
-              <div className="h-full rounded-full transition-[width] duration-300" style={{ width: `${((indicePaso + 1) / pasosVisibles.length) * 100}%`, backgroundColor: colorPrimario }} />
-            </div>
-          </div>
+          <nav aria-label="Progreso de la reserva" className="mb-6">
+            <p className="sr-only">Paso {indicePaso + 1} de {pasosVisibles.length}: {NOMBRE_PASO[paso]}</p>
+            <ol className="flex items-center gap-2">
+              {pasosVisibles.map((p, i) => {
+                const hecho = i < indicePaso;
+                const actual = i === indicePaso;
+                return (
+                  <li key={p} className={cx('flex items-center gap-2', i < pasosVisibles.length - 1 && 'flex-1')} aria-current={actual ? 'step' : undefined}>
+                    <span
+                      className={cx(
+                        'w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-xs font-semibold transition-colors',
+                        hecho && 'bg-brand-solid text-brand-fg',
+                        actual && 'bg-brand-soft text-brand-ink ring-2 ring-brand',
+                        !hecho && !actual && 'bg-surface-muted text-fg-subtle'
+                      )}
+                    >
+                      {hecho ? <Check className="w-4 h-4" aria-hidden="true" /> : i + 1}
+                    </span>
+                    <span className={cx('text-xs font-semibold whitespace-nowrap', actual ? 'text-fg' : 'hidden sm:inline text-fg-subtle')}>
+                      {NOMBRE_PASO[p]}
+                    </span>
+                    {i < pasosVisibles.length - 1 && <span className={cx('h-0.5 flex-1 rounded-full', hecho ? 'bg-brand-solid' : 'bg-border')} aria-hidden="true" />}
+                  </li>
+                );
+              })}
+            </ol>
+          </nav>
         )}
 
         {error && (
-          <div role="alert" className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm flex items-center gap-2">
+          <div role="alert" className="mb-4 p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-sm flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
             <span>{error}</span>
           </div>
         )}
 
-        {paso === 1 && (
-          <section className="space-y-3" aria-labelledby="paso-titulo">
-            <h2 id="paso-titulo" className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Building className="w-4 h-4" aria-hidden="true" /> Escoja su clínica</h2>
-            {cargandoClinicas ? (
-              <div className="space-y-2" aria-label="Cargando clínicas">
-                {[0, 1, 2].map(i => <div key={i} className="h-16 rounded-xl bg-slate-100 animate-pulse" />)}
-              </div>
-            ) : clinicas.length === 0 ? (
-              <p className="text-slate-600 text-sm text-center py-6">No hay clínicas disponibles para reservar en este momento.</p>
-            ) : (
-              clinicas.map(c => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => { setClinicaId(c.id); irAPaso(2); }}
-                  className={`${optionBtn} border-slate-200 hover:border-slate-400 hover:bg-slate-50`}
-                >
-                  <img src={c.logoUrl} alt="" width={40} height={40} className="w-10 h-10 rounded-lg object-cover border border-slate-200 shrink-0" referrerPolicy="no-referrer" />
-                  <span className="min-w-0 flex-1">
-                    <span className="font-bold text-sm text-slate-900 block truncate">{c.nombreComercial}</span>
-                    <span className="text-xs text-slate-600">{c.perfilCompania}</span>
-                  </span>
-                  <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" aria-hidden="true" />
-                </button>
-              ))
-            )}
-          </section>
-        )}
-
-        {paso === 2 && (
-          <section className="space-y-3" aria-labelledby="paso-titulo">
-            <button type="button" onClick={() => irAPaso(1)} className={backBtn}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> Cambiar clínica</button>
-            <h2 id="paso-titulo" className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><UserIcon className="w-4 h-4" aria-hidden="true" /> Escoja su profesional</h2>
-            {profesionales.map(p => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => { setProfesionalId(p.id); irAPaso(servicios.length > 0 ? 3 : 4); }}
-                className={`${optionBtn} justify-between ${profesionalId === p.id ? 'border-slate-800 bg-slate-50' : 'border-slate-200 hover:border-slate-400 hover:bg-slate-50'}`}
-              >
-                <span className="min-w-0">
-                  <span className="font-bold text-sm text-slate-900 block">{p.nombre}</span>
-                  <span className="text-xs text-slate-600">{p.rol}</span>
-                </span>
-                {p.aceptaDomicilio && <span className="text-[11px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold shrink-0">Acepta domicilio</span>}
-              </button>
-            ))}
-            {profesionales.length === 0 && <p className="text-slate-600 text-sm text-center py-4">Este centro no tiene profesionales disponibles.</p>}
-          </section>
-        )}
-
-        {paso === 3 && (
-          <section className="space-y-3" aria-labelledby="paso-titulo">
-            <button type="button" onClick={() => irAPaso(2)} className={backBtn}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> Cambiar profesional</button>
-            <h2 id="paso-titulo" className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><ListChecks className="w-4 h-4" aria-hidden="true" /> Escoja un servicio</h2>
-            {selectorTipoVisita}
-            {serviciosVisibles.length === 0 && (
-              <p className="text-slate-600 text-sm text-center py-4 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                No hay servicios disponibles para este tipo de visita.
-              </p>
-            )}
-            {serviciosVisibles.map(s => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => { setServicioId(s.id); irAPaso(4); }}
-                aria-pressed={servicioId === s.id}
-                className={`${optionBtn} justify-between ${servicioId === s.id ? 'border-slate-800 bg-slate-50' : 'border-slate-200 hover:border-slate-400 hover:bg-slate-50'}`}
-              >
-                <span className="min-w-0">
-                  <span className="font-bold text-sm text-slate-900 block">{s.nombre}</span>
-                  <span className="text-xs text-slate-600 flex items-center gap-1"><Clock className="w-3 h-3" aria-hidden="true" />{s.duracionMinutos} min</span>
-                </span>
-                <span className="shrink-0 text-right">
-                  <span className="text-sm font-bold text-slate-800 tabular-nums block">{formatearColones(s.precioConIva ?? s.precio)}</span>
-                  <span className="text-xs text-slate-600 block">IVA incluido</span>
-                </span>
-              </button>
-            ))}
-          </section>
-        )}
-
-        {paso === 4 && (
-          <section className="space-y-5" aria-labelledby="paso-titulo">
-            <button type="button" onClick={() => irAPaso(servicios.length > 0 ? 3 : 2)} className={backBtn}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> {servicios.length > 0 ? 'Cambiar servicio' : 'Cambiar profesional'}</button>
-            <h2 id="paso-titulo" className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Calendar className="w-4 h-4" aria-hidden="true" /> Tipo de visita y horario</h2>
-
-            {selectorTipoVisita}
-
-            {servicios.length > 0 && !servicioId && (
-              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">
-                No hay un servicio elegido.{' '}
-                <button type="button" onClick={() => irAPaso(3)} className="font-semibold underline">Elegir servicio</button>
-              </p>
-            )}
-
-            {!reservaAutomatica ? (
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 space-y-3 text-center" role="region" aria-labelledby="whatsapp-titulo">
-                <h3 id="whatsapp-titulo" className="text-sm font-bold text-emerald-900 flex items-center justify-center gap-1.5">
-                  <MessageCircle className="w-4 h-4" aria-hidden="true" /> Solicite su espacio por WhatsApp
-                </h3>
-                {enlaceSolicitud ? (
-                  <>
-                    <p className="text-sm text-emerald-900">
-                      Para este tipo de cita la clínica coordina el horario por mensaje. Escríbanos y le confirmaremos un espacio.
-                    </p>
-                    <a
-                      href={enlaceSolicitud}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full min-h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl inline-flex items-center justify-center gap-2 transition-colors shadow-sm"
-                    >
-                      <MessageCircle className="w-4 h-4" aria-hidden="true" /> Solicitar por WhatsApp
-                    </a>
-                  </>
+        <div className={cx(mostrarResumen && 'lg:grid lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-8 lg:items-start')}>
+          <main className={cx('min-w-0 bg-surface rounded-panel border border-border shadow-md p-5 sm:p-8', !mostrarResumen && 'max-w-xl mx-auto', mostrarResumen && 'pb-6')}>
+            {paso === 1 && (
+              <section className="space-y-4" aria-labelledby="paso-titulo">
+                {tituloPaso(<Building className="w-5 h-5" />, 'Escoja su clínica', 'Seleccione dónde desea ser atendido.')}
+                {cargandoClinicas ? (
+                  <div className="space-y-3" role="status" aria-label="Cargando clínicas">
+                    {[0, 1, 2].map(i => <div key={i} className="h-[4.5rem] rounded-card bg-surface-muted animate-pulse" />)}
+                  </div>
+                ) : clinicas.length === 0 ? (
+                  <p className="text-fg-muted text-sm text-center py-6">No hay clínicas disponibles para reservar en este momento.</p>
                 ) : (
-                  <p className="text-sm text-emerald-900">Comuníquese con la clínica para agendar</p>
-                )}
-              </div>
-            ) : (
-            <>
-            <div>
-              <label htmlFor="reserva-fecha" className={labelClass}>Fecha</label>
-              <input
-                id="reserva-fecha"
-                type="date"
-                value={fecha}
-                onChange={(e) => setFecha(e.target.value)}
-                min={fechaLocalHoy()}
-                className={inputClass}
-              />
-            </div>
-
-            <fieldset>
-              <legend className={labelClass}>Horarios disponibles</legend>
-              {cargandoHorarios ? (
-                <div className="flex items-center gap-2 text-sm text-slate-600 py-3" role="status"><Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> Buscando horarios…</div>
-              ) : (
-                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                  {horariosDisponibles.map(h => (
+                  clinicas.map(c => (
                     <button
-                      key={h}
+                      key={c.id}
                       type="button"
-                      onClick={() => setHoraSeleccionada(h)}
-                      aria-pressed={horaSeleccionada === h}
-                      className={`min-h-11 rounded-xl text-sm font-semibold tabular-nums transition-colors ${horaSeleccionada === h ? 'text-white shadow-sm' : 'bg-slate-100 text-slate-800 hover:bg-slate-200'}`}
-                      style={horaSeleccionada === h ? { backgroundColor: colorPrimario } : {}}
+                      onClick={() => { setClinicaId(c.id); irAPaso(2); }}
+                      className={cx(optionBtn, optionIdle)}
                     >
-                      {h}
+                      <img src={c.logoUrl} alt="" width={44} height={44} className="w-11 h-11 rounded-control object-cover border border-border shrink-0" referrerPolicy="no-referrer" />
+                      <span className="min-w-0 flex-1">
+                        <span className="font-semibold text-sm text-fg block truncate">{c.nombreComercial}</span>
+                        <span className="text-xs text-fg-muted">{c.perfilCompania}</span>
+                      </span>
+                      <ArrowRight className="w-4 h-4 text-fg-subtle shrink-0" aria-hidden="true" />
+                    </button>
+                  ))
+                )}
+              </section>
+            )}
+
+            {paso === 2 && (
+              <section className="space-y-4" aria-labelledby="paso-titulo">
+                <button type="button" onClick={() => irAPaso(1)} className={backBtn}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> Cambiar clínica</button>
+                {tituloPaso(<UserIcon className="w-5 h-5" />, 'Escoja su profesional', 'Quién lo atenderá en su cita.')}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {profesionales.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => { setProfesionalId(p.id); irAPaso(servicios.length > 0 ? 3 : 4); }}
+                      aria-pressed={profesionalId === p.id}
+                      className={cx(optionBtn, 'flex-col items-start sm:min-h-32', profesionalId === p.id ? optionActive : optionIdle)}
+                    >
+                      <Avatar name={p.nombre} size="lg" />
+                      <span className="min-w-0">
+                        <span className="font-semibold text-sm text-fg block">{p.nombre}</span>
+                        <span className="text-xs text-fg-muted">{p.rol}</span>
+                      </span>
+                      {p.aceptaDomicilio && <Badge tone="success"><Home className="w-3 h-3" aria-hidden="true" /> Acepta domicilio</Badge>}
                     </button>
                   ))}
-                  {horariosDisponibles.length === 0 && (
-                    <p className="col-span-3 sm:col-span-4 text-slate-600 text-sm text-center py-4 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                      No hay horarios libres ese día. Pruebe con otra fecha.
-                    </p>
-                  )}
                 </div>
-              )}
-            </fieldset>
+                {profesionales.length === 0 && <p className="text-fg-muted text-sm text-center py-4">Este centro no tiene profesionales disponibles.</p>}
+              </section>
+            )}
 
+            {paso === 3 && (
+              <section className="space-y-4" aria-labelledby="paso-titulo">
+                <button type="button" onClick={() => irAPaso(2)} className={backBtn}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> Cambiar profesional</button>
+                {tituloPaso(<ListChecks className="w-5 h-5" />, 'Escoja un servicio', 'Los precios incluyen IVA.')}
+                {selectorTipoVisita}
+                {serviciosVisibles.length === 0 && (
+                  <p className="text-fg-muted text-sm text-center py-4 bg-surface-muted rounded-card border border-dashed border-border-strong">
+                    No hay servicios disponibles para este tipo de visita.
+                  </p>
+                )}
+                {serviciosVisibles.map(s => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => { setServicioId(s.id); irAPaso(4); }}
+                    aria-pressed={servicioId === s.id}
+                    className={cx(optionBtn, 'justify-between', servicioId === s.id ? optionActive : optionIdle)}
+                  >
+                    <span className="min-w-0">
+                      <span className="font-semibold text-sm text-fg block">{s.nombre}</span>
+                      <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-muted">
+                        <span className="inline-flex items-center gap-1"><Clock className="w-3.5 h-3.5" aria-hidden="true" />{s.duracionMinutos} min</span>
+                        <span className="inline-flex items-center gap-1">
+                          {s.modalidad === 'DOMICILIO' ? <Home className="w-3.5 h-3.5" aria-hidden="true" /> : <Building2 className="w-3.5 h-3.5" aria-hidden="true" />}
+                          {s.modalidad === 'DOMICILIO' ? 'A domicilio' : s.modalidad === 'AMBOS' ? 'Consultorio o domicilio' : 'En consultorio'}
+                        </span>
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-right">
+                      <span className="text-heading font-semibold text-brand-ink tabular-nums block">{formatearColones(s.precioConIva ?? s.precio)}</span>
+                      <span className="text-xs text-fg-muted block">IVA incluido</span>
+                    </span>
+                  </button>
+                ))}
+              </section>
+            )}
+
+            {paso === 4 && (
+              <section className="space-y-6" aria-labelledby="paso-titulo">
+                <button type="button" onClick={() => irAPaso(servicios.length > 0 ? 3 : 2)} className={backBtn}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> {servicios.length > 0 ? 'Cambiar servicio' : 'Cambiar profesional'}</button>
+                {tituloPaso(<Calendar className="w-5 h-5" />, 'Tipo de visita y horario', 'Elija cómo y cuándo quiere su cita.')}
+
+                {selectorTipoVisita}
+
+                {servicios.length > 0 && !servicioId && (
+                  <p className="text-sm text-warning bg-warning-soft border border-warning/25 rounded-control p-3">
+                    No hay un servicio elegido.{' '}
+                    <button type="button" onClick={() => irAPaso(3)} className="font-semibold underline min-h-10">Elegir servicio</button>
+                  </p>
+                )}
+
+                {!reservaAutomatica ? (
+                  <div className="rounded-card border border-success/25 bg-success-soft p-5 space-y-3 text-center" role="region" aria-labelledby="whatsapp-titulo">
+                    <h3 id="whatsapp-titulo" className="text-sm font-semibold text-success flex items-center justify-center gap-1.5">
+                      <MessageCircle className="w-4 h-4" aria-hidden="true" /> Solicite su espacio por WhatsApp
+                    </h3>
+                    {enlaceSolicitud ? (
+                      <>
+                        <p className="text-sm text-fg-muted">
+                          Para este tipo de cita la clínica coordina el horario por mensaje. Escríbanos y le confirmaremos un espacio.
+                        </p>
+                        <a
+                          href={enlaceSolicitud}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full min-h-12 bg-success hover:brightness-110 text-white font-semibold text-sm rounded-control inline-flex items-center justify-center gap-2 transition-[filter] shadow-xs"
+                        >
+                          <MessageCircle className="w-4 h-4" aria-hidden="true" /> Solicitar por WhatsApp
+                        </a>
+                      </>
+                    ) : (
+                      <p className="text-sm text-fg-muted">Comuníquese con la clínica para agendar</p>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <fieldset>
+                      <legend className="block text-sm font-semibold text-fg mb-2">Fecha</legend>
+                      <div className="-mx-1 px-1 flex gap-2 overflow-x-auto snap-x pb-2 scrollbar-thin">
+                        {diasRapidos.map(d => {
+                          const activo = fecha === d.iso;
+                          return (
+                            <button
+                              key={d.iso}
+                              type="button"
+                              onClick={() => setFecha(d.iso)}
+                              aria-pressed={activo}
+                              aria-label={fechaLegible(d.iso)}
+                              className={cx(
+                                'snap-start shrink-0 w-16 min-h-20 rounded-card border-2 flex flex-col items-center justify-center transition-colors',
+                                activo ? 'border-brand-solid bg-brand-solid text-brand-fg shadow-sm' : 'border-border bg-surface text-fg hover:border-brand/50 hover:bg-surface-muted'
+                              )}
+                            >
+                              <span className={cx('text-xs font-medium capitalize', activo ? 'text-brand-fg' : 'text-fg-muted')}>{d.semana}</span>
+                              <span className="text-heading font-semibold tabular-nums leading-tight">{d.dia}</span>
+                              <span className={cx('text-xs capitalize', activo ? 'text-brand-fg' : 'text-fg-subtle')}>{d.mes}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-3 max-w-xs">
+                        <Field label="Otra fecha">
+                          <Input type="date" value={fecha} onChange={(e: any) => setFecha(e.target.value)} min={fechaLocalHoy()} />
+                        </Field>
+                      </div>
+                    </fieldset>
+
+                    <fieldset>
+                      <legend className="block text-sm font-semibold text-fg mb-2">Horarios disponibles</legend>
+                      {cargandoHorarios ? (
+                        <div className="flex items-center gap-2 text-sm text-fg-muted py-3" role="status"><Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> Buscando horarios…</div>
+                      ) : (
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
+                          {horariosDisponibles.map(h => (
+                            <button
+                              key={h}
+                              type="button"
+                              onClick={() => setHoraSeleccionada(h)}
+                              aria-pressed={horaSeleccionada === h}
+                              className={cx(
+                                'min-h-12 rounded-control border-2 text-sm font-semibold tabular-nums transition-colors',
+                                horaSeleccionada === h ? 'border-brand-solid bg-brand-solid text-brand-fg shadow-sm' : 'border-border bg-surface text-fg hover:border-brand/50 hover:bg-brand-soft'
+                              )}
+                            >
+                              {h}
+                            </button>
+                          ))}
+                          {horariosDisponibles.length === 0 && (
+                            <p className="col-span-3 sm:col-span-4 text-fg-muted text-sm text-center py-5 bg-surface-muted rounded-card border border-dashed border-border-strong">
+                              No hay horarios libres ese día. Pruebe con otra fecha.
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </fieldset>
+
+                    <Button
+                      size="lg"
+                      fullWidth
+                      disabled={!horaSeleccionada}
+                      onClick={() => irAPaso(tipoVisita === 'DOMICILIO' ? 5 : 6)}
+                    >
+                      Continuar <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                    </Button>
+                  </>
+                )}
+              </section>
+            )}
+
+            {paso === 5 && (
+              <section className="space-y-5" aria-labelledby="paso-titulo">
+                <button type="button" onClick={() => irAPaso(4)} className={backBtn}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> Cambiar horario</button>
+                {tituloPaso(<MapPin className="w-5 h-5" />, 'Su dirección', 'Donde lo visitaremos.')}
+                <div>
+                  {/* El id fijo lo usa el autocompletado de Google Maps, por eso no se envuelve en Field */}
+                  <label htmlFor="direccion-domicilio-input" className="block text-xs font-semibold text-fg mb-1.5">Dirección exacta</label>
+                  <Input
+                    id="direccion-domicilio-input"
+                    type="text"
+                    autoComplete="street-address"
+                    value={direccionDomicilio}
+                    onChange={(e: any) => setDireccionDomicilio(e.target.value)}
+                    placeholder="Escriba y elija una sugerencia de la lista"
+                    aria-describedby="direccion-ayuda"
+                    leadingIcon={<MapPin />}
+                  />
+                  <p id="direccion-ayuda" className="text-xs text-fg-muted mt-1.5">
+                    Elija una sugerencia al escribir o use su ubicación actual: se necesita la ubicación exacta para calcular el tiempo de traslado.
+                  </p>
+                </div>
+                <Button variant="outline" onClick={usarUbicacionActual} icon={<Navigation className="w-4 h-4" aria-hidden="true" />}>
+                  Usar mi ubicación actual
+                </Button>
+                {pacienteLat != null && pacienteLng != null && (
+                  <p className="text-sm text-success font-medium flex items-center gap-1.5" role="status"><Check className="w-4 h-4" aria-hidden="true" /> Ubicación registrada</p>
+                )}
+                <Button
+                  size="lg"
+                  fullWidth
+                  disabled={pacienteLat == null || pacienteLng == null}
+                  onClick={() => irAPaso(6)}
+                >
+                  Continuar <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                </Button>
+              </section>
+            )}
+
+            {paso === 6 && (
+              <form className="space-y-5" aria-labelledby="paso-titulo" onSubmit={(e) => { e.preventDefault(); confirmarCita(); }}>
+                <button type="button" onClick={() => irAPaso(tipoVisita === 'DOMICILIO' ? 5 : 4)} className={backBtn}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> Volver</button>
+                {tituloPaso(<UserIcon className="w-5 h-5" />, 'Sus datos', 'Casi listo: revise su reserva y complete sus datos.')}
+
+                <Field
+                  label="Cédula"
+                  required
+                  hint={
+                    <span aria-live="polite" className={pacienteEncontrado ? 'text-success font-medium' : undefined}>
+                      {pacienteEncontrado
+                        ? `Ya está registrado(a) como ${nombrePacienteExistente}. Usaremos los datos de contacto que tenemos registrados.`
+                        : 'Si ya es paciente, lo reconoceremos con su cédula.'}
+                    </span>
+                  }
+                >
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    value={cedula}
+                    onChange={(e: any) => { setCedula(e.target.value); setPacienteEncontrado(false); setNombrePacienteExistente(''); }}
+                    onBlur={buscarPacientePorCedula}
+                  />
+                </Field>
+                {!pacienteEncontrado && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <Field label="Nombre completo" required className="sm:col-span-2">
+                      <Input type="text" required autoComplete="name" value={nombreCompleto} onChange={(e: any) => setNombreCompleto(e.target.value)} />
+                    </Field>
+                    <Field label="Teléfono" required>
+                      <Input type="tel" required inputMode="tel" autoComplete="tel" value={telefono} onChange={(e: any) => setTelefono(e.target.value)} placeholder="8888-8888" />
+                    </Field>
+                    <Field label="Fecha de nacimiento">
+                      <Input type="date" autoComplete="bday" max={fechaLocalHoy()} value={fechaNacimiento} onChange={(e: any) => setFechaNacimiento(e.target.value)} />
+                    </Field>
+                    <Field label="Correo electrónico" required className="sm:col-span-2">
+                      <Input type="email" required autoComplete="email" value={correoElectronico} onChange={(e: any) => setCorreoElectronico(e.target.value)} placeholder="nombre@correo.com" />
+                    </Field>
+                  </div>
+                )}
+                <Button
+                  type="submit"
+                  size="lg"
+                  fullWidth
+                  loading={submitting}
+                  icon={submitting ? undefined : <Check className="w-4 h-4" aria-hidden="true" />}
+                >
+                  {submitting ? 'Agendando…' : 'Confirmar cita'}
+                </Button>
+              </form>
+            )}
+
+            {paso === 7 && citaCreada && (
+              <section className="text-center py-4 space-y-5 animate-dialog-in" role="status">
+                <div className="relative inline-flex items-center justify-center">
+                  <span className="absolute w-28 h-28 rounded-full bg-brand-soft" aria-hidden="true" />
+                  <span className="absolute w-20 h-20 rounded-full bg-brand/15" aria-hidden="true" />
+                  <span className="relative w-16 h-16 rounded-full bg-brand-solid text-brand-fg flex items-center justify-center shadow-lg">
+                    <Check className="w-8 h-8" aria-hidden="true" />
+                  </span>
+                </div>
+                <div className="pt-6">
+                  <h2 className="text-title font-semibold tracking-tight text-fg flex items-center justify-center gap-2">
+                    {citaCreada.estadoCita === 'PROGRAMADA' ? '¡Solicitud recibida!' : '¡Cita confirmada!'}
+                    <PartyPopper className="w-6 h-6 text-brand-ink" aria-hidden="true" />
+                  </h2>
+                  <p className="mt-1 text-body text-fg-muted">
+                    {citaCreada.estadoCita === 'PROGRAMADA' ? 'Estamos revisando su solicitud.' : 'Lo esperamos. Le enviaremos los detalles por correo.'}
+                  </p>
+                </div>
+                <div className="text-left rounded-card border border-border bg-surface-muted p-4 sm:p-5 max-w-sm mx-auto">
+                  <p className="text-sm text-fg leading-relaxed">
+                    <span className="first-letter:uppercase inline-block font-semibold">{fechaLegible(fecha)}</span> a las <strong>{horaSeleccionada}</strong> con {profesional?.nombre} en {clinica?.nombreComercial}.
+                    {tipoVisita === 'DOMICILIO' && citaCreada.tiempoTrasladoMinutos != null && (
+                      <> Tiempo de traslado estimado: {citaCreada.tiempoTrasladoMinutos} min.</>
+                    )}
+                  </p>
+                </div>
+                {citaCreada.estadoCita === 'PROGRAMADA' && (
+                  <p className="text-sm text-warning bg-warning-soft border border-warning/25 rounded-control p-3 max-w-sm mx-auto">
+                    Su cita queda pendiente hasta que el negocio la confirme. Le avisaremos por correo.
+                  </p>
+                )}
+                <Button variant="outline" onClick={nuevaReserva}>
+                  Agendar otra cita
+                </Button>
+              </section>
+            )}
+          </main>
+
+          {/* Resumen lateral (escritorio) */}
+          {mostrarResumen && (
+            <aside aria-label="Resumen de la reserva" className="hidden lg:block sticky top-6">
+              <div className="bg-surface rounded-panel border border-border shadow-sm p-5">
+                <h2 className="text-sm font-semibold text-fg flex items-center gap-2 mb-4">
+                  <ReceiptText className="w-4 h-4 text-brand-ink" aria-hidden="true" /> Resumen de su reserva
+                </h2>
+                {resumenContenido}
+              </div>
+            </aside>
+          )}
+        </div>
+      </div>
+
+      {/* Hoja inferior con el resumen (móvil) */}
+      {mostrarResumen && (
+        <div className="lg:hidden fixed inset-x-0 bottom-0 z-30" onKeyDown={(e) => { if (e.key === 'Escape') setResumenAbierto(false); }}>
+          {resumenAbierto && (
             <button
               type="button"
-              disabled={!horaSeleccionada}
-              onClick={() => irAPaso(tipoVisita === 'DOMICILIO' ? 5 : 6)}
-              className={primaryBtn}
-              style={{ backgroundColor: colorPrimario }}
-            >
-              Continuar <ArrowRight className="w-4 h-4" aria-hidden="true" />
-            </button>
-            </>
-            )}
-          </section>
-        )}
-
-        {paso === 5 && (
-          <section className="space-y-4" aria-labelledby="paso-titulo">
-            <button type="button" onClick={() => irAPaso(4)} className={backBtn}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> Cambiar horario</button>
-            <h2 id="paso-titulo" className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><MapPin className="w-4 h-4" aria-hidden="true" /> Su dirección</h2>
-            <div>
-              <label htmlFor="direccion-domicilio-input" className={labelClass}>Dirección exacta</label>
-              <input
-                id="direccion-domicilio-input"
-                type="text"
-                autoComplete="street-address"
-                value={direccionDomicilio}
-                onChange={(e) => setDireccionDomicilio(e.target.value)}
-                placeholder="Escriba y elija una sugerencia de la lista"
-                aria-describedby="direccion-ayuda"
-                className={inputClass}
-              />
-              <p id="direccion-ayuda" className="text-xs text-slate-600 mt-1.5">
-                Elija una sugerencia al escribir o use su ubicación actual: se necesita la ubicación exacta para calcular el tiempo de traslado.
-              </p>
-            </div>
-            <button type="button" onClick={usarUbicacionActual} className="min-h-10 px-3 rounded-xl border border-slate-300 text-sm font-semibold text-slate-800 hover:bg-slate-50 inline-flex items-center gap-1.5 transition-colors">
-              <Navigation className="w-4 h-4" aria-hidden="true" /> Usar mi ubicación actual
-            </button>
-            {pacienteLat != null && pacienteLng != null && (
-              <p className="text-sm text-emerald-700 font-medium flex items-center gap-1.5" role="status"><Check className="w-4 h-4" aria-hidden="true" /> Ubicación registrada</p>
+              aria-label="Cerrar resumen"
+              onClick={() => setResumenAbierto(false)}
+              className="fixed inset-0 -z-10 bg-fg/30 animate-fade-in cursor-default"
+            />
+          )}
+          <div className="bg-surface border-t border-border rounded-t-panel shadow-lg">
+            {resumenAbierto && (
+              <div id="resumen-movil" className="px-5 pt-5 pb-2 max-h-[60vh] overflow-y-auto animate-slide-down">
+                {resumenContenido}
+              </div>
             )}
             <button
               type="button"
-              disabled={pacienteLat == null || pacienteLng == null}
-              onClick={() => irAPaso(6)}
-              className={primaryBtn}
-              style={{ backgroundColor: colorPrimario }}
+              onClick={() => setResumenAbierto(v => !v)}
+              aria-expanded={resumenAbierto}
+              aria-controls="resumen-movil"
+              className="w-full min-h-14 px-5 flex items-center justify-between gap-3 text-left"
             >
-              Continuar <ArrowRight className="w-4 h-4" aria-hidden="true" />
+              <span className="flex items-center gap-2 text-sm font-semibold text-fg">
+                <ReceiptText className="w-4 h-4 text-brand-ink" aria-hidden="true" /> Resumen de su reserva
+              </span>
+              <span className="flex items-center gap-2 text-sm font-semibold text-fg tabular-nums">
+                {totalConIva}
+                <ChevronUp className={cx('w-4 h-4 text-fg-subtle transition-transform', resumenAbierto && 'rotate-180')} aria-hidden="true" />
+              </span>
             </button>
-          </section>
-        )}
-
-        {paso === 6 && (
-          <form className="space-y-4" aria-labelledby="paso-titulo" onSubmit={(e) => { e.preventDefault(); confirmarCita(); }}>
-            <button type="button" onClick={() => irAPaso(tipoVisita === 'DOMICILIO' ? 5 : 4)} className={backBtn}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> Volver</button>
-            <h2 id="paso-titulo" className="text-sm font-bold text-slate-800">Sus datos</h2>
-
-            {/* Resumen de la reserva */}
-            <dl className="rounded-2xl bg-slate-50 border border-slate-200 p-4 text-sm grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
-              <dt className="text-slate-600">Profesional</dt><dd className="font-semibold text-slate-900">{profesional?.nombre}</dd>
-              {servicio && (<><dt className="text-slate-600">Servicio</dt><dd className="font-semibold text-slate-900">{servicio.nombre}</dd></>)}
-              <dt className="text-slate-600">Fecha</dt><dd className="font-semibold text-slate-900 first-letter:uppercase">{fechaLegible(fecha)}, {horaSeleccionada}</dd>
-              <dt className="text-slate-600">Lugar</dt><dd className="font-semibold text-slate-900">{tipoVisita === 'DOMICILIO' ? direccionDomicilio || 'A domicilio' : 'En consultorio'}</dd>
-            </dl>
-
-            <div>
-              <label htmlFor="reserva-cedula" className={labelClass}>Cédula *</label>
-              <input
-                id="reserva-cedula"
-                type="text"
-                inputMode="numeric"
-                required
-                value={cedula}
-                onChange={(e) => { setCedula(e.target.value); setPacienteEncontrado(false); setNombrePacienteExistente(''); }}
-                onBlur={buscarPacientePorCedula}
-                aria-describedby="reserva-cedula-ayuda"
-                className={inputClass}
-              />
-              <p id="reserva-cedula-ayuda" className={`text-xs mt-1.5 ${pacienteEncontrado ? 'text-emerald-700 font-medium' : 'text-slate-600'}`} aria-live="polite">
-                {pacienteEncontrado
-                  ? `Ya está registrado(a) como ${nombrePacienteExistente}. Usaremos los datos de contacto que tenemos registrados.`
-                  : 'Si ya es paciente, lo reconoceremos con su cédula.'}
-              </p>
-            </div>
-            {!pacienteEncontrado && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="sm:col-span-2">
-                <label htmlFor="reserva-nombre" className={labelClass}>Nombre completo *</label>
-                <input id="reserva-nombre" type="text" required autoComplete="name" value={nombreCompleto} onChange={(e) => setNombreCompleto(e.target.value)} className={inputClass} />
-              </div>
-              <div>
-                <label htmlFor="reserva-telefono" className={labelClass}>Teléfono *</label>
-                <input id="reserva-telefono" type="tel" required inputMode="tel" autoComplete="tel" value={telefono} onChange={(e) => setTelefono(e.target.value)} placeholder="8888-8888" className={inputClass} />
-              </div>
-              <div>
-                <label htmlFor="reserva-nacimiento" className={labelClass}>Fecha de nacimiento</label>
-                <input id="reserva-nacimiento" type="date" autoComplete="bday" max={fechaLocalHoy()} value={fechaNacimiento} onChange={(e) => setFechaNacimiento(e.target.value)} className={inputClass} />
-              </div>
-              <div className="sm:col-span-2">
-                <label htmlFor="reserva-correo" className={labelClass}>Correo electrónico *</label>
-                <input id="reserva-correo" type="email" required autoComplete="email" value={correoElectronico} onChange={(e) => setCorreoElectronico(e.target.value)} placeholder="nombre@correo.com" className={inputClass} />
-              </div>
-            </div>
-            )}
-            <button
-              type="submit"
-              disabled={submitting}
-              className={primaryBtn}
-              style={{ backgroundColor: colorPrimario }}
-            >
-              {submitting ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Check className="w-4 h-4" aria-hidden="true" />}
-              {submitting ? 'Agendando…' : 'Confirmar cita'}
-            </button>
-          </form>
-        )}
-
-        {paso === 7 && citaCreada && (
-          <section className="text-center py-4 space-y-4" role="status">
-            <div className="inline-flex p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-600">
-              <Check className="w-8 h-8" aria-hidden="true" />
-            </div>
-            <h2 className="text-lg font-bold text-slate-900">
-              {citaCreada.estadoCita === 'PROGRAMADA' ? '¡Solicitud recibida!' : '¡Cita confirmada!'}
-            </h2>
-            <p className="text-sm text-slate-700 leading-relaxed">
-              <span className="first-letter:uppercase inline-block">{fechaLegible(fecha)}</span> a las <strong>{horaSeleccionada}</strong> con {profesional?.nombre} en {clinica?.nombreComercial}.
-              {tipoVisita === 'DOMICILIO' && citaCreada.tiempoTrasladoMinutos != null && (
-                <> Tiempo de traslado estimado: {citaCreada.tiempoTrasladoMinutos} min.</>
-              )}
-            </p>
-            {citaCreada.estadoCita === 'PROGRAMADA' && (
-              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">
-                Su cita queda pendiente hasta que el negocio la confirme. Le avisaremos por correo.
-              </p>
-            )}
-            <button type="button" onClick={nuevaReserva} className="min-h-11 px-4 rounded-xl border border-slate-300 text-sm font-semibold text-slate-800 hover:bg-slate-50 transition-colors">
-              Agendar otra cita
-            </button>
-          </section>
-        )}
-      </main>
+          </div>
+        </div>
+      )}
+      {mostrarResumen && <div className="lg:hidden h-16" aria-hidden="true" />}
     </div>
   );
 }

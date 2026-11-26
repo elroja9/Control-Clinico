@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Company, User, CompanyPayment } from '../data/mockData';
-import { ShieldCheck, ShieldAlert, ShieldOff, Users, DollarSign, X, Plus } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, ShieldOff, Users, DollarSign, X, Plus, Building2 } from 'lucide-react';
 import { notify } from './ui/Feedback';
 import { useDialog } from '../hooks/useDialog';
+import { Badge, type BadgeTone, Button, Card, CardHeader, EmptyState, Field, IconButton, Input } from './ui';
 
 interface SaasAdminPanelProps {
   companies: Company[];
@@ -14,10 +15,10 @@ interface SaasAdminPanelProps {
   onAddPayment: (payment: Omit<CompanyPayment, 'id'> & { montoMensual?: number | null; proximoVencimiento?: string | null }) => void;
 }
 
-const ESTADO_BADGE: Record<Company['estadoSaas'], string> = {
-  PENDIENTE: 'bg-amber-100 text-amber-800',
-  ACTIVA: 'bg-emerald-100 text-emerald-800',
-  SUSPENDIDA: 'bg-rose-100 text-rose-800'
+const ESTADO_TONE: Record<Company['estadoSaas'], BadgeTone> = {
+  PENDIENTE: 'warning',
+  ACTIVA: 'success',
+  SUSPENDIDA: 'danger'
 };
 
 const ESTADO_LABEL: Record<Company['estadoSaas'], string> = {
@@ -87,193 +88,192 @@ export default function SaasAdminPanel({
   const paymentsCompany = companies.find(c => c.id === paymentsCompanyId);
   const paymentsForCompany = payments.filter(p => p.idCompania === paymentsCompanyId);
 
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 text-xs">
-      <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-3">
-        <ShieldCheck className="w-5 h-5 text-slate-500" />
-        <div>
-          <h3 className="text-sm font-bold text-slate-800">Administración SaaS de Empresas</h3>
-          <p className="text-[11px] text-slate-500">Aprobación, suspensión, límite de usuarios y pagos por empresa</p>
+  // Acciones por empresa: se reutilizan en la tabla (escritorio) y en las tarjetas (móvil).
+  const renderAcciones = (company: Company) => (
+    <div className="flex flex-wrap items-center gap-2">
+      {company.estadoSaas === 'PENDIENTE' && (
+        <Button size="sm" onClick={() => onUpdateEstadoSaas(company.id, 'ACTIVA')} icon={<ShieldCheck className="w-4 h-4" aria-hidden="true" />}>
+          Aprobar
+        </Button>
+      )}
+      {company.estadoSaas === 'ACTIVA' && (
+        <Button size="sm" variant="danger" onClick={() => onUpdateEstadoSaas(company.id, 'SUSPENDIDA')} icon={<ShieldOff className="w-4 h-4" aria-hidden="true" />}>
+          Suspender
+        </Button>
+      )}
+      {company.estadoSaas === 'SUSPENDIDA' && (
+        <Button size="sm" onClick={() => onUpdateEstadoSaas(company.id, 'ACTIVA')} icon={<ShieldAlert className="w-4 h-4" aria-hidden="true" />}>
+          Reactivar
+        </Button>
+      )}
+
+      {editingLimitId === company.id ? (
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            min={0}
+            inputMode="numeric"
+            aria-label={`Límite de usuarios de ${company.nombreComercial}`}
+            value={limitDraft}
+            onChange={(e) => setLimitDraft(parseInt(e.target.value) || 0)}
+            wrapperClassName="w-24"
+          />
+          <Button size="sm" variant="secondary" onClick={() => saveLimitEditor(company.id)}>
+            Guardar
+          </Button>
         </div>
-      </div>
+      ) : (
+        <Button size="sm" variant="outline" onClick={() => openLimitEditor(company)} icon={<Users className="w-4 h-4" aria-hidden="true" />}>
+          Editar límite
+        </Button>
+      )}
 
-      <div className="space-y-2.5">
-        {companies.length === 0 && (
-          <p className="text-slate-500 text-center py-6">No hay otras empresas registradas todavía.</p>
-        )}
-        {companies.map(company => {
-          const activeUserCount = users.filter(u => u.idCompania === company.id && u.activo).length;
-          return (
-            <div key={company.id} className="border border-slate-200 rounded-xl p-3.5">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <div>
-                  <span className="font-bold text-slate-800 block">{company.nombreComercial}</span>
-                  <span className="text-[11px] text-slate-500">{company.identificacion}</span>
-                </div>
-                <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${ESTADO_BADGE[company.estadoSaas]}`}>
-                  {ESTADO_LABEL[company.estadoSaas]}
-                </span>
-              </div>
+      <Button size="sm" variant="outline" onClick={() => openPayments(company)} icon={<DollarSign className="w-4 h-4" aria-hidden="true" />}>
+        Ver pagos
+      </Button>
+    </div>
+  );
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] mb-3">
-                <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
-                  <span className="text-slate-500 block">Usuarios</span>
-                  <span className="font-semibold text-slate-800">{activeUserCount} / {company.maxUsuarios}</span>
-                </div>
-                <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
-                  <span className="text-slate-500 block">Monto Mensual</span>
-                  <span className="font-semibold text-slate-800">{company.montoMensual != null ? `₡${company.montoMensual}` : '—'}</span>
-                </div>
-                <div className="bg-slate-50 rounded-lg p-2 border border-slate-100 col-span-2 sm:col-span-1">
-                  <span className="text-slate-500 block">Próximo Vencimiento</span>
-                  <span className="font-semibold text-slate-800">{company.proximoVencimiento || '—'}</span>
-                </div>
-              </div>
+  const activos = (company: Company) => users.filter(u => u.idCompania === company.id && u.activo).length;
 
-              <div className="flex flex-wrap gap-2">
-                {company.estadoSaas === 'PENDIENTE' && (
-                  <button
-                    onClick={() => onUpdateEstadoSaas(company.id, 'ACTIVA')}
-                    className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg font-semibold"
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    Aprobar
-                  </button>
-                )}
-                {company.estadoSaas === 'ACTIVA' && (
-                  <button
-                    onClick={() => onUpdateEstadoSaas(company.id, 'SUSPENDIDA')}
-                    className="flex items-center gap-1 bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1.5 rounded-lg font-semibold"
-                  >
-                    <ShieldOff className="w-3.5 h-3.5" />
-                    Suspender
-                  </button>
-                )}
-                {company.estadoSaas === 'SUSPENDIDA' && (
-                  <button
-                    onClick={() => onUpdateEstadoSaas(company.id, 'ACTIVA')}
-                    className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg font-semibold"
-                  >
-                    <ShieldAlert className="w-3.5 h-3.5" />
-                    Reactivar
-                  </button>
-                )}
+  return (
+    <Card>
+      <CardHeader
+        title={
+          <span className="inline-flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-brand-ink" aria-hidden="true" />
+            Administración SaaS de empresas
+          </span>
+        }
+        description="Aprobación, suspensión, límite de usuarios y pagos por empresa."
+      />
 
-                {editingLimitId === company.id ? (
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="number"
-                      min={0}
-                      value={limitDraft}
-                      onChange={(e) => setLimitDraft(parseInt(e.target.value) || 0)}
-                      className="w-16 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5"
-                    />
-                    <button
-                      onClick={() => saveLimitEditor(company.id)}
-                      className="bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1.5 rounded-lg font-semibold"
-                    >
-                      Guardar
-                    </button>
+      {companies.length === 0 ? (
+        <EmptyState
+          icon={<Building2 />}
+          title="Sin otras empresas"
+          description="No hay otras empresas registradas todavía."
+        />
+      ) : (
+        <>
+          {/* Escritorio: tabla */}
+          <div className="hidden lg:block overflow-x-auto">
+            <table className="w-full text-sm">
+              <caption className="sr-only">Empresas registradas en la plataforma</caption>
+              <thead>
+                <tr className="text-left text-xs font-semibold uppercase tracking-wide text-fg-muted border-b border-border bg-surface-muted/60">
+                  <th scope="col" className="px-6 py-3">Empresa</th>
+                  <th scope="col" className="px-3 py-3">Estado</th>
+                  <th scope="col" className="px-3 py-3">Usuarios</th>
+                  <th scope="col" className="px-3 py-3">Monto mensual</th>
+                  <th scope="col" className="px-3 py-3">Próximo vencimiento</th>
+                  <th scope="col" className="px-6 py-3">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {companies.map(company => (
+                  <tr key={company.id} className="align-middle">
+                    <td className="px-6 py-4">
+                      <span className="block font-semibold text-fg">{company.nombreComercial}</span>
+                      <span className="block text-xs text-fg-muted">{company.identificacion}</span>
+                    </td>
+                    <td className="px-3 py-4"><Badge tone={ESTADO_TONE[company.estadoSaas]}>{ESTADO_LABEL[company.estadoSaas]}</Badge></td>
+                    <td className="px-3 py-4 text-fg">{activos(company)} / {company.maxUsuarios}</td>
+                    <td className="px-3 py-4 text-fg">{company.montoMensual != null ? `₡${company.montoMensual}` : '—'}</td>
+                    <td className="px-3 py-4 text-fg">{company.proximoVencimiento || '—'}</td>
+                    <td className="px-6 py-4">{renderAcciones(company)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Móvil y tablet: tarjetas */}
+          <ul className="lg:hidden divide-y divide-border">
+            {companies.map(company => (
+              <li key={company.id} className="p-5 space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <span className="block font-semibold text-fg">{company.nombreComercial}</span>
+                    <span className="block text-xs text-fg-muted">{company.identificacion}</span>
                   </div>
-                ) : (
-                  <button
-                    onClick={() => openLimitEditor(company)}
-                    className="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg font-semibold"
-                  >
-                    <Users className="w-3.5 h-3.5" />
-                    Editar Límite
-                  </button>
-                )}
-
-                <button
-                  onClick={() => openPayments(company)}
-                  className="flex items-center gap-1 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded-lg font-semibold"
-                >
-                  <DollarSign className="w-3.5 h-3.5" />
-                  Ver Pagos
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+                  <Badge tone={ESTADO_TONE[company.estadoSaas]}>{ESTADO_LABEL[company.estadoSaas]}</Badge>
+                </div>
+                <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                  <div className="bg-surface-muted rounded-control p-3">
+                    <dt className="text-xs text-fg-muted">Usuarios</dt>
+                    <dd className="font-semibold text-fg">{activos(company)} / {company.maxUsuarios}</dd>
+                  </div>
+                  <div className="bg-surface-muted rounded-control p-3">
+                    <dt className="text-xs text-fg-muted">Monto mensual</dt>
+                    <dd className="font-semibold text-fg">{company.montoMensual != null ? `₡${company.montoMensual}` : '—'}</dd>
+                  </div>
+                  <div className="bg-surface-muted rounded-control p-3 col-span-2 sm:col-span-1">
+                    <dt className="text-xs text-fg-muted">Próximo vencimiento</dt>
+                    <dd className="font-semibold text-fg">{company.proximoVencimiento || '—'}</dd>
+                  </div>
+                </dl>
+                {renderAcciones(company)}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       {paymentsCompany && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in">
-          <div ref={pagosDialogRef} role="dialog" aria-modal="true" aria-labelledby="titulo-pagos-saas" tabIndex={-1} className="bg-white rounded-t-3xl sm:rounded-2xl border border-slate-200 shadow-xl max-w-lg w-full p-5 max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden">
-            <div className="flex items-center justify-between gap-2 mb-3 border-b border-slate-100 pb-2.5">
-              <h4 id="titulo-pagos-saas" className="font-bold text-slate-900">Historial de pagos · {paymentsCompany.nombreComercial}</h4>
-              <button type="button" onClick={() => setPaymentsCompanyId(null)} className="w-9 h-9 shrink-0 flex items-center justify-center rounded-full hover:bg-slate-100 transition-colors" aria-label="Cerrar">
-                <X className="w-4 h-4 text-slate-600" />
-              </button>
+        <div className="fixed inset-0 bg-fg/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in">
+          <div
+            ref={pagosDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="titulo-pagos-saas"
+            tabIndex={-1}
+            className="bg-surface rounded-t-panel sm:rounded-panel border border-border shadow-lg max-w-lg w-full p-5 sm:p-6 max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden"
+          >
+            <div className="flex items-center justify-between gap-2 mb-4 border-b border-border pb-3">
+              <h4 id="titulo-pagos-saas" className="text-heading font-semibold text-fg">Historial de pagos · {paymentsCompany.nombreComercial}</h4>
+              <IconButton label="Cerrar" icon={<X className="w-4 h-4" aria-hidden="true" />} onClick={() => setPaymentsCompanyId(null)} />
             </div>
 
-            <form onSubmit={(e) => handleAddPaymentSubmit(e, paymentsCompany)} className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
-              <input
-                type="date"
-                value={newPaymentFecha}
-                onChange={(e) => setNewPaymentFecha(e.target.value)}
-                className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5"
-              />
-              <input
-                type="number"
-                placeholder="Monto"
-                value={newPaymentMonto || ''}
-                onChange={(e) => setNewPaymentMonto(parseFloat(e.target.value) || 0)}
-                className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5"
-              />
-              <button
-                type="submit"
-                className="flex items-center justify-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1.5 rounded-lg font-semibold"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Registrar
-              </button>
-              <input
-                type="text"
-                placeholder="Notas (opcional)"
-                value={newPaymentNotas}
-                onChange={(e) => setNewPaymentNotas(e.target.value)}
-                className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 sm:col-span-3"
-              />
-              <div className="sm:col-span-3 grid grid-cols-2 gap-2 pt-1 border-t border-slate-100">
-                <div>
-                  <label htmlFor="saasadminp-monto-mensual-opcional" className="block text-slate-500 text-[11px] font-semibold mb-1">Monto Mensual (opcional)</label>
-                  <input id="saasadminp-monto-mensual-opcional"
-                    type="number"
-                    value={newPaymentMontoMensual}
-                    onChange={(e) => setNewPaymentMontoMensual(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="saasadminp-proximo-vencimiento-opcional" className="block text-slate-500 text-[11px] font-semibold mb-1">Próximo Vencimiento (opcional)</label>
-                  <input id="saasadminp-proximo-vencimiento-opcional"
-                    type="date"
-                    value={newPaymentVencimiento}
-                    onChange={(e) => setNewPaymentVencimiento(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5"
-                  />
-                </div>
+            <form onSubmit={(e) => handleAddPaymentSubmit(e, paymentsCompany)} className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+              <Field label="Fecha del pago">
+                <Input type="date" value={newPaymentFecha} onChange={(e) => setNewPaymentFecha(e.target.value)} />
+              </Field>
+              <Field label="Monto (₡)">
+                <Input type="number" inputMode="decimal" placeholder="Monto" value={newPaymentMonto || ''} onChange={(e) => setNewPaymentMonto(parseFloat(e.target.value) || 0)} />
+              </Field>
+              <Field label="Notas (opcional)" className="sm:col-span-2">
+                <Input type="text" placeholder="Notas (opcional)" value={newPaymentNotas} onChange={(e) => setNewPaymentNotas(e.target.value)} />
+              </Field>
+              <Field label="Monto mensual (opcional)">
+                <Input type="number" inputMode="decimal" value={newPaymentMontoMensual} onChange={(e) => setNewPaymentMontoMensual(e.target.value)} />
+              </Field>
+              <Field label="Próximo vencimiento (opcional)">
+                <Input type="date" value={newPaymentVencimiento} onChange={(e) => setNewPaymentVencimiento(e.target.value)} />
+              </Field>
+              <div className="sm:col-span-2 flex justify-end">
+                <Button type="submit" icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
+                  Registrar pago
+                </Button>
               </div>
             </form>
 
-            <div className="space-y-1.5">
+            <ul className="space-y-2">
               {paymentsForCompany.length === 0 && (
-                <p className="text-slate-500 text-center py-4">Sin pagos registrados todavía.</p>
+                <li className="text-sm text-fg-muted text-center py-4">Sin pagos registrados todavía.</li>
               )}
               {paymentsForCompany.map(p => (
-                <div key={p.id} className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
+                <li key={p.id} className="flex items-center justify-between p-3 bg-surface-muted border border-border rounded-control">
                   <div>
-                    <span className="font-semibold text-slate-800 block">₡{p.monto}</span>
-                    <span className="text-[11px] text-slate-500">{p.fecha}{p.notas ? ` · ${p.notas}` : ''}</span>
+                    <span className="block font-semibold text-fg">₡{p.monto}</span>
+                    <span className="text-xs text-fg-muted">{p.fecha}{p.notas ? ` · ${p.notas}` : ''}</span>
                   </div>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

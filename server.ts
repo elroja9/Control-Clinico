@@ -6601,13 +6601,14 @@ async function startServer() {
         if (!patient || !cita) {
           return res.status(404).json({ error: "Paciente o cita no encontrados." });
         }
-        rendered = renderCitaEmail({ company, patient, cita, tipoNotif });
+        const servicioCita = await nombreServicioDeCita(cita.idServicio, idCompania);
+        rendered = renderCitaEmail({ company, patient, cita, tipoNotif, servicio: servicioCita });
         // .ics para el calendario del paciente: REQUEST crea/actualiza y CANCEL elimina (mismo UID).
         // Si algo falla al generarlo, el correo sale igual sin adjunto.
         try {
           adjuntos.push(adjuntoIcsParaPaciente(cita, {
             nombreClinica: company.nombreComercial,
-            servicio: await nombreServicioDeCita(cita.idServicio, idCompania),
+            servicio: servicioCita,
             cancelar: tipoNotif === "CANCELACION"
           }));
         } catch (err) {
@@ -7378,8 +7379,9 @@ async function startServer() {
         }
 
         if (company && smtpConfig && smtpConfig.activo) {
-          const correoCliente = renderCitaEmail({ company, patient: paciente!, cita: nuevaCita, tipoNotif: "CONFIRMACION" });
-          const correoEspecialista = renderCitaEmailProfesional({ company, professional: user, patient: paciente!, cita: nuevaCita });
+          const servicioCita = await nombreServicioDeCita(idServicio, idCompania);
+          const correoCliente = renderCitaEmail({ company, patient: paciente!, cita: nuevaCita, tipoNotif: "CONFIRMACION", servicio: servicioCita, profesional: user.nombre });
+          const correoEspecialista = renderCitaEmailProfesional({ company, professional: user, patient: paciente!, cita: nuevaCita, servicio: servicioCita });
 
           const adjuntosCliente: AdjuntoEmail[] = [];
           try {

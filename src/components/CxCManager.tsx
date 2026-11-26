@@ -2,6 +2,13 @@ import React, { useState } from 'react';
 import { CuentaCobrar, Patient } from '../data/mockData';
 import { Wallet, AlertCircle, DollarSign } from 'lucide-react';
 import { fechaCR } from '../utils/fechaCR';
+import { StatCard } from './ui/StatCard';
+import { Card } from './ui/Card';
+import { Badge, type BadgeTone } from './ui/Badge';
+import { Button } from './ui/Button';
+import { Input } from './ui/Input';
+import { Select } from './ui/Select';
+import { EmptyState } from './ui/EmptyState';
 import { MEDIO_PAGO_ABONO, colones, fechaCorta, plazoVencimiento } from '../utils/facturacion';
 
 interface CxCManagerProps {
@@ -18,11 +25,11 @@ function estadoEfectivo(c: CuentaCobrar): 'PENDIENTE' | 'VENCIDA' | 'PAGADA' | '
   return c.fechaVencimiento < fechaCR() ? 'VENCIDA' : 'PENDIENTE';
 }
 
-const ESTADO_ESTILO: Record<string, string> = {
-  PENDIENTE: 'bg-amber-100 text-amber-800',
-  VENCIDA: 'bg-rose-100 text-rose-800',
-  PAGADA: 'bg-emerald-100 text-emerald-800',
-  ANULADA: 'bg-slate-200 text-slate-700'
+const ESTADO_TONO: Record<string, BadgeTone> = {
+  PENDIENTE: 'warning',
+  VENCIDA: 'danger',
+  PAGADA: 'success',
+  ANULADA: 'neutral'
 };
 
 const FILTROS = [['TODAS', 'Todas'], ['PENDIENTE', 'Al día'], ['VENCIDA', 'Vencidas'], ['PAGADA', 'Pagadas']] as const;
@@ -78,76 +85,66 @@ export default function CxCManager({ cxc, patients, onRegistrarPago, soloLectura
     }
   };
 
-  const campo = 'w-full min-h-10 bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800';
+  const labelCls = 'block text-fg font-semibold mb-1.5 text-xs';
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5">
-      <div className="flex items-center gap-2 mb-4 border-b border-slate-100 pb-3">
-        <Wallet className="w-5 h-5 text-slate-500" aria-hidden="true" />
-        <div>
-          <h3 className="text-sm font-bold text-slate-800">Cuentas por Cobrar</h3>
-          <p className="text-[11px] text-slate-600">Facturas emitidas a crédito y sus abonos</p>
-        </div>
+    <section aria-labelledby="cxc-titulo">
+      <div className="mb-4">
+        <h3 id="cxc-titulo" className="text-heading font-semibold text-fg tracking-tight">Cuentas por Cobrar</h3>
+        <p className="text-body text-fg-muted">Facturas emitidas a crédito y sus abonos</p>
       </div>
 
-      <dl className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
-          <dt className="text-[11px] font-bold text-amber-800 uppercase">Saldo por cobrar</dt>
-          <dd className="text-sm font-bold text-amber-900 tabular-nums">{colones(saldoPorCobrar)}</dd>
-        </div>
-        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl">
-          <dt className="text-[11px] font-bold text-rose-800 uppercase">De eso, vencido</dt>
-          <dd className="text-sm font-bold text-rose-900 tabular-nums">{colones(totalVencido)}</dd>
-        </div>
-        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
-          <dt className="text-[11px] font-bold text-emerald-800 uppercase">Cobrado (abonos)</dt>
-          <dd className="text-sm font-bold text-emerald-900 tabular-nums">{colones(totalCobrado)}</dd>
-        </div>
-      </dl>
-
-      <div className="flex flex-wrap gap-1.5 mb-3" role="group" aria-label="Filtrar cuentas por cobrar">
-        {FILTROS.map(([f, etiqueta]) => (
-          <button
-            key={f}
-            type="button"
-            onClick={() => setFiltro(f)}
-            aria-pressed={filtro === f}
-            className={`min-h-9 px-3 rounded-lg text-[11px] font-bold ${filtro === f ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
-          >
-            {etiqueta}
-          </button>
-        ))}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        <StatCard label="Saldo por cobrar" value={colones(saldoPorCobrar)} icon={<Wallet />} className="bg-warning-soft border-warning/25" />
+        <StatCard label="De eso, vencido" value={colones(totalVencido)} icon={<AlertCircle />} className={totalVencido > 0 ? 'bg-danger-soft border-danger/25' : undefined} />
+        <StatCard label="Cobrado (abonos)" value={colones(totalCobrado)} icon={<DollarSign />} className="bg-success-soft border-success/25" />
       </div>
 
-      {visibles.length === 0 && (
-        <p className="text-slate-600 text-xs text-center py-6">No hay cuentas por cobrar en este filtro.</p>
-      )}
+      <Card>
+        <div className="flex flex-wrap gap-1.5 p-4 border-b border-border" role="group" aria-label="Filtrar cuentas por cobrar">
+          {FILTROS.map(([f, etiqueta]) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setFiltro(f)}
+              aria-pressed={filtro === f}
+              className={`min-h-10 px-4 rounded-control text-xs font-semibold transition-colors ${filtro === f ? 'bg-brand-solid text-brand-fg shadow-xs' : 'bg-surface-muted text-fg-muted hover:bg-border hover:text-fg'}`}
+            >
+              {etiqueta}
+            </button>
+          ))}
+        </div>
 
-      <ul className="space-y-1.5">
+        {visibles.length === 0 && (
+          <EmptyState icon={<Wallet />} title="Sin cuentas por cobrar" description="No hay cuentas por cobrar en este filtro." />
+        )}
+
+        <ul className="divide-y divide-border">
         {visibles.map(c => {
           const estado = estadoEfectivo(c);
           const plazo = c.estado === 'PENDIENTE' ? plazoVencimiento(c.fechaVencimiento) : null;
           return (
-            <li key={c.id} className="p-2.5 bg-white border border-slate-200 rounded-lg">
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <span className="font-semibold text-slate-800 text-xs block">{nombrePaciente(c.idPaciente, c)}</span>
-                  <span className="text-[11px] text-slate-600 block">
+            <li key={c.id} className="p-4 hover:bg-surface-muted/40 transition-colors">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <span className="font-semibold text-fg text-body block">{nombrePaciente(c.idPaciente, c)}</span>
+                  <span className="text-xs text-fg-muted block">
                     Factura {c.facturaConsecutivo} &middot; Emitida {fechaCorta(c.fechaEmision)} &middot; {c.plazoDias} días &middot; Vence {fechaCorta(c.fechaVencimiento)}
-                    {plazo && <span className={`font-semibold ${plazo.vencida ? 'text-rose-700' : 'text-slate-700'}`}> ({plazo.texto})</span>}
-                  </span>
-                  <span className="text-[11px] text-slate-700 block tabular-nums">
-                    Total {colones(c.montoTotal)} &middot; <span className="font-semibold">Saldo {colones(c.saldoPendiente)}</span>
+                    {plazo && <span className={`font-semibold ${plazo.vencida ? 'text-danger' : 'text-fg'}`}> ({plazo.texto})</span>}
                   </span>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${ESTADO_ESTILO[estado]}`}>{estado}</span>
+                <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
+                  <div className="text-right tabular-nums">
+                    <span className="block text-body font-semibold text-fg">{colones(c.saldoPendiente)}</span>
+                    <span className="block text-caption text-fg-subtle">de {colones(c.montoTotal)}</span>
+                  </div>
+                  <Badge tone={ESTADO_TONO[estado]}>{estado}</Badge>
                   {!soloLectura && c.estado === 'PENDIENTE' && (
                     <button
                       type="button"
                       onClick={() => abrirAbono(c)}
                       title="Registrar abono"
-                      className="w-10 h-10 flex items-center justify-center rounded-lg text-emerald-700 hover:bg-emerald-50"
+                      className="w-10 h-10 flex items-center justify-center rounded-control text-success hover:bg-success-soft"
                       aria-label={`Registrar abono de ${nombrePaciente(c.idPaciente, c)}, factura ${c.facturaConsecutivo}`}
                     >
                       <DollarSign className="w-4 h-4" aria-hidden="true" />
@@ -157,9 +154,9 @@ export default function CxCManager({ cxc, patients, onRegistrarPago, soloLectura
               </div>
 
               {c.pagos.length > 0 && (
-                <ul className="mt-1.5 pl-2 border-l-2 border-slate-100 space-y-0.5" aria-label="Abonos">
+                <ul className="mt-2 pl-3 border-l-2 border-border space-y-0.5" aria-label="Abonos">
                   {c.pagos.map(p => (
-                    <li key={p.id} className="text-[11px] text-slate-600 tabular-nums">
+                    <li key={p.id} className="text-xs text-fg-muted tabular-nums">
                       {fechaCorta(p.fecha)} &middot; {colones(p.monto)} &middot; {MEDIO_PAGO_ABONO[p.medioPago] || p.medioPago}{p.referencia ? ` (${p.referencia})` : ''}
                     </li>
                   ))}
@@ -167,45 +164,44 @@ export default function CxCManager({ cxc, patients, onRegistrarPago, soloLectura
               )}
 
               {abonandoId === c.id && (
-                <div className="mt-2.5 pt-2.5 border-t border-slate-100 space-y-2">
+                <div className="mt-3 pt-3 border-t border-border space-y-3 animate-slide-down">
                   {error && (
-                    <div role="alert" className="p-2 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] flex items-center gap-1.5">
+                    <div role="alert" className="p-2.5 rounded-control bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-1.5">
                       <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                       <span>{error}</span>
                     </div>
                   )}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
-                      <label htmlFor={`cxc-monto-${c.id}`} className="block text-slate-600 font-medium mb-1 text-[11px]">Monto (₡)</label>
-                      <input id={`cxc-monto-${c.id}`} type="number" min="0" step="0.01" inputMode="decimal" value={montoAbono} onChange={(e) => setMontoAbono(e.target.value)} className={campo} />
+                      <label htmlFor={`cxc-monto-${c.id}`} className={labelCls}>Monto (₡)</label>
+                      <Input id={`cxc-monto-${c.id}`} type="number" min="0" step="0.01" inputMode="decimal" value={montoAbono} onChange={(e: any) => setMontoAbono(e.target.value)} className="tabular-nums" />
                     </div>
                     <div>
-                      <label htmlFor={`cxc-medio-${c.id}`} className="block text-slate-600 font-medium mb-1 text-[11px]">Medio de pago</label>
-                      <select id={`cxc-medio-${c.id}`} value={medioPagoAbono} onChange={(e) => setMedioPagoAbono(e.target.value)} className={campo}>
+                      <label htmlFor={`cxc-medio-${c.id}`} className={labelCls}>Medio de pago</label>
+                      <Select id={`cxc-medio-${c.id}`} value={medioPagoAbono} onChange={(e: any) => setMedioPagoAbono(e.target.value)}>
                         {Object.entries(MEDIO_PAGO_ABONO).map(([codigo, nombre]) => (
                           <option key={codigo} value={codigo}>{nombre}</option>
                         ))}
-                      </select>
+                      </Select>
                     </div>
                     <div>
-                      <label htmlFor={`cxc-ref-${c.id}`} className="block text-slate-600 font-medium mb-1 text-[11px]">Referencia</label>
-                      <input id={`cxc-ref-${c.id}`} type="text" value={referenciaAbono} onChange={(e) => setReferenciaAbono(e.target.value)} placeholder="ej: # comprobante SINPE" className={campo} />
+                      <label htmlFor={`cxc-ref-${c.id}`} className={labelCls}>Referencia</label>
+                      <Input id={`cxc-ref-${c.id}`} type="text" value={referenciaAbono} onChange={(e: any) => setReferenciaAbono(e.target.value)} placeholder="ej: # comprobante SINPE" />
                     </div>
                   </div>
                   <div className="flex gap-2 justify-end">
-                    <button type="button" onClick={() => setAbonandoId(null)} className="min-h-10 px-3 rounded-lg text-xs font-semibold text-slate-700 hover:bg-slate-100">
-                      Cancelar
-                    </button>
-                    <button type="button" onClick={() => confirmarAbono(c)} disabled={guardando} className="min-h-10 px-3 rounded-lg text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60">
+                    <Button variant="ghost" onClick={() => setAbonandoId(null)}>Cancelar</Button>
+                    <Button onClick={() => confirmarAbono(c)} disabled={guardando}>
                       {guardando ? 'Guardando…' : 'Registrar abono'}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
             </li>
           );
         })}
-      </ul>
-    </div>
+        </ul>
+      </Card>
+    </section>
   );
 }

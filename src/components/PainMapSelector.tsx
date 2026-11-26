@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { MapPin } from 'lucide-react';
 
 interface PainMapProps {
@@ -20,27 +19,27 @@ export default function PainMapSelector({ selectedZone, onSelectZone, painScore 
 
   // Colors depending on Pain Score (EVA)
   const getPainColor = (score: number, active: boolean) => {
-    if (!active) return 'bg-slate-300 hover:bg-teal-400 border-white text-slate-700';
-    if (score >= 8) return 'bg-rose-600 ring-rose-300 border-white text-white scale-110';
-    if (score >= 5) return 'bg-amber-500 ring-amber-300 border-white text-white scale-110';
-    return 'bg-emerald-500 ring-emerald-300 border-white text-white scale-110';
+    if (!active) return 'bg-surface-muted hover:bg-brand-soft border-border-strong text-fg-muted';
+    if (score >= 8) return 'bg-danger ring-danger/30 border-surface text-white scale-110';
+    if (score >= 5) return 'bg-warning ring-warning/30 border-surface text-white scale-110';
+    return 'bg-success ring-success/30 border-surface text-white scale-110';
   };
 
   return (
-    <div className="bg-slate-900 text-white rounded-2xl p-5 border border-slate-800 flex flex-col items-center">
-      <div className="w-full flex items-center justify-between mb-4 pb-2 border-b border-slate-800">
+    <div className="bg-surface rounded-card p-5 border border-border shadow-xs flex flex-col items-center">
+      <div className="w-full flex items-start justify-between gap-3 mb-4 pb-3 border-b border-border">
         <div>
-          <h4 className="text-xs font-bold uppercase text-slate-300 tracking-wider">Mapa Anatómico Digital</h4>
-          <p className="text-[11px] text-slate-500">Selecciona el foco del dolor muscular o articular</p>
+          <h4 className="text-body font-semibold text-fg">Mapa Anatómico Digital</h4>
+          <p className="text-xs text-fg-muted">Selecciona el foco del dolor muscular o articular</p>
         </div>
-        <span className="text-[11px] font-mono font-semibold bg-teal-950 text-teal-300 border border-teal-800 px-2 py-0.5 rounded-md">
+        <span className="shrink-0 text-xs font-semibold tabular-nums bg-brand-soft text-brand-ink ring-1 ring-inset ring-brand/20 px-2.5 py-1 rounded-full">
           EVA: {painScore}/10
         </span>
       </div>
 
-      <div className="relative w-full max-w-[240px] aspect-[4/5] bg-slate-950/80 rounded-xl border border-slate-800/60 p-4 flex justify-center items-center overflow-hidden">
+      <div className="relative w-full max-w-[240px] aspect-[4/5] bg-surface-muted rounded-card border border-border p-4 flex justify-center items-center overflow-hidden">
         {/* Simple stylized SVG outline of the human back/front */}
-        <svg viewBox="0 0 100 120" className="absolute inset-0 w-full h-full opacity-10 stroke-slate-500 fill-none stroke-[1.5]">
+        <svg viewBox="0 0 100 120" className="absolute inset-0 w-full h-full opacity-40 stroke-fg-subtle fill-none stroke-[1.5]" aria-hidden="true">
           {/* Head */}
           <circle cx="50" cy="15" r="8" />
           {/* Neck */}
@@ -62,31 +61,34 @@ export default function PainMapSelector({ selectedZone, onSelectZone, painScore 
           return (
             <button
               key={zone.id}
+              type="button"
               onClick={() => onSelectZone(zone.id)}
-              className={`absolute transition-all duration-300 cursor-pointer rounded-full border-2 w-7 h-7 flex items-center justify-center text-[11px] font-bold shadow-md focus:outline-hidden ring-4 ring-transparent ${getPainColor(painScore, isActive)}`}
+              className={`absolute transition-all duration-300 rounded-full border-2 w-8 h-8 flex items-center justify-center text-[11px] font-bold shadow-md ring-4 ring-transparent before:absolute before:-inset-1 before:content-[''] ${getPainColor(painScore, isActive)}`}
               style={{ left: zone.x, top: zone.y, transform: 'translate(-50%, -50%)' }}
               title={zone.label}
               aria-label={`Zona de dolor: ${zone.label}`}
               aria-pressed={isActive}
             >
-              <MapPin className="w-3.5 h-3.5" aria-hidden="true" />
+              <MapPin className="w-4 h-4" aria-hidden="true" />
             </button>
           );
         })}
       </div>
 
       {/* Interactive Legend */}
-      <div className="w-full mt-4 bg-slate-950 p-2.5 rounded-xl border border-slate-700/50">
-        <span className="text-[11px] font-semibold text-slate-500 block mb-1.5 uppercase">Zonas de Interés</span>
-        <div className="flex flex-wrap gap-1.5">
+      <div className="w-full mt-4 bg-surface-muted p-3 rounded-card border border-border">
+        <span className="text-xs font-semibold text-fg-muted block mb-2">Zonas de interés</span>
+        <div className="flex flex-wrap gap-2">
           {zones.map((z) => (
             <button
               key={z.id}
+              type="button"
               onClick={() => onSelectZone(z.id)}
-              className={`text-[11px] font-medium px-2 py-1 rounded-md transition-all ${
+              aria-pressed={selectedZone === z.id}
+              className={`min-h-10 text-xs font-semibold px-3 rounded-full border transition-colors ${
                 selectedZone === z.id
-                  ? 'bg-teal-600 text-white'
-                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  ? 'bg-brand-solid border-brand-solid text-brand-fg'
+                  : 'bg-surface border-border-strong text-fg hover:bg-brand-soft'
               }`}
             >
               {z.label.split(' ')[0]}

@@ -3,6 +3,10 @@ import { Servicio, Factura, FacturaLinea } from '../data/mockData';
 import { FileMinus, FilePlus, X, AlertCircle, Check, Loader2 } from 'lucide-react';
 import { useDialog } from '../hooks/useDialog';
 import { MEDIO_PAGO_HACIENDA, colones } from '../utils/facturacion';
+import { Button } from './ui/Button';
+import { IconButton } from './ui/IconButton';
+import { Input } from './ui/Input';
+import { Select } from './ui/Select';
 
 interface AjusteFacturaModalProps {
   tipo: 'CREDITO' | 'DEBITO';
@@ -100,75 +104,72 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
   const Icono = esCredito ? FileMinus : FilePlus;
 
   return (
-    <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="titulo-ajuste-factura" tabIndex={-1} className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-lg shadow-2xl border border-slate-200 max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden">
-        <div className="surface-dark sticky top-0 z-10 p-5 bg-slate-950 text-white flex justify-between items-center" style={{ backgroundColor: themeColor }}>
-          <div className="flex items-center gap-2 min-w-0">
-            <Icono className="w-5 h-5 text-white/80 shrink-0" aria-hidden="true" />
-            <h3 id="titulo-ajuste-factura" className="text-sm font-bold">Nota de {esCredito ? 'crédito' : 'débito'} · Factura {factura.consecutivo}</h3>
+    <div className="fixed inset-0 bg-fg/50 backdrop-blur-xs flex items-end sm:items-center justify-center sm:p-4 z-50 animate-fade-in font-sans">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="titulo-ajuste-factura" tabIndex={-1} className="bg-surface rounded-t-panel sm:rounded-panel w-full max-w-lg shadow-lg border border-border max-h-[92dvh] sm:max-h-[85vh] overflow-y-auto overscroll-contain animate-dialog-in focus:outline-hidden">
+        <div className="sticky top-0 z-10 bg-surface border-b border-border">
+          <div className="h-1" style={{ backgroundColor: themeColor }} aria-hidden="true" />
+          <div className="px-5 py-4 flex justify-between items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className={`w-9 h-9 shrink-0 rounded-control flex items-center justify-center ${esCredito ? 'bg-danger-soft text-danger' : 'bg-warning-soft text-warning'}`} aria-hidden="true">
+                <Icono className="w-4.5 h-4.5" />
+              </span>
+              <h3 id="titulo-ajuste-factura" className="text-heading font-semibold text-fg">Nota de {esCredito ? 'crédito' : 'débito'} · Factura {factura.consecutivo}</h3>
+            </div>
+            <IconButton label="Cerrar" icon={<X className="w-5 h-5" aria-hidden="true" />} onClick={onClose} disabled={enviando} />
           </div>
-          <button type="button" onClick={onClose} disabled={enviando} className="text-white hover:bg-white/15 w-10 h-10 -m-1.5 flex items-center justify-center rounded-lg transition-colors disabled:opacity-50" aria-label="Cerrar">
-            <X className="w-5 h-5" aria-hidden="true" />
-          </button>
         </div>
 
         <div className="p-5 space-y-4">
           {error && (
-            <div role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
+            <div role="alert" className="p-3 rounded-control bg-danger-soft border border-danger/20 text-danger text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
               <span>{error}</span>
             </div>
           )}
 
           {resultado ? (
             <div className="space-y-3">
-              <div className={`p-3 rounded-xl border text-xs space-y-1 ${
+              <div className={`p-4 rounded-card border text-sm space-y-1 ${
                 resultado.estado === 'RECHAZADA' || resultado.estado === 'ERROR'
-                  ? 'bg-rose-50 border-rose-200 text-rose-700'
+                  ? 'bg-danger-soft border-danger/20 text-danger'
                   : resultado.estado === 'ACEPTADA'
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                  : 'bg-amber-50 border-amber-200 text-amber-700'
+                  ? 'bg-success-soft border-success/20 text-success'
+                  : 'bg-warning-soft border-warning/25 text-warning'
               }`}>
-                <p className="font-bold uppercase">{resultado.estado}</p>
+                <p className="font-semibold uppercase">{resultado.estado}</p>
                 <p>Consecutivo: {resultado.consecutivo}</p>
-                <p className="break-all">Clave: {resultado.clave}</p>
-                <p>Total: {colones(resultado.total)}</p>
+                <p className="break-all text-xs">Clave: {resultado.clave}</p>
+                <p className="tabular-nums">Total: <span className="font-semibold">{colones(resultado.total)}</span></p>
                 {resultado.mensajeError && <p className="mt-1">{resultado.mensajeError}</p>}
               </div>
-              <button
-                type="button"
-                onClick={onClose}
-                className="w-full min-h-11 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl"
-              >
-                Cerrar
-              </button>
+              <Button variant="secondary" fullWidth onClick={onClose}>Cerrar</Button>
             </div>
           ) : (
             <>
-              <p className="text-xs text-slate-500">
+              <p className="text-sm text-fg-muted">
                 {esCredito
                   ? 'Acredita una cantidad de las líneas ya facturadas (se cobró de más, una devolución parcial) sin anular la factura completa.'
                   : 'Agrega un cargo adicional sobre esta factura (una sesión que no se cobró, una corrección al alza) referenciándola como documento original.'}
               </p>
 
               {opciones.length === 0 ? (
-                <p className="text-xs text-slate-500">
+                <p className="text-sm text-fg-muted">
                   {esCredito ? 'Esta factura no tiene líneas con servicio asociado para acreditar.' : 'Esta empresa no tiene servicios configurados. Agréguelos primero en Configuración de Empresa.'}
                 </p>
               ) : yaAcreditadaCompleta ? (
-                <p role="status" className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+                <p role="status" className="p-3 rounded-control bg-surface-muted border border-border text-sm text-fg-muted">
                   Esta factura ya fue acreditada por completo en Notas de Crédito anteriores: no queda nada por acreditar.
                 </p>
               ) : (
-                <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                <div className="space-y-2 max-h-64 overflow-y-auto">
                   {opciones.map(o => (
-                    <div key={o.key} className="flex items-center justify-between gap-2 p-2 bg-slate-50 border border-slate-200 rounded-lg">
+                    <div key={o.key} className="flex items-center justify-between gap-3 p-3 bg-surface-muted border border-border rounded-control">
                       <div className="min-w-0">
-                        <span className="text-xs font-semibold text-slate-800 block truncate">{o.nombre}</span>
-                        <span id={`ajuste-detalle-${o.key}`} className="text-[11px] text-slate-500">
+                        <span className="text-sm font-semibold text-fg block truncate">{o.nombre}</span>
+                        <span id={`ajuste-detalle-${o.key}`} className="text-xs text-fg-muted tabular-nums">
                           {colones(o.precio)} + IVA {o.porcentajeIva}%
                           {esCredito && ` · facturado: ${o.cantidadFacturada} · disponible: ${o.cantidadMaxima}`}
-                          {o.sinCabys && <span className="text-amber-600 font-bold"> (sin CABYS)</span>}
+                          {o.sinCabys && <span className="text-warning font-semibold"> (sin CABYS)</span>}
                         </span>
                       </div>
                       <input
@@ -187,7 +188,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                           setCantidades(prev => ({ ...prev, [o.key]: cantidad }));
                         }}
                         disabled={o.sinCabys || o.cantidadMaxima === 0}
-                        className="w-20 min-h-10 shrink-0 bg-white border border-slate-200 rounded-lg px-2 text-sm text-center disabled:opacity-40"
+                        className="w-24 min-h-11 shrink-0 bg-surface border border-border-strong rounded-control px-2 text-body text-fg text-center tabular-nums hover:border-fg-subtle focus:border-brand disabled:opacity-40"
                       />
                     </div>
                   ))}
@@ -196,71 +197,57 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
 
               {pideMedioPago && (
                 <div>
-                  <label htmlFor="ajustefact-medio-de-pago" className="block text-slate-600 text-xs font-bold mb-1.5">Medio de pago</label>
-                  <select id="ajustefact-medio-de-pago"
-                    value={medioPago}
-                    onChange={(e) => setMedioPago(e.target.value)}
-                    className="w-full min-h-10 bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
-                  >
+                  <label htmlFor="ajustefact-medio-de-pago" className="block text-fg text-xs font-semibold mb-1.5">Medio de pago</label>
+                  <Select id="ajustefact-medio-de-pago" value={medioPago} onChange={(e: any) => setMedioPago(e.target.value)}>
                     {Object.entries(MEDIO_PAGO_HACIENDA).map(([codigo, nombre]) => <option key={codigo} value={codigo}>{nombre}</option>)}
-                  </select>
+                  </Select>
                 </div>
               )}
               {!esCredito && factura.condicionVenta === '02' && (
-                <p className="text-[11px] text-slate-600">La factura fue a crédito: el cargo se suma a su saldo en Cuentas por Cobrar.</p>
+                <p className="text-xs text-fg-muted">La factura fue a crédito: el cargo se suma a su saldo en Cuentas por Cobrar.</p>
               )}
 
               <div>
-                <label htmlFor="ajustefact-motivo" className="block text-slate-600 text-xs font-bold mb-1.5">Motivo *</label>
-                <input id="ajustefact-motivo"
+                <label htmlFor="ajustefact-motivo" className="block text-fg text-xs font-semibold mb-1.5">Motivo *</label>
+                <Input id="ajustefact-motivo"
                   type="text"
                   maxLength={motivoMax}
                   value={motivo}
-                  onChange={(e) => setMotivo(e.target.value)}
+                  onChange={(e: any) => setMotivo(e.target.value)}
                   placeholder={esCredito ? 'ej: Se cobró de más en una sesión' : 'ej: Sesión adicional no facturada'}
-                  className="w-full min-h-10 bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
                 />
               </div>
 
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
+              <dl className="p-4 bg-surface-muted border border-border rounded-card text-sm space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-500">Subtotal</span>
-                  <span className="font-semibold text-slate-700">{colones(desglose.subtotal)}</span>
+                  <dt className="text-fg-muted">Base (subtotal)</dt>
+                  <dd className="font-medium text-fg tabular-nums">{colones(desglose.subtotal)}</dd>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-500">IVA</span>
-                  <span className="font-semibold text-slate-700">{colones(desglose.iva)}</span>
+                  <dt className="text-fg-muted">IVA</dt>
+                  <dd className="font-medium text-fg tabular-nums">{colones(desglose.iva)}</dd>
                 </div>
-                <div className="flex items-center justify-between border-t border-slate-200 pt-1">
-                  <span className="text-slate-600 font-bold">Total</span>
-                  <span className="font-bold text-slate-800">{colones(desglose.total)}</span>
+                <div className="flex items-baseline justify-between border-t border-border-strong pt-2 mt-1">
+                  <dt className="text-fg font-semibold">Total</dt>
+                  <dd className="font-bold text-fg text-title tabular-nums">{colones(desglose.total)}</dd>
                 </div>
-              </div>
+              </dl>
 
               {/* Sin "modo prueba": la factura ya existe ante Hacienda, y una Nota simulada sobre ella
                   dejaba al sistema y a Hacienda diciendo cosas distintas. */}
-              <p className="text-[11px] text-slate-500">
+              <p className="text-xs text-fg-muted">
                 La nota se transmite a Hacienda. {esCredito ? 'Las existencias y el saldo por cobrar' : 'Las existencias y el saldo por cobrar (si la factura fue a crédito)'} se ajustan solo si Hacienda la recibe.
               </p>
 
-              <div className="flex gap-2 justify-end pt-1">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-4 rounded-xl"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
+              <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-1">
+                <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+                <Button
                   disabled={enviando || yaAcreditadaCompleta}
                   onClick={handleEmitir}
-                  className="min-h-10 text-white text-xs font-extrabold px-4 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-60"
-                  style={{ backgroundColor: themeColor }}
+                  icon={enviando ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Check className="w-4 h-4" aria-hidden="true" />}
                 >
-                  {enviando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                   Emitir Nota de {esCredito ? 'Crédito' : 'Débito'}
-                </button>
+                </Button>
               </div>
             </>
           )}

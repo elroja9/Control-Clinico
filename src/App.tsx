@@ -31,6 +31,12 @@ import { notify, confirmar } from './components/ui/Feedback';
 import { Avatar } from './components/ui/Avatar';
 import { Badge } from './components/ui/Badge';
 import { Skeleton } from './components/ui/Skeleton';
+import { Button } from './components/ui/Button';
+import { IconButton } from './components/ui/IconButton';
+import { Input } from './components/ui/Input';
+import { Card } from './components/ui/Card';
+import { EmptyState } from './components/ui/EmptyState';
+import { StatCard } from './components/ui/StatCard';
 import {
   LineChart,
   Line,
@@ -76,7 +82,6 @@ import {
   CasoLegal
 } from './data/mockData';
 import { terminoPersona } from './utils/terminoPersona';
-
 import CompanySettings from './components/CompanySettings';
 import PatientForm from './components/PatientForm';
 import ConsultationForm from './components/ConsultationForm';
@@ -95,6 +100,19 @@ import ReporteriaClinica from './components/ReporteriaClinica';
 import CasosLegalesManager from './components/CasosLegalesManager';
 import ManualUsuario from './components/ManualUsuario';
 import ParametrosRentaManager from './components/ParametrosRentaManager';
+
+// Recharts pinta con atributos SVG, que no resuelven var(--token): estos hex replican los tokens
+// de src/index.css (border, border-strong, fg-subtle, fg, surface-muted, success, warning, danger).
+const CHART_COLORS = {
+  grid: '#e5e7eb',
+  axis: '#cbd5e1',
+  tick: '#64748b',
+  label: '#0f172a',
+  cursor: '#f1f3f6',
+  success: '#047857',
+  warning: '#b45309',
+  danger: '#be123c'
+} as const;
 
 type TabId = 'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales' | 'reporteria' | 'casos' | 'manual';
 
@@ -1355,8 +1373,8 @@ export default function App() {
   );
 
   const chartTooltipStyle = {
-    contentStyle: { borderRadius: 12, border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgba(15,23,42,0.08)', fontSize: 12 },
-    labelStyle: { fontWeight: 700, color: '#0f172a' }
+    contentStyle: { borderRadius: 12, border: `1px solid ${CHART_COLORS.grid}`, boxShadow: '0 4px 12px rgba(15,23,42,0.08)', fontSize: 12 },
+    labelStyle: { fontWeight: 600, color: CHART_COLORS.label }
   };
 
   // Título de la sección actual para el encabezado
@@ -1571,56 +1589,54 @@ export default function App() {
               <div className="space-y-6">
 
                 {/* Banner */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <Card className="p-5 sm:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div>
-                    <h2 className="text-lg font-bold text-slate-900">{saludo}, {nombreSaludo}</h2>
-                    <p className="text-sm text-slate-600 mt-0.5">
+                    <h2 className="text-heading font-semibold tracking-tight text-fg">{saludo}, {nombreSaludo}</h2>
+                    <p className="text-body text-fg-muted mt-0.5">
                       {citasHoy === 0
                         ? 'No tiene citas programadas para hoy.'
                         : `Hoy tiene ${citasHoy} cita${citasHoy === 1 ? '' : 's'} en agenda.`}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-                    <button
-                      type="button"
+                    <Button
+                      variant="outline"
+                      className="flex-1 sm:flex-none"
                       onClick={() => navigateTo('agenda')}
-                      className="flex-1 sm:flex-none min-h-11 whitespace-nowrap bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-sm font-semibold px-3 sm:px-4 rounded-xl transition-colors flex items-center justify-center gap-2"
+                      icon={<Calendar className="w-4 h-4" aria-hidden="true" />}
                     >
-                      <Calendar className="w-4 h-4" aria-hidden="true" />
                       Ver agenda
-                    </button>
-                    <button
-                      type="button"
+                    </Button>
+                    <Button
+                      className="flex-1 sm:flex-none"
                       onClick={() => setIsAddingPatient(true)}
-                      className="flex-1 sm:flex-none min-h-11 whitespace-nowrap text-white text-sm font-semibold px-3 sm:px-4 rounded-xl shadow-sm hover:brightness-110 transition-[filter] flex items-center justify-center gap-2"
-                      style={{ backgroundColor: activeCompany.colorPrimario }}
+                      icon={<Plus className="w-4 h-4" aria-hidden="true" />}
                     >
-                      <Plus className="w-4 h-4" aria-hidden="true" />
                       {esLegal ? 'Nuevo cliente' : 'Nuevo expediente'}
-                    </button>
+                    </Button>
                   </div>
-                </div>
+                </Card>
 
                 {/* Dashboard Widgets */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
                   {[
                     // En Legal ya el saludo dice las citas de hoy; así caben los 4 indicadores del despacho en una fila
-                    { label: 'Citas de hoy', value: citasHoy, color: 'text-slate-900', tab: 'agenda' as TabId, show: !esLegal },
-                    { label: esLegal ? 'Clientes' : 'Expedientes', value: filteredPatientsByCompany.length, color: 'text-slate-900', tab: 'patients' as TabId, show: true },
-                    { label: 'Casos abiertos', value: casosDeLaCompania.filter(c => c.estado === 'ABIERTO').length, color: 'text-slate-900', tab: 'casos' as TabId, show: esLegal },
-                    { label: 'Documentos pendientes', value: docsPendientes.length, color: 'text-amber-700', tab: 'casos' as TabId, show: esLegal },
-                    { label: 'Documentos vencidos', value: docsVencidos, color: 'text-rose-700', tab: 'casos' as TabId, show: esLegal },
-                    { label: 'Consultas de nutrición', value: filteredConsultationsByCompany.filter(c => c.tipo === 'Nutrición').length, color: 'text-rose-700', tab: 'consultations' as TabId, show: muestraNutricion },
-                    { label: 'Consultas de fisioterapia', value: filteredConsultationsByCompany.filter(c => c.tipo === 'Fisioterapia').length, color: 'text-emerald-700', tab: 'consultations' as TabId, show: muestraFisioterapia }
+                    { label: 'Citas de hoy', value: citasHoy, icon: <Calendar />, tab: 'agenda' as TabId, show: !esLegal },
+                    { label: esLegal ? 'Clientes' : 'Expedientes', value: filteredPatientsByCompany.length, icon: <Users />, tab: 'patients' as TabId, show: true },
+                    { label: 'Casos abiertos', value: casosDeLaCompania.filter(c => c.estado === 'ABIERTO').length, icon: <FolderOpen />, tab: 'casos' as TabId, show: esLegal },
+                    { label: 'Documentos pendientes', value: docsPendientes.length, icon: <ClipboardList />, tab: 'casos' as TabId, show: esLegal },
+                    { label: 'Documentos vencidos', value: docsVencidos, icon: <ClipboardList />, tab: 'casos' as TabId, show: esLegal },
+                    { label: 'Consultas de nutrición', value: filteredConsultationsByCompany.filter(c => c.tipo === 'Nutrición').length, icon: <Apple />, tab: 'consultations' as TabId, show: muestraNutricion },
+                    { label: 'Consultas de fisioterapia', value: filteredConsultationsByCompany.filter(c => c.tipo === 'Fisioterapia').length, icon: <Dumbbell />, tab: 'consultations' as TabId, show: muestraFisioterapia }
                   ].filter(k => k.show).map(k => (
                     <button
                       key={k.label}
                       type="button"
                       onClick={() => navigateTo(k.tab)}
-                      className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs text-left flex flex-col justify-between hover:border-slate-300 hover:shadow-sm transition-[border-color,box-shadow] duration-150"
+                      aria-label={`${k.label}: ${k.value}. Abrir`}
+                      className="text-left rounded-card hover:[&>div]:border-border-strong hover:[&>div]:shadow-sm"
                     >
-                      <span className="text-xs text-slate-600 font-semibold block">{k.label}</span>
-                      <span className={`text-2xl sm:text-3xl font-extrabold block mt-1 tabular-nums ${k.color}`}>{k.value}</span>
+                      <StatCard label={k.label} value={k.value} icon={k.icon} className="h-full transition-[border-color,box-shadow]" />
                     </button>
                   ))}
                 </div>
@@ -1630,23 +1646,23 @@ export default function App() {
 
                   {/* Weight history tracking chart */}
                   {muestraNutricion && (
-                    <section className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs flex flex-col justify-between" aria-labelledby="grafico-peso">
+                    <section className="bg-surface rounded-card p-5 border border-border shadow-xs flex flex-col justify-between" aria-labelledby="grafico-peso">
                       <div>
-                        <h3 id="grafico-peso" className="text-sm font-bold text-slate-900">Evolución de peso (kg)</h3>
-                        <p className="text-xs text-slate-600 mb-4">Pacientes con plan nutricional activo</p>
+                        <h3 id="grafico-peso" className="text-body font-semibold text-fg">Evolución de peso (kg)</h3>
+                        <p className="text-xs text-fg-muted mb-4">Pacientes con plan nutricional activo</p>
                       </div>
                       <div className="h-52 w-full">
                         {weightHistoryData.length === 0 ? (
-                          <div className="h-full flex flex-col items-center justify-center gap-1 text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200 px-4 text-center">
-                            <Apple className="w-5 h-5 text-slate-400" aria-hidden="true" />
+                          <div className="h-full flex flex-col items-center justify-center gap-1.5 text-sm text-fg-muted bg-surface-muted rounded-control border border-dashed border-border-strong px-4 text-center">
+                            <Apple className="w-5 h-5 text-fg-subtle" aria-hidden="true" />
                             Aún no hay consultas de nutrición para graficar.
                           </div>
                         ) : (
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={weightHistoryData}>
-                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                              <XAxis dataKey="fecha" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={{ stroke: '#cbd5e1' }} />
-                              <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} domain={['auto', 'auto']} width={36} />
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART_COLORS.grid} />
+                              <XAxis dataKey="fecha" tick={{ fontSize: 11, fill: CHART_COLORS.tick }} tickLine={false} axisLine={{ stroke: CHART_COLORS.axis }} />
+                              <YAxis tick={{ fontSize: 11, fill: CHART_COLORS.tick }} tickLine={false} axisLine={false} domain={['auto', 'auto']} width={36} />
                               <Tooltip {...chartTooltipStyle} formatter={(v) => [`${v} kg`, 'Peso']} />
                               <Line type="monotone" dataKey="peso" stroke={activeCompany.colorPrimario} strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 6 }} />
                             </LineChart>
@@ -1658,27 +1674,27 @@ export default function App() {
 
                   {/* Pain score distribution */}
                   {muestraFisioterapia && (
-                    <section className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs flex flex-col justify-between" aria-labelledby="grafico-eva">
+                    <section className="bg-surface rounded-card p-5 border border-border shadow-xs flex flex-col justify-between" aria-labelledby="grafico-eva">
                       <div>
-                        <h3 id="grafico-eva" className="text-sm font-bold text-slate-900">Distribución del dolor (escala EVA)</h3>
-                        <p className="text-xs text-slate-600 mb-3">Niveles registrados en terapia física</p>
+                        <h3 id="grafico-eva" className="text-body font-semibold text-fg">Distribución del dolor (escala EVA)</h3>
+                        <p className="text-xs text-fg-muted mb-3">Niveles registrados en terapia física</p>
                       </div>
                       <div className="h-52 w-full">
                         {!hayConsultasFisio ? (
-                          <div className="h-full flex flex-col items-center justify-center gap-1 text-sm text-slate-500 bg-slate-50 rounded-xl border border-dashed border-slate-200 px-4 text-center">
-                            <Dumbbell className="w-5 h-5 text-slate-400" aria-hidden="true" />
+                          <div className="h-full flex flex-col items-center justify-center gap-1.5 text-sm text-fg-muted bg-surface-muted rounded-control border border-dashed border-border-strong px-4 text-center">
+                            <Dumbbell className="w-5 h-5 text-fg-subtle" aria-hidden="true" />
                             Aún no hay registros de dolor EVA para graficar.
                           </div>
                         ) : (
                           <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={evaDistribution}>
-                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                              <XAxis dataKey="score" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={{ stroke: '#cbd5e1' }} />
-                              <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} allowDecimals={false} width={28} />
-                              <Tooltip {...chartTooltipStyle} cursor={{ fill: '#f1f5f9' }} labelFormatter={(l) => `EVA ${l}`} formatter={(v) => [v, 'Consultas']} />
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={CHART_COLORS.grid} />
+                              <XAxis dataKey="score" tick={{ fontSize: 11, fill: CHART_COLORS.tick }} tickLine={false} axisLine={{ stroke: CHART_COLORS.axis }} />
+                              <YAxis tick={{ fontSize: 11, fill: CHART_COLORS.tick }} tickLine={false} axisLine={false} allowDecimals={false} width={28} />
+                              <Tooltip {...chartTooltipStyle} cursor={{ fill: CHART_COLORS.cursor }} labelFormatter={(l) => `EVA ${l}`} formatter={(v) => [v, 'Consultas']} />
                               <Bar dataKey="cantidad" radius={[6, 6, 0, 0]}>
                                 {evaDistribution.map((entry, index) => {
-                                  const color = entry.score >= 8 ? '#e11d48' : entry.score >= 5 ? '#d97706' : '#059669';
+                                  const color = entry.score >= 8 ? CHART_COLORS.danger : entry.score >= 5 ? CHART_COLORS.warning : CHART_COLORS.success;
                                   return <Cell key={`cell-${index}`} fill={color} />;
                                 })}
                               </Bar>
@@ -1687,10 +1703,10 @@ export default function App() {
                         )}
                       </div>
                       {hayConsultasFisio && (
-                        <ul className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-slate-600" aria-label="Leyenda">
-                          <li className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-600" aria-hidden="true" />Leve (1–4)</li>
-                          <li className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-amber-600" aria-hidden="true" />Moderado (5–7)</li>
-                          <li className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-rose-600" aria-hidden="true" />Severo (8–10)</li>
+                        <ul className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-fg-muted" aria-label="Leyenda">
+                          <li className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-success" aria-hidden="true" />Leve (1–4)</li>
+                          <li className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-warning" aria-hidden="true" />Moderado (5–7)</li>
+                          <li className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-danger" aria-hidden="true" />Severo (8–10)</li>
                         </ul>
                       )}
                     </section>
@@ -1700,59 +1716,50 @@ export default function App() {
 
                 {/* Patient Overview Summary list (depende de consultas clínicas: no aplica al perfil Legal) */}
                 {!esLegal && (
-                <section className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden" aria-labelledby="ultimos-pacientes">
-                  <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/60">
-                    <h3 id="ultimos-pacientes" className="text-sm font-bold text-slate-900">Últimos pacientes atendidos</h3>
-                    <button
-                      type="button"
-                      onClick={() => navigateTo('patients')}
-                      className="text-sm font-semibold hover:underline underline-offset-2 px-2 py-1 -mr-2 rounded-lg"
-                      style={{ color: activeCompany.colorPrimario }}
-                    >
+                <section className="bg-surface rounded-card border border-border shadow-xs overflow-hidden" aria-labelledby="ultimos-pacientes">
+                  <div className="px-5 py-3.5 border-b border-border flex justify-between items-center gap-3">
+                    <h3 id="ultimos-pacientes" className="text-body font-semibold text-fg">Últimos pacientes atendidos</h3>
+                    <Button variant="ghost" size="sm" className="-mr-2" onClick={() => navigateTo('patients')}>
                       Ver todos
-                    </button>
+                    </Button>
                   </div>
                   {pacientesRecientes.length === 0 ? (
-                    <div className="p-8 text-center">
-                      <p className="text-sm text-slate-600">Aún no hay expedientes registrados.</p>
-                      <button
-                        type="button"
-                        onClick={() => setIsAddingPatient(true)}
-                        className="mt-3 min-h-11 text-white text-sm font-semibold px-4 rounded-xl inline-flex items-center gap-2 hover:brightness-110 transition-[filter]"
-                        style={{ backgroundColor: activeCompany.colorPrimario }}
-                      >
-                        <Plus className="w-4 h-4" aria-hidden="true" />
-                        Crear el primer expediente
-                      </button>
-                    </div>
+                    <EmptyState
+                      icon={<Users />}
+                      title="Aún no hay expedientes registrados"
+                      action={
+                        <Button onClick={() => setIsAddingPatient(true)} icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
+                          Crear el primer expediente
+                        </Button>
+                      }
+                    />
                   ) : (
-                    <ul className="divide-y divide-slate-100">
+                    <ul className="divide-y divide-border">
                       {pacientesRecientes.map((p) => {
                         const latestConsult = ultimaConsultaPorPaciente.get(p.id);
                         return (
-                          <li key={p.id} className="px-4 sm:px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/60 transition-colors">
+                          <li key={p.id} className="px-5 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-surface-muted/60 transition-colors">
                             <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-9 h-9 shrink-0 rounded-full bg-slate-100 flex items-center justify-center font-bold text-slate-700 uppercase text-sm" aria-hidden="true">
-                                {p.nombreCompleto.charAt(0)}
-                              </div>
+                              <Avatar name={p.nombreCompleto} />
                               <div className="min-w-0">
-                                <span className="font-semibold text-slate-900 block text-sm truncate">{p.nombreCompleto}</span>
-                                <span className="text-xs text-slate-600 block">
+                                <span className="font-semibold text-fg block text-body truncate">{p.nombreCompleto}</span>
+                                <span className="text-xs text-fg-muted block">
                                   {latestConsult ? `Última cita: ${latestConsult.fecha} · ${latestConsult.tipo}` : 'Sin consultas registradas'}
                                 </span>
                               </div>
                             </div>
 
-                            <button
-                              type="button"
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="self-start sm:self-auto shrink-0"
                               onClick={() => {
                                 if (latestConsult) setSelectedReportConsultation(latestConsult);
                                 else setActiveConsultationPatient(p);
                               }}
-                              className="self-start sm:self-auto shrink-0 min-h-9 bg-slate-100 hover:bg-slate-200 text-slate-800 px-3.5 rounded-lg text-xs font-semibold transition-colors"
                             >
                               {latestConsult ? 'Ver ficha' : 'Nueva consulta'}
-                            </button>
+                            </Button>
                           </li>
                         );
                       })}
@@ -1769,185 +1776,166 @@ export default function App() {
               <div className="space-y-6">
 
                 {/* Search & Actions toolbar */}
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
-                  <div className="relative w-full sm:max-w-md">
+                <Card className="p-4 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
+                  <div className="w-full sm:max-w-md">
                     <label htmlFor="buscar-pacientes" className="sr-only">Buscar {persona.minusculaPlural}</label>
-                    <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
-                    <input
+                    <Input
                       id="buscar-pacientes"
                       type="search"
                       placeholder="Buscar por nombre o cédula…"
                       value={patientSearch}
-                      onChange={(e) => setPatientSearch(e.target.value)}
+                      onChange={(e: any) => setPatientSearch(e.target.value)}
                       autoComplete="off"
-                      className="w-full min-h-11 bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-10 text-sm text-slate-800 placeholder:text-slate-500 focus:bg-white transition-colors [&::-webkit-search-cancel-button]:hidden"
+                      leadingIcon={<Search />}
+                      className="[&::-webkit-search-cancel-button]:hidden"
+                      trailing={patientSearch ? (
+                        <IconButton
+                          label="Limpiar búsqueda"
+                          icon={<X className="w-4 h-4" aria-hidden="true" />}
+                          onClick={() => setPatientSearch('')}
+                        />
+                      ) : undefined}
                     />
-                    {patientSearch && (
-                      <button
-                        type="button"
-                        onClick={() => setPatientSearch('')}
-                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100"
-                        aria-label="Limpiar búsqueda"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
                   </div>
 
-                  <button
-                    type="button"
+                  <Button
+                    className="w-full sm:w-auto"
                     onClick={() => setIsAddingPatient(true)}
-                    className="w-full sm:w-auto min-h-11 text-white text-sm font-semibold px-4 rounded-xl shadow-sm hover:brightness-110 transition-[filter] flex items-center justify-center gap-2"
-                    style={{ backgroundColor: activeCompany.colorPrimario }}
+                    icon={<Plus className="w-4 h-4" aria-hidden="true" />}
                   >
-                    <Plus className="w-4 h-4" aria-hidden="true" />
                     {esLegal ? 'Registrar cliente' : 'Registrar expediente'}
-                  </button>
-                </div>
+                  </Button>
+                </Card>
 
                 {patientSearch && searchedPatients.length > 0 && (
-                  <p className="text-xs text-slate-600 -mt-3" role="status">
+                  <p className="text-xs text-fg-muted -mt-3" role="status">
                     {searchedPatients.length} resultado{searchedPatients.length === 1 ? '' : 's'} para “{patientSearch}”
                   </p>
                 )}
 
                 {/* Catalog list */}
                 {searchedPatients.length === 0 ? (
-                  <div className="text-center py-12 px-4 bg-white rounded-2xl border border-dashed border-slate-300">
-                    <Users className="w-8 h-8 text-slate-400 mx-auto mb-2" aria-hidden="true" />
+                  <Card className="border-dashed border-border-strong shadow-none">
                     {patientSearch ? (
-                      <>
-                        <p className="text-sm font-semibold text-slate-800">Ningún {esLegal ? 'cliente' : 'expediente'} coincide con “{patientSearch}”</p>
-                        <p className="text-sm text-slate-600 mt-1">Revise la ortografía o busque por número de cédula.</p>
-                        <button
-                          type="button"
-                          onClick={() => setPatientSearch('')}
-                          className="mt-4 min-h-10 px-4 rounded-xl text-sm font-semibold bg-slate-100 hover:bg-slate-200 text-slate-800 transition-colors"
-                        >
-                          Limpiar búsqueda
-                        </button>
-                      </>
+                      <EmptyState
+                        icon={<Users />}
+                        title={`Ningún ${esLegal ? 'cliente' : 'expediente'} coincide con “${patientSearch}”`}
+                        description="Revise la ortografía o busque por número de cédula."
+                        action={<Button variant="secondary" onClick={() => setPatientSearch('')}>Limpiar búsqueda</Button>}
+                      />
                     ) : (
-                      <>
-                        <p className="text-sm font-semibold text-slate-800">Aún no hay {esLegal ? 'clientes' : 'expedientes'}</p>
-                        <p className="text-sm text-slate-600 mt-1">
-                          {esLegal ? 'Registre al primer cliente para abrirle casos y controlar sus documentos.' : 'Registre al primer paciente para empezar a llevar su historial.'}
-                        </p>
-                      </>
+                      <EmptyState
+                        icon={<Users />}
+                        title={`Aún no hay ${esLegal ? 'clientes' : 'expedientes'}`}
+                        description={esLegal ? 'Registre al primer cliente para abrirle casos y controlar sus documentos.' : 'Registre al primer paciente para empezar a llevar su historial.'}
+                        action={
+                          <Button onClick={() => setIsAddingPatient(true)} icon={<Plus className="w-4 h-4" aria-hidden="true" />}>
+                            {esLegal ? 'Registrar cliente' : 'Registrar expediente'}
+                          </Button>
+                        }
+                      />
                     )}
-                  </div>
+                  </Card>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {searchedPatients.map((p) => {
                       const ultimaConsulta = ultimaConsultaPorPaciente.get(p.id);
                       return (
-                        <article key={p.id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between gap-4" aria-labelledby={`paciente-${p.id}`}>
+                        <article key={p.id} className="bg-surface rounded-card border border-border p-4 sm:p-5 shadow-xs hover:border-border-strong hover:shadow-sm transition-[border-color,box-shadow] flex flex-col justify-between gap-4" aria-labelledby={`paciente-${p.id}`}>
                           <div className="flex justify-between items-start gap-2">
                             <div className="flex gap-3 min-w-0">
-                              <div className="w-10 h-10 shrink-0 rounded-full bg-slate-100 flex items-center justify-center font-extrabold text-slate-700 uppercase text-sm" aria-hidden="true">
-                                {p.nombreCompleto.charAt(0)}
-                              </div>
+                              <Avatar name={p.nombreCompleto} />
                               <div className="min-w-0">
-                                <h3 id={`paciente-${p.id}`} className="font-bold text-slate-900 text-sm truncate">{p.nombreCompleto}</h3>
-                                <p className="text-xs text-slate-600 font-mono">{p.identificacion} ({p.tipoIdentificacion})</p>
-                                <p className="text-xs text-slate-600 mt-0.5 truncate">Ocupación: {p.ocupacion || 'No registrada'}</p>
+                                <h3 id={`paciente-${p.id}`} className="font-semibold text-fg text-body truncate">{p.nombreCompleto}</h3>
+                                <p className="text-xs text-fg-muted">{p.identificacion} ({p.tipoIdentificacion})</p>
+                                <p className="text-xs text-fg-muted mt-0.5 truncate">Ocupación: {p.ocupacion || 'No registrada'}</p>
                               </div>
                             </div>
 
-                            <div className="flex -mr-1.5 -mt-1.5 shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => setEditingPatient(p)}
-                                className="p-2.5 text-slate-500 hover:text-teal-700 hover:bg-slate-100 rounded-xl transition-colors"
-                                aria-label={`Editar datos de ${p.nombreCompleto}`}
+                            <div className="flex -mr-2 -mt-2 shrink-0">
+                              <IconButton
+                                label={`Editar datos de ${p.nombreCompleto}`}
                                 title="Editar datos personales"
-                              >
-                                <Edit className="w-4 h-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeletePatient(p.id)}
-                                className="p-2.5 text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors"
-                                aria-label={`Eliminar ${esLegal ? 'cliente' : 'expediente de'} ${p.nombreCompleto}`}
+                                icon={<Edit className="w-4 h-4" aria-hidden="true" />}
+                                onClick={() => setEditingPatient(p)}
+                              />
+                              <IconButton
+                                label={`Eliminar ${esLegal ? 'cliente' : 'expediente de'} ${p.nombreCompleto}`}
                                 title={`Eliminar ${persona.minuscula}`}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                                icon={<Trash2 className="w-4 h-4" aria-hidden="true" />}
+                                className="hover:bg-danger-soft hover:text-danger"
+                                onClick={() => handleDeletePatient(p.id)}
+                              />
                             </div>
                           </div>
 
                           {esLegal ? (
                             <>
-                              <dl className="bg-slate-50 rounded-xl p-3 border border-slate-100 text-xs grid grid-cols-2 gap-2 text-slate-700">
+                              <dl className="bg-surface-muted rounded-control p-3.5 text-xs grid grid-cols-2 gap-3 text-fg">
                                 <div>
-                                  <dt className="font-semibold text-slate-500 uppercase text-[11px] tracking-wide">Teléfono</dt>
-                                  <dd className="font-semibold text-slate-800">{p.telefono || 'No registrado'}</dd>
+                                  <dt className="font-medium text-fg-muted">Teléfono</dt>
+                                  <dd className="font-semibold text-fg">{p.telefono || 'No registrado'}</dd>
                                 </div>
                                 <div>
-                                  <dt className="font-semibold text-slate-500 uppercase text-[11px] tracking-wide">Casos abiertos</dt>
-                                  <dd className="font-semibold text-slate-800 tabular-nums">{casosDeLaCompania.filter(c => c.idPaciente === p.id && c.estado === 'ABIERTO').length}</dd>
+                                  <dt className="font-medium text-fg-muted">Casos abiertos</dt>
+                                  <dd className="font-semibold text-fg tabular-nums">{casosDeLaCompania.filter(c => c.idPaciente === p.id && c.estado === 'ABIERTO').length}</dd>
                                 </div>
-                                <div className="col-span-2 border-t pt-2 border-slate-200">
-                                  <dt className="font-semibold text-slate-500 uppercase text-[11px] tracking-wide">Correo</dt>
-                                  <dd className="text-slate-800 truncate">{p.correoElectronico || 'Sin correo (no recibirá recordatorios)'}</dd>
+                                <div className="col-span-2 border-t pt-2 border-border">
+                                  <dt className="font-medium text-fg-muted">Correo</dt>
+                                  <dd className="text-fg truncate">{p.correoElectronico || 'Sin correo (no recibirá recordatorios)'}</dd>
                                 </div>
                               </dl>
-                              <button
-                                type="button"
+                              <Button
                                 onClick={() => { setCasosClienteFiltro(p.id); navigateTo('casos'); }}
-                                className="min-h-10 text-white rounded-xl text-sm font-semibold shadow-xs hover:brightness-110 transition-[filter] flex items-center justify-center gap-1.5"
-                                style={{ backgroundColor: activeCompany.colorPrimario }}
+                                icon={<FolderOpen className="w-4 h-4" aria-hidden="true" />}
                               >
-                                <FolderOpen className="w-4 h-4" aria-hidden="true" />
                                 Ver casos
-                              </button>
+                              </Button>
                             </>
                           ) : (
                           <>
                           {/* Quick details & Clinical summary highlights */}
-                          <dl className="bg-slate-50 rounded-xl p-3 border border-slate-100 text-xs grid grid-cols-2 gap-2 text-slate-700">
+                          <dl className="bg-surface-muted rounded-control p-3.5 text-xs grid grid-cols-2 gap-3 text-fg">
                             <div>
-                              <dt className="font-semibold text-slate-500 uppercase text-[11px] tracking-wide">Gastrointestinal</dt>
-                              <dd className="font-semibold text-slate-800">
+                              <dt className="font-medium text-fg-muted">Gastrointestinal</dt>
+                              <dd className="font-semibold text-fg">
                                 {p.gastritis ? 'Gastritis/Reflujo (+)' : 'Estómago normal'}
                               </dd>
                             </div>
                             <div>
-                              <dt className="font-semibold text-slate-500 uppercase text-[11px] tracking-wide">Cardio / Diabetes</dt>
-                              <dd className="font-semibold text-slate-800">
+                              <dt className="font-medium text-fg-muted">Cardio / Diabetes</dt>
+                              <dd className="font-semibold text-fg">
                                 {p.diabetes ? 'Diabetes (+)' : p.hipertension ? 'Hipertensión (+)' : 'Normal'}
                               </dd>
                             </div>
-                            <div className="col-span-2 border-t pt-2 border-slate-200">
-                              <dt className="font-semibold text-slate-500 uppercase text-[11px] tracking-wide">Lesiones previas</dt>
-                              <dd className="text-slate-800 truncate" title={p.fracturas || p.esguinces}>
+                            <div className="col-span-2 border-t pt-2 border-border">
+                              <dt className="font-medium text-fg-muted">Lesiones previas</dt>
+                              <dd className="text-fg truncate" title={p.fracturas || p.esguinces}>
                                 {p.fracturas || p.esguinces || 'Ninguna reportada'}
                               </dd>
                             </div>
                           </dl>
 
-                          <div className="flex gap-2 text-sm">
-                            <button
-                              type="button"
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              className="flex-1"
                               disabled={!ultimaConsulta}
                               onClick={() => {
                                 if (ultimaConsulta) { setEditingConsultation(ultimaConsulta); setActiveConsultationPatient(p); }
                               }}
                               title={ultimaConsulta ? `Editar la consulta del ${ultimaConsulta.fecha}` : 'Este paciente aún no tiene consultas registradas'}
-                              className="flex-1 min-h-10 rounded-xl font-semibold transition-colors border flex items-center justify-center gap-1.5 bg-white hover:bg-slate-50 text-slate-800 border-slate-200 disabled:opacity-50 disabled:hover:bg-white"
+                              icon={<Edit className="w-4 h-4" aria-hidden="true" />}
                             >
-                              <Edit className="w-4 h-4" aria-hidden="true" />
                               Editar última
-                            </button>
-                            <button
-                              type="button"
+                            </Button>
+                            <Button
+                              className="flex-1"
                               onClick={() => { setEditingConsultation(null); setActiveConsultationPatient(p); }}
-                              className="flex-1 min-h-10 text-white rounded-xl font-semibold shadow-xs hover:brightness-110 transition-[filter] flex items-center justify-center gap-1.5"
-                              style={{ backgroundColor: activeCompany.colorPrimario }}
+                              icon={<Plus className="w-4 h-4" aria-hidden="true" />}
                             >
-                              <Plus className="w-4 h-4" aria-hidden="true" />
                               Nueva consulta
-                            </button>
+                            </Button>
                           </div>
                           </>
                           )}
@@ -1965,143 +1953,134 @@ export default function App() {
               <div className="space-y-6">
 
                 {/* Search */}
-                <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
-                  <div className="relative w-full sm:max-w-md">
+                <Card className="p-4 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
+                  <div className="w-full sm:max-w-md">
                     <label htmlFor="buscar-consultas" className="sr-only">Buscar consultas</label>
-                    <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
-                    <input
+                    <Input
                       id="buscar-consultas"
                       type="search"
                       placeholder="Buscar por paciente o motivo…"
                       value={consultationSearch}
-                      onChange={(e) => setConsultationSearch(e.target.value)}
+                      onChange={(e: any) => setConsultationSearch(e.target.value)}
                       autoComplete="off"
-                      className="w-full min-h-11 bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-10 text-sm text-slate-800 placeholder:text-slate-500 focus:bg-white transition-colors [&::-webkit-search-cancel-button]:hidden"
+                      leadingIcon={<Search />}
+                      className="[&::-webkit-search-cancel-button]:hidden"
+                      trailing={consultationSearch ? (
+                        <IconButton
+                          label="Limpiar búsqueda"
+                          icon={<X className="w-4 h-4" aria-hidden="true" />}
+                          onClick={() => setConsultationSearch('')}
+                        />
+                      ) : undefined}
                     />
-                    {consultationSearch && (
-                      <button
-                        type="button"
-                        onClick={() => setConsultationSearch('')}
-                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100"
-                        aria-label="Limpiar búsqueda"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
                   </div>
-                  <span className="text-xs text-slate-600 font-medium" role="status">
+                  <span className="text-xs text-fg-muted font-medium" role="status">
                     {consultasOrdenadas.length} consulta{consultasOrdenadas.length === 1 ? '' : 's'}
                   </span>
-                </div>
+                </Card>
 
                 {/* Timeline */}
                 <div className="space-y-4">
                   {consultasOrdenadas.length === 0 ? (
-                    <div className="text-center py-12 px-4 bg-white rounded-2xl border border-dashed border-slate-300">
-                      <ClipboardList className="w-8 h-8 text-slate-400 mx-auto mb-2" aria-hidden="true" />
+                    <Card className="border-dashed border-border-strong shadow-none">
                       {consultationSearch ? (
-                        <>
-                          <p className="text-sm font-semibold text-slate-800">Ninguna consulta coincide con “{consultationSearch}”</p>
-                          <button
-                            type="button"
-                            onClick={() => setConsultationSearch('')}
-                            className="mt-4 min-h-10 px-4 rounded-xl text-sm font-semibold bg-slate-100 hover:bg-slate-200 text-slate-800 transition-colors"
-                          >
-                            Limpiar búsqueda
-                          </button>
-                        </>
+                        <EmptyState
+                          icon={<ClipboardList />}
+                          title={`Ninguna consulta coincide con “${consultationSearch}”`}
+                          action={<Button variant="secondary" onClick={() => setConsultationSearch('')}>Limpiar búsqueda</Button>}
+                        />
                       ) : (
-                        <>
-                          <p className="text-sm font-semibold text-slate-800">Aún no hay consultas registradas</p>
-                          <p className="text-sm text-slate-600 mt-1">Inicie una desde la agenda o desde el expediente del paciente.</p>
-                        </>
+                        <EmptyState
+                          icon={<ClipboardList />}
+                          title="Aún no hay consultas registradas"
+                          description="Inicie una desde la agenda o desde el expediente del paciente."
+                        />
                       )}
-                    </div>
+                    </Card>
                   ) : (
                     consultasOrdenadas.map((c) => {
                       const matchedPatient = patients.find(p => p.id === c.idPaciente);
                       const isNut = c.tipo === 'Nutrición';
                       const TipoIcon = isNut ? Apple : Dumbbell;
                       return (
-                        <article key={c.id} className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-xs hover:border-slate-300 transition-colors">
+                        <article key={c.id} className="bg-surface rounded-card border border-border p-4 sm:p-5 shadow-xs hover:border-border-strong hover:shadow-sm transition-[border-color,box-shadow]">
                           <div className="flex flex-wrap justify-between items-start gap-3">
                             <div className="flex gap-3 sm:gap-4 min-w-0">
-                              <span className={`w-14 shrink-0 px-1 py-2 rounded-xl font-bold text-center flex flex-col items-center justify-center gap-1 ${
-                                isNut ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'
+                              <span className={`w-14 shrink-0 px-1 py-2 rounded-control font-semibold text-center flex flex-col items-center justify-center gap-1 ${
+                                isNut ? 'bg-brand-soft text-brand-ink' : 'bg-info-soft text-info'
                               }`}>
                                 <TipoIcon className="w-4 h-4" aria-hidden="true" />
-                                <span className="text-[11px] leading-none">{isNut ? 'Nutrición' : 'Fisio'}</span>
+                                <span className="text-caption leading-none">{isNut ? 'Nutrición' : 'Fisio'}</span>
                               </span>
 
                               <div className="min-w-0">
-                                <span className="text-xs text-slate-600 font-mono block mb-0.5">Folio #{c.id.toString().slice(-6)} · {c.fecha}</span>
-                                <h3 className="font-bold text-slate-900 text-sm">
+                                <span className="text-xs text-fg-muted block mb-0.5">Folio #{c.id.toString().slice(-6)} · {c.fecha}</span>
+                                <h3 className="font-semibold text-fg text-body">
                                   {matchedPatient ? matchedPatient.nombreCompleto : 'Paciente desconocido'}
                                 </h3>
-                                <p className="text-sm text-slate-700 mt-0.5">Motivo: {c.motivo}</p>
+                                <p className="text-body text-fg-muted mt-0.5">Motivo: {c.motivo}</p>
                               </div>
                             </div>
 
                             <div className="flex gap-1.5 w-full sm:w-auto">
-                              <button
-                                type="button"
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="flex-1 sm:flex-none"
                                 onClick={() => setSelectedReportConsultation(c)}
-                                className="flex-1 sm:flex-none min-h-10 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-sm px-3.5 rounded-xl flex items-center justify-center gap-1.5 border border-slate-200 transition-colors"
+                                icon={<Printer className="w-4 h-4" aria-hidden="true" />}
                               >
-                                <Printer className="w-4 h-4" aria-hidden="true" />
                                 Ver reporte
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteConsultation(c.id)}
-                                className="min-h-10 min-w-10 flex items-center justify-center text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors"
-                                aria-label={`Eliminar consulta de ${matchedPatient?.nombreCompleto ?? 'paciente'} del ${c.fecha}`}
+                              </Button>
+                              <IconButton
+                                label={`Eliminar consulta de ${matchedPatient?.nombreCompleto ?? 'paciente'} del ${c.fecha}`}
                                 title="Eliminar consulta"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                                icon={<Trash2 className="w-4 h-4" aria-hidden="true" />}
+                                className="hover:bg-danger-soft hover:text-danger"
+                                onClick={() => handleDeleteConsultation(c.id)}
+                              />
                             </div>
                           </div>
 
                           {/* Quick parameters readout */}
                           {isNut && c.antropometria && (
-                            <dl className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 text-xs bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs bg-surface-muted p-3.5 rounded-control">
                               <div>
-                                <dt className="text-slate-600 font-semibold">Peso</dt>
-                                <dd className="font-bold text-slate-900 tabular-nums">{c.antropometria.peso} kg</dd>
+                                <dt className="text-fg-muted font-medium">Peso</dt>
+                                <dd className="font-semibold text-fg tabular-nums">{c.antropometria.peso} kg</dd>
                               </div>
                               <div>
-                                <dt className="text-slate-600 font-semibold">IMC</dt>
-                                <dd className="font-bold text-slate-900 tabular-nums">{c.antropometria.imc}</dd>
+                                <dt className="text-fg-muted font-medium">IMC</dt>
+                                <dd className="font-semibold text-fg tabular-nums">{c.antropometria.imc}</dd>
                               </div>
                               <div>
-                                <dt className="text-slate-600 font-semibold">Grasa</dt>
-                                <dd className="font-bold text-slate-900 tabular-nums">{c.antropometria.grasaCorporal}%</dd>
+                                <dt className="text-fg-muted font-medium">Grasa</dt>
+                                <dd className="font-semibold text-fg tabular-nums">{c.antropometria.grasaCorporal}%</dd>
                               </div>
                               <div>
-                                <dt className="text-slate-600 font-semibold">Masa muscular</dt>
-                                <dd className="font-bold text-slate-900 tabular-nums">{c.antropometria.masaMuscular} kg</dd>
+                                <dt className="text-fg-muted font-medium">Masa muscular</dt>
+                                <dd className="font-semibold text-fg tabular-nums">{c.antropometria.masaMuscular} kg</dd>
                               </div>
                             </dl>
                           )}
 
                           {!isNut && c.fisioterapia && (
-                            <dl className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 text-xs bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs bg-surface-muted p-3.5 rounded-control">
                               <div>
-                                <dt className="text-slate-600 font-semibold">Zona de dolor</dt>
-                                <dd className="font-bold text-slate-900 uppercase">{c.fisioterapia.zonaDolor}</dd>
+                                <dt className="text-fg-muted font-medium">Zona de dolor</dt>
+                                <dd className="font-semibold text-fg uppercase">{c.fisioterapia.zonaDolor}</dd>
                               </div>
                               <div>
-                                <dt className="text-slate-600 font-semibold">Intensidad EVA</dt>
-                                <dd className="font-extrabold text-rose-700 tabular-nums">{c.fisioterapia.evaDolor}/10</dd>
+                                <dt className="text-fg-muted font-medium">Intensidad EVA</dt>
+                                <dd className="font-semibold text-danger tabular-nums">{c.fisioterapia.evaDolor}/10</dd>
                               </div>
                               <div>
-                                <dt className="text-slate-600 font-semibold">ROM</dt>
-                                <dd className="font-bold text-slate-900 truncate">{c.fisioterapia.romMedido || 'S/D'}</dd>
+                                <dt className="text-fg-muted font-medium">ROM</dt>
+                                <dd className="font-semibold text-fg truncate">{c.fisioterapia.romMedido || 'S/D'}</dd>
                               </div>
                               <div>
-                                <dt className="text-slate-600 font-semibold">Daniels</dt>
-                                <dd className="font-bold text-slate-900">{c.fisioterapia.fuerzaDaniels || 'S/D'}</dd>
+                                <dt className="text-fg-muted font-medium">Daniels</dt>
+                                <dd className="font-semibold text-fg">{c.fisioterapia.fuerzaDaniels || 'S/D'}</dd>
                               </div>
                             </dl>
                           )}
