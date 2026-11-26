@@ -6,6 +6,10 @@ import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 import { Plus, Check, Settings, Image as ImageIcon, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X, Loader2 } from 'lucide-react';
 import { notify, confirmar } from './ui/Feedback';
 import { baseDesdePrecioConIva, formatearColones, ivaEfectivo, precioConIva } from '../utils/precios';
+import { Badge } from './ui';
+
+// MySQL devuelve tinyint (0/1) y en memoria boolean; sin dato = reserva automática activa.
+const reservaActiva = (v: boolean | number | null | undefined): boolean => (v == null ? true : !!v);
 
 // Contadores de consecutivo que el Administrador puede corregir (ver POST /api/hacienda-config).
 const CAMPOS_CONSECUTIVO = [
@@ -153,6 +157,7 @@ export default function CompanySettings({
   const [servicioStockMinimo, setServicioStockMinimo] = useState('');
   const [servicioCostoUnitario, setServicioCostoUnitario] = useState('');
   const [servicioCodigoBarras, setServicioCodigoBarras] = useState('');
+  const [servicioModalidad, setServicioModalidad] = useState<'CONSULTORIO' | 'DOMICILIO' | 'AMBOS'>('AMBOS');
   const [cabysResultados, setCabysResultados] = useState<Array<{ codigo: string; descripcion: string }>>([]);
   const [buscandoCabys, setBuscandoCabys] = useState(false);
   const [cargandoServiciosDefecto, setCargandoServiciosDefecto] = useState(false);
@@ -190,6 +195,11 @@ export default function CompanySettings({
   const [editPerfil, setEditPerfil] = useState<PerfilCompania>(currentCompany.perfilCompania || 'Ambas');
   const [editRequiereConfirmacion, setEditRequiereConfirmacion] = useState(currentCompany.requiereConfirmacionCitas || false);
   const [editRegimenSimplificado, setEditRegimenSimplificado] = useState(currentCompany.regimenSimplificado || false);
+  // MySQL devuelve tinyint (0/1): sin dato = reserva automática activa.
+  const [editReservaAutoConsultorio, setEditReservaAutoConsultorio] = useState(reservaActiva(currentCompany.reservaAutoConsultorio));
+  const [editReservaAutoDomicilio, setEditReservaAutoDomicilio] = useState(reservaActiva(currentCompany.reservaAutoDomicilio));
+  const [editWhatsappReservas, setEditWhatsappReservas] = useState(currentCompany.whatsappReservas || '');
+  const [editMensajeWhatsapp, setEditMensajeWhatsapp] = useState(currentCompany.mensajeWhatsappReservas || '');
   const [editPlazoClientes, setEditPlazoClientes] = useState(String(currentCompany.plazoCreditoClientesDias ?? ''));
   const [editPlazoProveedores, setEditPlazoProveedores] = useState(String(currentCompany.plazoCreditoProveedoresDias ?? ''));
   const [editProvincia, setEditProvincia] = useState(currentCompany.provincia || '');
@@ -450,6 +460,10 @@ export default function CompanySettings({
       setEditPerfil(comp.perfilCompania || 'Ambas');
       setEditRequiereConfirmacion(comp.requiereConfirmacionCitas || false);
       setEditRegimenSimplificado(comp.regimenSimplificado || false);
+      setEditReservaAutoConsultorio(reservaActiva(comp.reservaAutoConsultorio));
+      setEditReservaAutoDomicilio(reservaActiva(comp.reservaAutoDomicilio));
+      setEditWhatsappReservas(comp.whatsappReservas || '');
+      setEditMensajeWhatsapp(comp.mensajeWhatsappReservas || '');
       setEditPlazoClientes(String(comp.plazoCreditoClientesDias ?? ''));
       setEditPlazoProveedores(String(comp.plazoCreditoProveedoresDias ?? ''));
       setEditProvincia(comp.provincia || '');
@@ -493,8 +507,17 @@ export default function CompanySettings({
       notify.error('Los plazos de crédito deben ser un número entero de días mayor que cero.');
       return;
     }
+    const whatsappLimpio = editWhatsappReservas.replace(/\D/g, '');
+    if (whatsappLimpio !== '' && (whatsappLimpio.length < 8 || whatsappLimpio.length > 15)) {
+      notify.error('El número de WhatsApp debe tener entre 8 y 15 dígitos.');
+      return;
+    }
     onUpdateCompany({
       ...currentCompany,
+      reservaAutoConsultorio: editReservaAutoConsultorio,
+      reservaAutoDomicilio: editReservaAutoDomicilio,
+      whatsappReservas: editWhatsappReservas.trim() === '' ? null : editWhatsappReservas.trim(),
+      mensajeWhatsappReservas: editMensajeWhatsapp.trim() === '' ? null : editMensajeWhatsapp.trim(),
       nombreComercial: editName,
       razonSocial: editRazon,
       identificacion: editIdent,
@@ -674,6 +697,7 @@ export default function CompanySettings({
     setServicioStockMinimo('');
     setServicioCostoUnitario('');
     setServicioCodigoBarras('');
+    setServicioModalidad('AMBOS');
     setCabysResultados([]);
     setIsServicioFormOpen(true);
   };
@@ -693,6 +717,7 @@ export default function CompanySettings({
     setServicioStockMinimo(s.stockMinimo != null ? s.stockMinimo.toString() : '');
     setServicioCostoUnitario(s.costoUnitario != null ? s.costoUnitario.toString() : '');
     setServicioCodigoBarras(s.codigoBarras || '');
+    setServicioModalidad(s.modalidad || 'AMBOS');
     setCabysResultados([]);
     setIsServicioFormOpen(true);
   };
@@ -750,6 +775,7 @@ export default function CompanySettings({
       codigoCabys: servicioCabys.trim() || null,
       unidadMedida: servicioUnidadMedida,
       activo: servicioExistente ? servicioExistente.activo : true,
+      modalidad: esArticulo ? 'AMBOS' : servicioModalidad,
       // El servidor ignora `stock` al editar un artículo ya existente (solo Ajustar Stock puede
       // cambiarlo) — se manda de todas formas para que la creación de uno nuevo tenga su
       // existencia inicial.
@@ -1559,6 +1585,24 @@ export default function CompanySettings({
                   />
                 </div>
               </div>
+              {servicioTipo === 'SERVICIO' && (
+                <div role="group" aria-labelledby="companyset-modalidad-label">
+                  <span id="companyset-modalidad-label" className="block text-slate-600 font-medium mb-1">Disponible en</span>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([['CONSULTORIO', 'Consultorio'], ['DOMICILIO', 'A domicilio'], ['AMBOS', 'Ambos']] as const).map(([valor, etiqueta]) => (
+                      <button
+                        key={valor}
+                        type="button"
+                        onClick={() => setServicioModalidad(valor)}
+                        aria-pressed={servicioModalidad === valor}
+                        className={`py-1.5 rounded-lg text-xs font-bold border-2 ${servicioModalidad === valor ? 'border-slate-800 bg-slate-50' : 'border-slate-200 text-slate-500'}`}
+                      >
+                        {etiqueta}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               {servicioTipo === 'ARTICULO' && (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1 border-t border-slate-100">
                   <div>
@@ -1702,6 +1746,11 @@ export default function CompanySettings({
                         sin IVA {formatearColones(Number(s.precio))} · IVA {ivaEfectivo(s, currentCompany.ivaPorDefecto)}%{s.porcentajeIva == null ? ' (por defecto)' : ''}
                       </span>
                       <div className="flex items-center gap-1.5 mt-1">
+                        {!esArticulo && s.modalidad && s.modalidad !== 'AMBOS' ? (
+                          <Badge tone="info">{s.modalidad === 'DOMICILIO' ? 'A domicilio' : 'Consultorio'}</Badge>
+                        ) : !esArticulo && (
+                          <Badge tone="neutral">Consultorio y domicilio</Badge>
+                        )}
                         {!s.codigoCabys && (
                           <span className="text-[11px] font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full inline-block">Sin código CABYS — no se puede facturar</span>
                         )}
@@ -2112,6 +2161,64 @@ export default function CompanySettings({
               </label>
             </div>
           </div>
+
+          <fieldset className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+            <legend className="px-1 text-[11px] font-bold text-slate-700 uppercase">Reservas en línea por tipo de visita</legend>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="flex items-center gap-2 text-slate-600 cursor-pointer min-h-10">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={editReservaAutoConsultorio}
+                  onChange={(e) => setEditReservaAutoConsultorio(e.target.checked)}
+                  className="w-3.5 h-3.5"
+                />
+                Reserva automática en consultorio
+              </label>
+              <label className="flex items-center gap-2 text-slate-600 cursor-pointer min-h-10">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  checked={editReservaAutoDomicilio}
+                  onChange={(e) => setEditReservaAutoDomicilio(e.target.checked)}
+                  className="w-3.5 h-3.5"
+                />
+                Reserva automática a domicilio
+              </label>
+            </div>
+            <p className="text-[11px] text-slate-500">Si lo apaga, la página pública mostrará un botón de WhatsApp para solicitar espacio en lugar de agendar automáticamente.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="companyset-whatsapp-reservas" className="block text-slate-600 mb-1">WhatsApp para solicitudes</label>
+                <input id="companyset-whatsapp-reservas"
+                  type="tel"
+                  inputMode="tel"
+                  value={editWhatsappReservas}
+                  onChange={(e) => setEditWhatsappReservas(e.target.value)}
+                  placeholder="8888-8888"
+                  className="w-full min-h-10 bg-white border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500"
+                />
+                <p className="text-[11px] text-slate-500 mt-0.5">Un número de 8 dígitos se toma como de Costa Rica (+506).</p>
+              </div>
+              <div className="sm:col-span-2">
+                <label htmlFor="companyset-mensaje-whatsapp" className="block text-slate-600 mb-1">Mensaje predeterminado (opcional)</label>
+                <textarea id="companyset-mensaje-whatsapp"
+                  rows={3}
+                  maxLength={500}
+                  value={editMensajeWhatsapp}
+                  onChange={(e) => setEditMensajeWhatsapp(e.target.value)}
+                  placeholder="Si lo deja vacío se genera un mensaje con el tipo de cita y el servicio elegido."
+                  className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 focus:ring-1 focus:ring-teal-500 resize-y"
+                />
+              </div>
+            </div>
+            {(!editReservaAutoConsultorio || !editReservaAutoDomicilio) && editWhatsappReservas.trim() === '' && (
+              <p role="alert" className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 flex items-start gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
+                Hay una reserva automática apagada y no hay número de WhatsApp: los pacientes verán solo "Comuníquese con la clínica para agendar".
+              </p>
+            )}
+          </fieldset>
 
           <fieldset className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
             <legend className="px-1 text-[11px] font-bold text-slate-700 uppercase">Parámetros contables</legend>

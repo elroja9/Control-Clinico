@@ -4,6 +4,7 @@ import FacturarModal from './FacturarModal';
 import { notify, confirmar } from './ui/Feedback';
 import { useDialog } from '../hooks/useDialog';
 import { terminoPersona } from '../utils/terminoPersona';
+import { servicioCompatible } from '../utils/modalidad';
 import { formatearColones, ivaEfectivo, precioConIva } from '../utils/precios';
 import {
   Calendar as CalendarIcon,
@@ -169,6 +170,10 @@ export default function AgendaCalendar({
 
   // Servicios activos de la empresa, para elegir en el formulario de cita y autocompletar duración
   const companyServicios = servicios.filter(s => s.idCompania === activeCompanyId && s.activo);
+  // El selector solo ofrece servicios compatibles con el tipo de visita de la cita (las citas nuevas son en consultorio);
+  // se conserva el ya elegido para no dejar el campo en blanco al editar una cita antigua.
+  const tipoVisitaForm: 'CONSULTORIO' | 'DOMICILIO' = selectedCita?.tipoVisita === 'DOMICILIO' ? 'DOMICILIO' : 'CONSULTORIO';
+  const serviciosParaForm = companyServicios.filter(s => servicioCompatible(s.modalidad, tipoVisitaForm) || s.id.toString() === formServicioId);
 
   // Active SMTP Config
   const activeSmtp = smtpConfigs.find(s => s.idCompania === activeCompanyId) || {
@@ -1210,7 +1215,7 @@ export default function AgendaCalendar({
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
                   >
                     <option value="">-- Sin servicio específico (duración manual) --</option>
-                    {companyServicios.map(s => (
+                    {serviciosParaForm.map(s => (
                       <option key={s.id} value={s.id}>{s.nombre} ({s.duracionMinutos} min) · {formatearColones(precioConIva(s.precio, ivaEfectivo(s, ivaPorDefecto)))} IVA incl.</option>
                     ))}
                   </select>

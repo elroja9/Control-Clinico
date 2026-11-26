@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Building, User as UserIcon, Calendar, MapPin, Check, ArrowLeft, ArrowRight, Loader2, AlertCircle, ListChecks, Clock, Navigation } from 'lucide-react';
+import { Building, User as UserIcon, Calendar, MapPin, Check, ArrowLeft, ArrowRight, Loader2, AlertCircle, ListChecks, Clock, Navigation, MessageCircle } from 'lucide-react';
 import { loadGoogleMapsScript } from '../utils/loadGoogleMaps';
+import { servicioCompatible } from '../utils/modalidad';
+import { enlaceWhatsapp } from '../utils/whatsapp';
 import { formatearColones } from '../utils/precios';
 
 interface ClinicaPublica {
@@ -10,6 +12,10 @@ interface ClinicaPublica {
   logoUrl: string;
   colorPrimario: string;
   colorSidebar: string;
+  reservaAutoConsultorio?: boolean;
+  reservaAutoDomicilio?: boolean;
+  whatsappReservas?: string | null;
+  mensajeWhatsappReservas?: string | null;
 }
 
 interface ProfesionalPublico {
@@ -25,6 +31,7 @@ interface ServicioPublico {
   precio: number;
   precioConIva: number;
   duracionMinutos: number;
+  modalidad?: 'CONSULTORIO' | 'DOMICILIO' | 'AMBOS';
 }
 
 // Pasos 1=clínica, 2=profesional, 3=servicio (se salta si la empresa no tiene
@@ -157,13 +164,25 @@ export default function PublicBooking() {
 
   const cargarHorarios = () => {
     if (!profesionalId) return;
+    // Con reserva automática apagada no hay horarios que consultar (el servidor respondería 403).
+    const clinicaActual = clinicas.find(c => c.id === clinicaId);
+    const auto = tipoVisita === 'DOMICILIO' ? clinicaActual?.reservaAutoDomicilio !== false : clinicaActual?.reservaAutoConsultorio !== false;
+    if (!auto) {
+      setHorariosDisponibles([]);
+      setHoraSeleccionada('');
+      return;
+    }
     setCargandoHorarios(true);
     setHoraSeleccionada('');
     const servicioParam = servicioId ? `&idServicio=${servicioId}` : '';
     fetch(`/api/public/disponibilidad?idUsuario=${profesionalId}&fecha=${fecha}&tipoVisita=${tipoVisita}${servicioParam}`)
-      .then(res => res.json())
+      .then(async res => {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'No se pudieron cargar los horarios disponibles.');
+        return data;
+      })
       .then(data => setHorariosDisponibles(data))
-      .catch(() => setError('No se pudieron cargar los horarios disponibles.'))
+      .catch((err) => { setHorariosDisponibles([]); setError(err.message || 'No se pudieron cargar los horarios disponibles.'); })
       .finally(() => setCargandoHorarios(false));
   };
 
@@ -228,6 +247,46 @@ export default function PublicBooking() {
 
   const colorPrimario = clinica?.colorPrimario || '#0d9488';
   const servicio = servicios.find(s => s.id === servicioId);
+
+  // Solo se ofrecen los servicios compatibles con el tipo de visita elegido.
+  const serviciosVisibles = servicios.filter(s => servicioCompatible(s.modalidad, tipoVisita));
+
+  // Cambiar el tipo de visita limpia el servicio elegido si ya no es compatible.
+  const cambiarTipoVisita = (nuevo: 'CONSULTORIO' | 'DOMICILIO') => {
+    setTipoVisita(nuevo);
+    const elegido = servicios.find(s => s.id === servicioId);
+    if (elegido && !servicioCompatible(elegido.modalidad, nuevo)) setServicioId(null);
+  };
+
+  // Reserva automática apagada para este tipo de visita => se pide el espacio por WhatsApp.
+  const reservaAutomatica = tipoVisita === 'DOMICILIO' ? clinica?.reservaAutoDomicilio !== false : clinica?.reservaAutoConsultorio !== false;
+  const mensajeSolicitud = clinica?.mensajeWhatsappReservas
+    || `Hola, quisiera solicitar un espacio para una cita ${tipoVisita === 'DOMICILIO' ? 'a domicilio' : 'en consultorio'}${servicio ? ` de ${servicio.nombre}` : ''}.${nombreCompleto.trim() ? ` Mi nombre es ${nombreCompleto.trim()}.` : ''}`;
+  const enlaceSolicitud = enlaceWhatsapp(clinica?.whatsappReservas, mensajeSolicitud);
+
+  const selectorTipoVisita = (
+    <div className="grid grid-cols-2 gap-2" role="group" aria-label="Tipo de visita">
+      <button
+        type="button"
+        onClick={() => cambiarTipoVisita('CONSULTORIO')}
+        aria-pressed={tipoVisita === 'CONSULTORIO'}
+        className={`min-h-12 p-3 rounded-xl border-2 text-sm font-bold transition-colors ${tipoVisita === 'CONSULTORIO' ? 'border-slate-800 bg-slate-50 text-slate-900' : 'border-slate-200 text-slate-700 hover:border-slate-400'}`}
+      >
+        En consultorio
+      </button>
+      <button
+        type="button"
+        onClick={() => cambiarTipoVisita('DOMICILIO')}
+        // Si la reserva a domicilio es por WhatsApp, no se exige que el profesional tenga ubicación configurada.
+        disabled={clinica?.reservaAutoDomicilio !== false && !profesional?.aceptaDomicilio}
+        aria-pressed={tipoVisita === 'DOMICILIO'}
+        title={clinica?.reservaAutoDomicilio !== false && !profesional?.aceptaDomicilio ? 'Este profesional no atiende a domicilio' : undefined}
+        className={`min-h-12 p-3 rounded-xl border-2 text-sm font-bold transition-colors disabled:opacity-40 ${tipoVisita === 'DOMICILIO' ? 'border-slate-800 bg-slate-50 text-slate-900' : 'border-slate-200 text-slate-700 hover:border-slate-400'}`}
+      >
+        A domicilio
+      </button>
+    </div>
+  );
 
   // Pasos que realmente ve el paciente (el 3 y el 5 son condicionales), para mostrar "Paso X de Y"
   const pasosVisibles: Paso[] = [1, 2, ...(servicios.length > 0 ? [3 as Paso] : []), 4, ...(tipoVisita === 'DOMICILIO' ? [5 as Paso] : []), 6];
@@ -352,7 +411,13 @@ export default function PublicBooking() {
           <section className="space-y-3" aria-labelledby="paso-titulo">
             <button type="button" onClick={() => irAPaso(2)} className={backBtn}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> Cambiar profesional</button>
             <h2 id="paso-titulo" className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><ListChecks className="w-4 h-4" aria-hidden="true" /> Escoja un servicio</h2>
-            {servicios.map(s => (
+            {selectorTipoVisita}
+            {serviciosVisibles.length === 0 && (
+              <p className="text-slate-600 text-sm text-center py-4 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+                No hay servicios disponibles para este tipo de visita.
+              </p>
+            )}
+            {serviciosVisibles.map(s => (
               <button
                 key={s.id}
                 type="button"
@@ -378,27 +443,40 @@ export default function PublicBooking() {
             <button type="button" onClick={() => irAPaso(servicios.length > 0 ? 3 : 2)} className={backBtn}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> {servicios.length > 0 ? 'Cambiar servicio' : 'Cambiar profesional'}</button>
             <h2 id="paso-titulo" className="text-sm font-bold text-slate-800 flex items-center gap-1.5"><Calendar className="w-4 h-4" aria-hidden="true" /> Tipo de visita y horario</h2>
 
-            <div className="grid grid-cols-2 gap-2" role="group" aria-label="Tipo de visita">
-              <button
-                type="button"
-                onClick={() => setTipoVisita('CONSULTORIO')}
-                aria-pressed={tipoVisita === 'CONSULTORIO'}
-                className={`min-h-12 p-3 rounded-xl border-2 text-sm font-bold transition-colors ${tipoVisita === 'CONSULTORIO' ? 'border-slate-800 bg-slate-50 text-slate-900' : 'border-slate-200 text-slate-700 hover:border-slate-400'}`}
-              >
-                En consultorio
-              </button>
-              <button
-                type="button"
-                onClick={() => setTipoVisita('DOMICILIO')}
-                disabled={!profesional?.aceptaDomicilio}
-                aria-pressed={tipoVisita === 'DOMICILIO'}
-                title={!profesional?.aceptaDomicilio ? 'Este profesional no atiende a domicilio' : undefined}
-                className={`min-h-12 p-3 rounded-xl border-2 text-sm font-bold transition-colors disabled:opacity-40 ${tipoVisita === 'DOMICILIO' ? 'border-slate-800 bg-slate-50 text-slate-900' : 'border-slate-200 text-slate-700 hover:border-slate-400'}`}
-              >
-                A domicilio
-              </button>
-            </div>
+            {selectorTipoVisita}
 
+            {servicios.length > 0 && !servicioId && (
+              <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                No hay un servicio elegido.{' '}
+                <button type="button" onClick={() => irAPaso(3)} className="font-semibold underline">Elegir servicio</button>
+              </p>
+            )}
+
+            {!reservaAutomatica ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 space-y-3 text-center" role="region" aria-labelledby="whatsapp-titulo">
+                <h3 id="whatsapp-titulo" className="text-sm font-bold text-emerald-900 flex items-center justify-center gap-1.5">
+                  <MessageCircle className="w-4 h-4" aria-hidden="true" /> Solicite su espacio por WhatsApp
+                </h3>
+                {enlaceSolicitud ? (
+                  <>
+                    <p className="text-sm text-emerald-900">
+                      Para este tipo de cita la clínica coordina el horario por mensaje. Escríbanos y le confirmaremos un espacio.
+                    </p>
+                    <a
+                      href={enlaceSolicitud}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full min-h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl inline-flex items-center justify-center gap-2 transition-colors shadow-sm"
+                    >
+                      <MessageCircle className="w-4 h-4" aria-hidden="true" /> Solicitar por WhatsApp
+                    </a>
+                  </>
+                ) : (
+                  <p className="text-sm text-emerald-900">Comuníquese con la clínica para agendar</p>
+                )}
+              </div>
+            ) : (
+            <>
             <div>
               <label htmlFor="reserva-fecha" className={labelClass}>Fecha</label>
               <input
@@ -447,6 +525,8 @@ export default function PublicBooking() {
             >
               Continuar <ArrowRight className="w-4 h-4" aria-hidden="true" />
             </button>
+            </>
+            )}
           </section>
         )}
 

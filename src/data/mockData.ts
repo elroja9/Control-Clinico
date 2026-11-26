@@ -58,6 +58,12 @@ export interface Company {
   horarioAtencion: HorarioAtencion;
   horarioDomicilio?: HorarioDomicilio | null; // null o sin tramos = usar horarioAtencion para citas a domicilio
   requiereConfirmacionCitas: boolean; // si es true, las citas creadas por el cliente quedan PROGRAMADA (pendiente de confirmar) en vez de CONFIRMADA
+  // Reservas en línea por tipo de visita. undefined/true = reserva automática (comportamiento de siempre);
+  // false = la página pública no agenda y ofrece solicitar el espacio por WhatsApp.
+  reservaAutoConsultorio?: boolean;
+  reservaAutoDomicilio?: boolean;
+  whatsappReservas?: string | null; // solo dígitos con código de país
+  mensajeWhatsappReservas?: string | null; // máx. 500 caracteres
   plazoCreditoClientesDias?: number; // plazo por defecto de las ventas a crédito (editable en cada factura)
   plazoCreditoProveedoresDias?: number; // plazo por defecto de las compras a crédito en CxP
   regimenSimplificado: boolean; // Régimen de Tributación Simplificada: no declara IVA por D-104 (paga cuota fija) — los reportes fiscales muestran esto solo como referencia informativa
@@ -828,6 +834,7 @@ export interface Servicio {
   codigoCabys: string | null; // código CABYS de 13 dígitos — obligatorio para poder facturar este servicio
   unidadMedida: UnidadMedidaServicio;
   activo: boolean;
+  modalidad?: 'CONSULTORIO' | 'DOMICILIO' | 'AMBOS'; // tipo de visita en que se ofrece; undefined = 'AMBOS'
   // Solo ARTICULO:
   stock: number | null; // existencias actuales; null para SERVICIO (no aplica)
   stockMinimo: number | null; // punto de reorden — null desactiva la alerta de faltante

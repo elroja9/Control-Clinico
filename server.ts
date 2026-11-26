@@ -38,6 +38,8 @@ import type { AmbienteHacienda, EstadoHaciendaResultado } from "./server/haciend
 import { fechaCR, sumarDiasCR } from "./src/utils/fechaCR";
 import { errorIdentificacion } from "./src/utils/identificacion";
 import { ivaEfectivo, precioConIva } from "./src/utils/precios";
+import { normalizarWhatsapp, normalizarMensajeWhatsapp, WhatsappInvalidoError } from "./src/utils/whatsapp";
+import { normalizarModalidad, servicioCompatible } from "./src/utils/modalidad";
 import { serviciosDefectoParaPerfil } from "./server/serviciosDefecto";
 import { parsearFacturaProveedorXML } from "./server/xmlProveedorParser";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
@@ -1513,13 +1515,31 @@ async function startServer() {
         throw err;
       }
 
+      // Reservas en línea por tipo de visita: undefined = no viene (se conserva lo guardado / el predeterminado).
+      const flagReserva = (v: any) => (v === undefined || v === null ? null : (v ? 1 : 0));
+      const reservaConsultorio = flagReserva(c.reservaAutoConsultorio);
+      const reservaDomicilio = flagReserva(c.reservaAutoDomicilio);
+      const whatsappProvisto = c.whatsappReservas !== undefined;
+      const mensajeProvisto = c.mensajeWhatsappReservas !== undefined;
+      let whatsappNormalizado: string | null = null;
+      try {
+        whatsappNormalizado = normalizarWhatsapp(c.whatsappReservas);
+      } catch (err: any) {
+        if (err instanceof WhatsappInvalidoError) return res.status(400).json({ error: err.message });
+        throw err;
+      }
+      const mensajeWhatsapp = normalizarMensajeWhatsapp(c.mensajeWhatsappReservas);
+      if (whatsappProvisto) c.whatsappReservas = whatsappNormalizado;
+      if (mensajeProvisto) c.mensajeWhatsappReservas = mensajeWhatsapp;
+
       if (dbConnected && pool) {
         if (c.id) {
           const [exists] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [c.id]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE companias SET nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, regimenSimplificado = ?, plazoCreditoClientesDias = COALESCE(?, plazoCreditoClientesDias), plazoCreditoProveedoresDias = COALESCE(?, plazoCreditoProveedoresDias) WHERE id_compania = ?",
+              "UPDATE companias SET reservaAutoConsultorio = COALESCE(?, reservaAutoConsultorio), reservaAutoDomicilio = COALESCE(?, reservaAutoDomicilio), whatsappReservas = IF(?, ?, whatsappReservas), mensajeWhatsappReservas = IF(?, ?, mensajeWhatsappReservas), nombreComercial = ?, razonSocial = ?, tipoIdentificacion = ?, identificacion = ?, correoEmisor = ?, ivaPorDefecto = ?, colorPrimario = ?, colorSidebar = ?, logoUrl = ?, actividadEconomica = ?, perfilCompania = ?, estadoSaas = ?, maxUsuarios = ?, montoMensual = ?, proximoVencimiento = ?, requiereConfirmacionCitas = ?, provincia = ?, canton = ?, distrito = ?, otrasSenas = ?, regimenSimplificado = ?, plazoCreditoClientesDias = COALESCE(?, plazoCreditoClientesDias), plazoCreditoProveedoresDias = COALESCE(?, plazoCreditoProveedoresDias) WHERE id_compania = ?",
               [
+                reservaConsultorio, reservaDomicilio, whatsappProvisto ? 1 : 0, whatsappNormalizado, mensajeProvisto ? 1 : 0, mensajeWhatsapp,
                 c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
                 c.estadoSaas, c.maxUsuarios, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, c.requiereConfirmacionCitas ? 1 : 0,
                 c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0,
@@ -1533,12 +1553,13 @@ async function startServer() {
           }
         }
         const [result] = await pool.query(
-          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, requiereConfirmacionCitas, provincia, canton, distrito, otrasSenas, regimenSimplificado, plazoCreditoClientesDias, plazoCreditoProveedoresDias) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, DEFAULT(plazoCreditoClientesDias)), COALESCE(?, DEFAULT(plazoCreditoProveedoresDias)))",
+          "INSERT INTO companias (nombreComercial, razonSocial, tipoIdentificacion, identificacion, correoEmisor, ivaPorDefecto, colorPrimario, colorSidebar, logoUrl, actividadEconomica, perfilCompania, estadoSaas, maxUsuarios, montoMensual, proximoVencimiento, requiereConfirmacionCitas, provincia, canton, distrito, otrasSenas, regimenSimplificado, plazoCreditoClientesDias, plazoCreditoProveedoresDias, reservaAutoConsultorio, reservaAutoDomicilio, whatsappReservas, mensajeWhatsappReservas) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, DEFAULT(plazoCreditoClientesDias)), COALESCE(?, DEFAULT(plazoCreditoProveedoresDias)), COALESCE(?, 1), COALESCE(?, 1), ?, ?)",
           [
             c.nombreComercial, c.razonSocial, c.tipoIdentificacion, c.identificacion, c.correoEmisor, parseFloat(c.ivaPorDefecto), c.colorPrimario, c.colorSidebar, c.logoUrl, c.actividadEconomica, c.perfilCompania,
             c.estadoSaas || 'PENDIENTE', c.maxUsuarios || 5, c.montoMensual != null ? c.montoMensual : null, c.proximoVencimiento || null, c.requiereConfirmacionCitas ? 1 : 0,
             c.provincia || null, c.canton || null, c.distrito || null, c.otrasSenas || null, c.regimenSimplificado ? 1 : 0,
-            plazoClientes, plazoProveedores
+            plazoClientes, plazoProveedores,
+            reservaConsultorio, reservaDomicilio, whatsappNormalizado, mensajeWhatsapp
           ]
         );
         c.id = (result as any).insertId;
@@ -2693,6 +2714,8 @@ async function startServer() {
       const stockMinimo = tipo === 'ARTICULO' && s.stockMinimo != null && String(s.stockMinimo).trim() !== '' ? parseInt(s.stockMinimo) : null;
       const costoUnitario = tipo === 'ARTICULO' && s.costoUnitario != null && String(s.costoUnitario).trim() !== '' ? parseFloat(s.costoUnitario) : null;
       const codigoBarras = tipo === 'ARTICULO' ? (s.codigoBarras || null) : null;
+      // La modalidad solo aplica a SERVICIO; un ARTICULO siempre queda en 'AMBOS'. Valor ausente/ inválido => 'AMBOS'.
+      const modalidad = tipo === 'SERVICIO' ? normalizarModalidad(s.modalidad) : 'AMBOS';
 
       if (dbConnected && pool) {
         if (s.id) {
@@ -2703,8 +2726,8 @@ async function startServer() {
           const [exists] = await pool.query("SELECT id_servicio FROM servicios WHERE id_servicio = ? AND idCompania = ?", [s.id, parseInt(s.idCompania)]);
           if ((exists as any).length > 0) {
             await pool.query(
-              "UPDATE servicios SET idCompania = ?, nombre = ?, precio = ?, porcentajeIva = ?, duracionMinutos = ?, codigoCabys = ?, unidadMedida = ?, activo = ?, tipo = ?, stockMinimo = ?, costoUnitario = ?, codigoBarras = ? WHERE id_servicio = ?",
-              [parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 0, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo ? 1 : 0, tipo, stockMinimo, costoUnitario, codigoBarras, s.id]
+              "UPDATE servicios SET idCompania = ?, nombre = ?, precio = ?, porcentajeIva = ?, duracionMinutos = ?, codigoCabys = ?, unidadMedida = ?, activo = ?, tipo = ?, stockMinimo = ?, costoUnitario = ?, codigoBarras = ?, modalidad = ? WHERE id_servicio = ?",
+              [parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 0, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo ? 1 : 0, tipo, stockMinimo, costoUnitario, codigoBarras, modalidad, s.id]
             );
             const [refreshed] = await pool.query("SELECT * FROM servicios WHERE id_servicio = ?", [s.id]);
             return res.json(normalizeRow((refreshed as any[])[0], 'id_servicio'));
@@ -2713,8 +2736,8 @@ async function startServer() {
 
         const stockInicial = tipo === 'ARTICULO' ? (parseInt(s.stock) || 0) : null;
         const [result] = await pool.query(
-          "INSERT INTO servicios (idCompania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo, tipo, stock, stockMinimo, costoUnitario, codigoBarras) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 0, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo === false ? 0 : 1, tipo, stockInicial, stockMinimo, costoUnitario, codigoBarras]
+          "INSERT INTO servicios (idCompania, nombre, precio, porcentajeIva, duracionMinutos, codigoCabys, unidadMedida, activo, tipo, stock, stockMinimo, costoUnitario, codigoBarras, modalidad) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [parseInt(s.idCompania), s.nombre, parseFloat(s.precio), s.porcentajeIva != null ? parseFloat(s.porcentajeIva) : null, parseInt(s.duracionMinutos) || 0, s.codigoCabys || null, s.unidadMedida || 'Sp', s.activo === false ? 0 : 1, tipo, stockInicial, stockMinimo, costoUnitario, codigoBarras, modalidad]
         );
         s.id = (result as any).insertId;
 
@@ -2732,6 +2755,7 @@ async function startServer() {
         s.stockMinimo = stockMinimo;
         s.costoUnitario = costoUnitario;
         s.codigoBarras = codigoBarras;
+        s.modalidad = modalidad;
         if (s.id && localServicios.some(item => item.id === s.id)) {
           const existente = localServicios.find(item => item.id === s.id)!;
           s.stock = existente.stock; // igual que en modo MySQL: el stock no se toca aquí
@@ -6351,6 +6375,15 @@ async function startServer() {
 
   // --- Public Booking Routes (no auth) ---
 
+  // Reserva automática por tipo de visita (tinyint en MySQL, boolean en memoria). Sin dato = activa.
+  const reservaAutoActiva = (company: Company | undefined, tipoVisita: "CONSULTORIO" | "DOMICILIO"): boolean => {
+    if (!company) return true;
+    const valor = tipoVisita === "DOMICILIO" ? company.reservaAutoDomicilio : company.reservaAutoConsultorio;
+    return valor == null ? true : !!valor;
+  };
+  const ERROR_SOLO_WHATSAPP = "Esta clínica recibe solicitudes de este tipo de cita por WhatsApp.";
+  const ERROR_SERVICIO_INCOMPATIBLE = "El servicio elegido no está disponible para este tipo de cita.";
+
   app.get("/api/public/config", (req, res) => {
     res.json({ googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || "" });
   });
@@ -6370,7 +6403,12 @@ async function startServer() {
         perfilCompania: c.perfilCompania,
         logoUrl: c.logoUrl,
         colorPrimario: c.colorPrimario,
-        colorSidebar: c.colorSidebar
+        colorSidebar: c.colorSidebar,
+        // Solo lo necesario para la reserva en línea; el resto de la configuración de la empresa no se expone.
+        reservaAutoConsultorio: c.reservaAutoConsultorio == null ? true : !!c.reservaAutoConsultorio,
+        reservaAutoDomicilio: c.reservaAutoDomicilio == null ? true : !!c.reservaAutoDomicilio,
+        whatsappReservas: c.whatsappReservas || null,
+        mensajeWhatsappReservas: c.mensajeWhatsappReservas || null
       })));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -6416,7 +6454,8 @@ async function startServer() {
         nombre: s.nombre,
         precio: s.precio,
         precioConIva: precioConIva(s.precio, ivaEfectivo(s, ivaDefecto)),
-        duracionMinutos: s.duracionMinutos
+        duracionMinutos: s.duracionMinutos,
+        modalidad: normalizarModalidad(s.modalidad)
       })));
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -6483,6 +6522,8 @@ async function startServer() {
         bloqueosDelDia = localCalendarBlocks.filter(b => b.idUsuarioNutricionista === idUsuario);
       }
 
+      if (!reservaAutoActiva(company, tipoVisita)) return res.status(403).json({ error: ERROR_SOLO_WHATSAPP });
+
       const tramos = tramosDelDia(company, fecha, tipoVisita);
       if (tramos.length === 0) return res.json([]);
 
@@ -6496,7 +6537,10 @@ async function startServer() {
         } else {
           servicio = localServicios.find(s => s.id === idServicio && s.idCompania === user.idCompania && s.activo);
         }
-        if (servicio) duracionMin = servicio.duracionMinutos;
+        if (servicio) {
+          if (!servicioCompatible(servicio.modalidad, tipoVisita)) return res.status(400).json({ error: ERROR_SERVICIO_INCOMPATIBLE });
+          duracionMin = servicio.duracionMinutos;
+        }
       }
       const candidatos = generarSlotsCandidatos(tramos);
       const libres = candidatos.filter(hora => slotLibre({
@@ -6542,6 +6586,8 @@ async function startServer() {
       }
       if (!user) return res.status(404).json({ error: "Profesional no encontrado." });
 
+      if (!reservaAutoActiva(company, tipoVisita)) return res.status(403).json({ error: ERROR_SOLO_WHATSAPP });
+
       // La duración viene del servicio elegido (si el negocio tiene catálogo
       // configurado); si no se eligió servicio, cae al valor fijo por tipo de
       // visita de siempre.
@@ -6558,6 +6604,9 @@ async function startServer() {
         }
         if (!servicio) {
           return res.status(400).json({ error: "Servicio no encontrado o inactivo." });
+        }
+        if (!servicioCompatible(servicio.modalidad, tipoVisita)) {
+          return res.status(400).json({ error: ERROR_SERVICIO_INCOMPATIBLE });
         }
         duracionMinutos = servicio.duracionMinutos;
       }
