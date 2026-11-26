@@ -1440,6 +1440,7 @@ export default function AgendaCalendar({
           idPaciente={facturaCita.idPaciente}
           idCita={facturaCita.id}
           nombrePaciente={patients.find(p => p.id === facturaCita.idPaciente)?.nombreCompleto || persona.singular}
+          paciente={patients.find(p => p.id === facturaCita.idPaciente) ?? null}
           etiquetaPersona={persona.singular}
           servicios={companyServicios}
           ivaPorDefecto={ivaPorDefecto}

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Servicio, Factura, FacturaLinea } from '../data/mockData';
 import { FileMinus, FilePlus, AlertCircle, Check, Loader2 } from 'lucide-react';
-import { MEDIO_PAGO_HACIENDA, colones } from '../utils/facturacion';
+import { colones, useCatalogosHacienda, nombreComprobante } from '../utils/facturacion';
 import { Button } from './ui/Button';
 import { ResponsiveModal } from './ui/ResponsiveModal';
 import { Input } from './ui/Input';
@@ -38,6 +38,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState('');
   const [resultado, setResultado] = useState<Factura | null>(null);
+  const { catalogos } = useCatalogosHacienda();
   const cerrarSiSePuede = () => { if (!enviando) onClose(); };
 
   // Para Nota de Crédito, las opciones son las propias líneas de la factura original (se acredita
@@ -106,7 +107,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
     <ResponsiveModal
       open
       onClose={cerrarSiSePuede}
-      title={`Nota de ${esCredito ? 'crédito' : 'débito'} · Factura ${factura.consecutivo}`}
+      title={`Nota de ${esCredito ? 'crédito' : 'débito'} · ${nombreComprobante(factura.tipoDocumento)} ${factura.consecutivo}`}
       icon={<Icono aria-hidden="true" />}
       iconClassName={esCredito ? 'bg-danger-soft text-danger' : 'bg-warning-soft text-warning'}
       accentColor={themeColor}
@@ -143,11 +144,11 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                   ? 'bg-success-soft border-success/20 text-success'
                   : 'bg-warning-soft border-warning/25 text-warning'
               }`}>
-                <p className="font-semibold uppercase">{resultado.estado}</p>
+                <p className="font-semibold uppercase">{resultado.estado === 'PENDIENTE' ? 'En cola de envío' : resultado.estado}</p>
                 <p>Consecutivo: {resultado.consecutivo}</p>
                 <p className="break-all text-xs">Clave: {resultado.clave}</p>
                 <p className="tabular-nums">Total: <span className="font-semibold">{colones(resultado.total)}</span></p>
-                {resultado.mensajeError && <p className="mt-1">{resultado.mensajeError}</p>}
+                {resultado.aviso ? <p className="mt-1 break-words">{resultado.aviso}</p> : resultado.mensajeError && <p className="mt-1 break-words">{resultado.mensajeError}</p>}
               </div>
             </div>
           ) : (
@@ -205,7 +206,7 @@ export default function AjusteFacturaModal({ tipo, factura, servicios, ivaPorDef
                 <div>
                   <label htmlFor="ajustefact-medio-de-pago" className="block text-fg text-xs font-semibold mb-1.5">Medio de pago</label>
                   <Select id="ajustefact-medio-de-pago" value={medioPago} onChange={(e: any) => setMedioPago(e.target.value)}>
-                    {Object.entries(MEDIO_PAGO_HACIENDA).map(([codigo, nombre]) => <option key={codigo} value={codigo}>{nombre}</option>)}
+                    {(catalogos?.mediosPago ?? [{ codigo: '01', descripcion: 'Efectivo' }]).map(m => <option key={m.codigo} value={m.codigo}>{m.descripcion}</option>)}
                   </Select>
                 </div>
               )}

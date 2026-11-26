@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Factura, Patient, Company, NotificationLog } from '../data/mockData';
 import { Printer, Mail, RefreshCw, FileMinus, FilePlus, Receipt } from 'lucide-react';
-import { MEDIO_PAGO_HACIENDA, colones } from '../utils/facturacion';
+import { colones, useCatalogosHacienda, textoMediosPago } from '../utils/facturacion';
 import { Button } from './ui/Button';
 import { Badge, type BadgeTone } from './ui/Badge';
 
@@ -16,6 +16,7 @@ interface FacturaDetailViewProps {
 }
 
 const ESTADO_TONO: Record<string, BadgeTone> = {
+  PENDIENTE: 'warning',
   FIRMADA: 'neutral',
   ENVIADA: 'warning',
   ACEPTADA: 'success',
@@ -40,7 +41,15 @@ export default function FacturaDetailView({ factura, patient, company, referenci
   const esNotaCredito = factura.tipoDocumento === '03';
   const esNotaDebito = factura.tipoDocumento === '02';
   const esNota = esNotaCredito || esNotaDebito;
+  const esTiquete = factura.tipoDocumento === '04';
   const esCredito = factura.condicionVenta === '02';
+  const { catalogos } = useCatalogosHacienda();
+  const hayDescuentos = factura.lineas.some(l => Number(l.montoDescuento) > 0);
+  // Receptor: la copia guardada en el comprobante (paciente o tercero) o, en los anteriores, el paciente.
+  const receptorNombre = factura.receptorNombre || patient.nombreCompleto || `Receptor #${factura.idPaciente}`;
+  const receptorIdentificacion = factura.receptorIdentificacion ?? patient.identificacion ?? '—';
+  const receptorCorreo = factura.receptorCorreo ?? (factura.receptorEsTercero ? null : patient.correoElectronico);
+  const nombrePacienteAtendido = factura.receptorEsTercero ? (factura.pacienteNombre || patient.nombreCompleto) : null;
 
   const triggerPrint = () => window.print();
 
@@ -60,7 +69,7 @@ export default function FacturaDetailView({ factura, patient, company, referenci
 
   const condicion = esCredito
     ? `Crédito${factura.plazoCredito ? ` a ${factura.plazoCredito} días` : ''}`
-    : `Contado${!esNotaCredito ? ` · ${MEDIO_PAGO_HACIENDA[factura.medioPago] || factura.medioPago}` : ''}`;
+    : `Contado${!esNotaCredito ? ` · ${textoMediosPago(factura, catalogos)}` : ''}`;
 
   // Portal a document.body: FacturaDetailView se monta anidado dentro de FacturacionManager
   // (a diferencia de ReportView, que reemplaza toda la pantalla desde App.tsx), así que sin el
@@ -75,7 +84,7 @@ export default function FacturaDetailView({ factura, patient, company, referenci
       {/* Top action toolbar - hidden in Print. En móvil queda fija arriba al desplazarse. */}
       <div className="sticky top-[env(safe-area-inset-top,0px)] z-10 sm:static max-w-3xl mx-auto mb-5 bg-surface rounded-card border border-border shadow-sm p-3 sm:p-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
         <div className="min-w-0">
-          <h3 className="text-heading font-semibold text-fg break-words">{esNotaCredito ? 'Nota de Crédito' : esNotaDebito ? 'Nota de Débito' : 'Factura'} {factura.consecutivo}</h3>
+          <h3 className="text-heading font-semibold text-fg break-words">{esNotaCredito ? 'Nota de Crédito' : esNotaDebito ? 'Nota de Débito' : esTiquete ? 'Tiquete' : 'Factura'} {factura.consecutivo}</h3>
           <p className="text-xs text-fg-muted">Imprima o reenvíe el comprobante al cliente</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center w-full sm:w-auto [&>*]:flex-1 sm:[&>*]:flex-none">
@@ -122,13 +131,13 @@ export default function FacturaDetailView({ factura, patient, company, referenci
           <div className="sm:text-right text-xs text-fg-muted">
             <span className="font-semibold text-body inline-flex items-center gap-1.5 sm:justify-end" style={{ color: company.colorPrimario }}>
               {esNotaCredito ? <FileMinus className="w-4 h-4" aria-hidden="true" /> : esNotaDebito ? <FilePlus className="w-4 h-4" aria-hidden="true" /> : <Receipt className="w-4 h-4" aria-hidden="true" />}
-              {esNotaCredito ? 'NOTA DE CRÉDITO ELECTRÓNICA' : esNotaDebito ? 'NOTA DE DÉBITO ELECTRÓNICA' : 'FACTURA ELECTRÓNICA'}
+              {esNotaCredito ? 'NOTA DE CRÉDITO ELECTRÓNICA' : esNotaDebito ? 'NOTA DE DÉBITO ELECTRÓNICA' : esTiquete ? 'TIQUETE ELECTRÓNICO' : 'FACTURA ELECTRÓNICA'}
             </span>
             <span className="block mt-1 tabular-nums">Consecutivo: {factura.consecutivo}</span>
             <span className="block break-all sm:max-w-xs">Clave: {factura.clave}</span>
             <span className="block">Fecha: {new Date(factura.fechaEmision).toLocaleString('es-CR')}</span>
-            {esNota && referencia && <span className="block">Referencia: factura {referencia}</span>}
-            <Badge tone={ESTADO_TONO[factura.estado] || 'neutral'} className="mt-1.5">{factura.estado}</Badge>
+            {esNota && referencia && <span className="block">Referencia: {referencia}</span>}
+            <Badge tone={ESTADO_TONO[factura.estado] || 'neutral'} className="mt-1.5">{factura.estado === 'PENDIENTE' ? 'EN COLA' : factura.estado}</Badge>
           </div>
         </div>
 
@@ -137,20 +146,26 @@ export default function FacturaDetailView({ factura, patient, company, referenci
           <div className="grid grid-cols-[repeat(2,minmax(0,1fr))] sm:grid-cols-[repeat(4,minmax(0,1fr))] gap-4">
             <div>
               <span className="text-fg-muted block text-xs">Nombre</span>
-              <span className="font-semibold text-fg block break-words">{patient.nombreCompleto || factura.receptorNombre || `Receptor #${factura.idPaciente}`}</span>
+              <span className="font-semibold text-fg block break-words">{receptorNombre}</span>
             </div>
             <div>
               <span className="text-fg-muted block text-xs">Identificación</span>
-              <span className="font-medium text-fg block tabular-nums">{patient.identificacion || factura.receptorIdentificacion || '—'}</span>
+              <span className="font-medium text-fg block tabular-nums break-all">{receptorIdentificacion || '—'}</span>
             </div>
             <div>
               <span className="text-fg-muted block text-xs">Correo</span>
-              <span className="font-medium text-fg block break-all">{patient.correoElectronico || 'No registrado'}</span>
+              <span className="font-medium text-fg block break-all">{receptorCorreo || 'No registrado'}</span>
             </div>
             <div>
               <span className="text-fg-muted block text-xs">Condición de venta</span>
-              <span className="font-medium text-fg block">{condicion}</span>
+              <span className="font-medium text-fg block break-words">{condicion}</span>
             </div>
+            {nombrePacienteAtendido && (
+              <div className="col-span-2 sm:col-span-4">
+                <span className="text-fg-muted block text-xs">Paciente</span>
+                <span className="font-medium text-fg block break-words">{nombrePacienteAtendido}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -172,6 +187,12 @@ export default function FacturaDetailView({ factura, patient, company, referenci
                 <dd className="text-right text-fg tabular-nums">{l.cantidad}</dd>
                 <dt className="text-fg-muted">Precio unit.</dt>
                 <dd className="text-right text-fg tabular-nums">{colones(l.precioUnitario)}</dd>
+                {Number(l.montoDescuento) > 0 && (
+                  <>
+                    <dt className="text-fg-muted">Descuento</dt>
+                    <dd className="text-right text-fg tabular-nums">−{colones(Number(l.montoDescuento))}</dd>
+                  </>
+                )}
                 <dt className="text-fg-muted">Subtotal</dt>
                 <dd className="text-right text-fg tabular-nums">{colones(l.subTotal)}</dd>
                 <dt className="text-fg-muted">IVA ({Number(l.porcentajeIva) > 0 ? `${l.porcentajeIva}%` : 'Exento'})</dt>
@@ -190,6 +211,7 @@ export default function FacturaDetailView({ factura, patient, company, referenci
                 <th scope="col" className="py-2 pr-3">Detalle</th>
                 <th scope="col" className="py-2 pr-3 text-center">Cant.</th>
                 <th scope="col" className="py-2 pr-3 text-right">Precio unit.</th>
+                {hayDescuentos && <th scope="col" className="py-2 pr-3 text-right">Desc.</th>}
                 <th scope="col" className="py-2 pr-3 text-right">Subtotal</th>
                 <th scope="col" className="py-2 pr-3 text-right">IVA</th>
                 <th scope="col" className="py-2 text-right">Total</th>
@@ -204,6 +226,7 @@ export default function FacturaDetailView({ factura, patient, company, referenci
                   </td>
                   <td className="py-2.5 pr-3 text-center text-fg-muted tabular-nums">{l.cantidad}</td>
                   <td className="py-2.5 pr-3 text-right text-fg-muted tabular-nums">{colones(l.precioUnitario)}</td>
+                  {hayDescuentos && <td className="py-2.5 pr-3 text-right text-fg-muted tabular-nums">{Number(l.montoDescuento) > 0 ? `−${colones(Number(l.montoDescuento))}` : '—'}</td>}
                   <td className="py-2.5 pr-3 text-right text-fg-muted tabular-nums">{colones(l.subTotal)}</td>
                   <td className="py-2.5 pr-3 text-right text-fg-muted tabular-nums">
                     {colones(l.montoIva)}
@@ -218,6 +241,12 @@ export default function FacturaDetailView({ factura, patient, company, referenci
 
         <div className="flex justify-end">
           <dl className="w-full sm:w-72 text-sm space-y-1.5">
+            {Number(factura.totalDescuentos) > 0 && (
+              <div className="flex justify-between">
+                <dt className="text-fg-muted">Descuentos</dt>
+                <dd className="font-medium text-fg tabular-nums">−{colones(Number(factura.totalDescuentos))}</dd>
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-fg-muted">Subtotal</dt>
               <dd className="font-medium text-fg tabular-nums">{colones(factura.subtotal)}</dd>
@@ -239,10 +268,29 @@ export default function FacturaDetailView({ factura, patient, company, referenci
           </dl>
         </div>
 
-        {factura.mensajeError && (factura.estado === 'ERROR' || factura.estado === 'RECHAZADA') && (
-          <div className="p-3 rounded-control bg-danger-soft border border-danger/20 text-xs text-danger">
-            {factura.mensajeError}
+        {factura.estado === 'PENDIENTE' && (
+          <div className="p-3 rounded-control bg-warning-soft border border-warning/25 text-xs text-warning space-y-1 print:hidden">
+            <p className="font-semibold">En cola de envío a Hacienda</p>
+            <p>
+              Intentos: {factura.haciendaIntentos ?? 0}
+              {factura.haciendaProximoIntento ? ` · próximo intento ${new Date(factura.haciendaProximoIntento).toLocaleString('es-CR')}` : ''}
+            </p>
+            {factura.mensajeError && <p className="break-words">{factura.mensajeError}</p>}
+            {factura.haciendaErrorDetalle && <p className="break-words opacity-80">Detalle: {factura.haciendaErrorDetalle}</p>}
           </div>
+        )}
+        {factura.mensajeError && (factura.estado === 'ERROR' || factura.estado === 'RECHAZADA') && (
+          <div className="p-3 rounded-control bg-danger-soft border border-danger/20 text-xs text-danger space-y-1">
+            <p className="break-words">{factura.mensajeError}</p>
+            {factura.haciendaErrorDetalle && factura.haciendaErrorDetalle !== factura.mensajeError && <p className="break-words opacity-80 print:hidden">Detalle: {factura.haciendaErrorDetalle}</p>}
+          </div>
+        )}
+        {(factura.correoEnviado || factura.correoError) && (
+          <p className={`text-xs print:hidden ${factura.correoError && !factura.correoEnviado ? 'text-danger' : 'text-fg-muted'}`}>
+            {factura.correoEnviado
+              ? `Enviado por correo${factura.correoEnviadoEn ? ` el ${new Date(factura.correoEnviadoEn).toLocaleString('es-CR')}` : ''}.`
+              : `No se pudo enviar por correo: ${factura.correoError}`}
+          </p>
         )}
         </div>
       </div>

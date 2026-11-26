@@ -579,21 +579,31 @@ export function renderConsultaEmail(params: {
 // Factura
 // ---------------------------------------------------------------------------
 
-const MEDIO_PAGO_LABEL: Record<string, string> = {
-  "01": "Efectivo",
-  "02": "Tarjeta",
-  "06": "SINPE Móvil"
-};
+/** Datos extra que el servidor agrega al comprobante para las plantillas (correo y PDF). */
+export interface ExtrasComprobantePlantilla {
+  /** Medios de pago ya descritos con el catálogo de Hacienda de la BD, p. ej. "Efectivo ₡5 000 · Tarjeta ₡3 000". */
+  mediosPagoTexto?: string | null;
+  /** Paciente atendido, solo cuando el comprobante se facturó a un tercero. */
+  pacienteNombre?: string | null;
+}
+
+/** Nombre del comprobante según su tipo de documento. */
+export function tituloComprobante(tipoDocumento: string): string {
+  return tipoDocumento === "03" ? "Nota de Crédito Electrónica"
+    : tipoDocumento === "02" ? "Nota de Débito Electrónica"
+    : tipoDocumento === "04" ? "Tiquete Electrónico"
+    : "Factura Electrónica";
+}
 
 export function renderFacturaEmail(params: {
   company: Company;
   patient: Patient;
-  factura: Factura;
+  factura: Factura & ExtrasComprobantePlantilla;
 }): RenderedEmail {
   const { company, patient, factura } = params;
   const esNotaCredito = factura.tipoDocumento === "03";
   const esNotaDebito = factura.tipoDocumento === "02";
-  const title = esNotaCredito ? "Nota de Crédito Electrónica" : esNotaDebito ? "Nota de Débito Electrónica" : "Factura Electrónica";
+  const title = tituloComprobante(factura.tipoDocumento);
   const subject = `${title} ${factura.consecutivo} - ${company.nombreComercial}`;
   const colones = (n: number) => `₡${n.toLocaleString("es-CR", { maximumFractionDigits: 2 })}`;
   const celda = "padding:8px;border-bottom:1px solid #e2e8f0;font-size:14px;";
@@ -642,7 +652,8 @@ export function renderFacturaEmail(params: {
     infoCard("Consecutivo", escapeHtml(factura.consecutivo)) +
     infoCard("Fecha de Emisión", escapeHtml(fechaEmision)) +
     infoCard("Estado", escapeHtml(factura.estado)) +
-    (!esNotaCredito ? infoCard("Medio de Pago", escapeHtml(MEDIO_PAGO_LABEL[factura.medioPago] || factura.medioPago)) : "") +
+    (factura.pacienteNombre ? infoCard("Paciente", escapeHtml(factura.pacienteNombre)) : "") +
+    (!esNotaCredito && factura.condicionVenta !== "02" ? infoCard("Medio de Pago", escapeHtml(factura.mediosPagoTexto || factura.medioPago)) : "") +
     ((esNotaCredito || esNotaDebito) && factura.motivoAnulacion ? infoCard("Motivo", escapeHtml(factura.motivoAnulacion)) : "");
 
   const bodyHtml = `
@@ -652,6 +663,7 @@ export function renderFacturaEmail(params: {
     ${detailsHtml}
     ${tablaHtml}
     <p style="margin:16px 0 0 0;text-align:right;font-size:14px;line-height:1.8;">
+      ${factura.totalDescuentos ? `Descuentos: ${escapeHtml(colones(factura.totalDescuentos))}<br/>` : ""}
       Subtotal: ${escapeHtml(colones(factura.subtotal))}<br/>
       IVA: ${escapeHtml(colones(factura.totalIva))}<br/>
       <span style="font-weight:bold;font-size:18px;">Total: ${escapeHtml(colones(factura.total))}</span>

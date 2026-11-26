@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Factura, Patient, Company, Servicio, NotificationLog } from '../data/mockData';
-import { Receipt, XCircle, FileMinus, FilePlus, AlertCircle, RefreshCw, Eye, Search, FileText, Clock } from 'lucide-react';
+import { Receipt, XCircle, FileMinus, FilePlus, AlertCircle, RefreshCw, Eye, Search, FileText, Clock, RotateCcw, Send, Loader2, Ticket } from 'lucide-react';
 import { PageHeader } from './ui/PageHeader';
 import { StatCard } from './ui/StatCard';
 import { Card } from './ui/Card';
@@ -11,8 +11,8 @@ import { Select } from './ui/Select';
 import { EmptyState } from './ui/EmptyState';
 import FacturaDetailView from './FacturaDetailView';
 import AjusteFacturaModal from './AjusteFacturaModal';
-import { notify } from './ui/Feedback';
-import { MEDIO_PAGO_HACIENDA, colones } from '../utils/facturacion';
+import { notify, confirmar } from './ui/Feedback';
+import { colones, useCatalogosHacienda, textoMediosPago, nombreComprobante } from '../utils/facturacion';
 import { fechaCR } from '../utils/fechaCR';
 
 interface FacturacionManagerProps {
@@ -27,9 +27,16 @@ interface FacturacionManagerProps {
   onEmitirNotaDebito: (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }>; medioPago?: string }) => Promise<Factura>;
   onVerificarEstadoFactura: (idFactura: number) => Promise<Factura>;
   onReenviarCorreo: (idFactura: number) => Promise<NotificationLog>;
+  // Administrador: comprobante RECHAZADO → consecutivo, clave y fecha nuevos (POST /reintentar-clave-nueva).
+  onReintentarClaveNueva?: (idFactura: number) => Promise<Factura>;
+  // Administrador: comprobante en ERROR → vuelve a la cola con el mismo XML firmado (POST /reintentar-envio).
+  onReintentarEnvio?: (idFactura: number) => Promise<Factura>;
+  // Recarga la lista (mientras haya comprobantes en cola o en proceso se refresca sola).
+  onRecargar?: () => Promise<void>;
 }
 
 const ESTADO_TONO: Record<string, BadgeTone> = {
+  PENDIENTE: 'warning',
   FIRMADA: 'neutral',
   ENVIADA: 'warning',
   ACEPTADA: 'success',
@@ -100,7 +107,22 @@ function explicacionAnulacion(f: Factura, acreditado: Record<number, number>): s
   return `${inicio}.${efectos.length ? ` Además, ${unirFrases(efectos)}.` : ''} No se puede deshacer.`;
 }
 
-export default function FacturacionManager({ facturas, patients, company, servicios, puedeAnular, soloLectura = false, onAnularFactura, onEmitirNotaCredito, onEmitirNotaDebito, onVerificarEstadoFactura, onReenviarCorreo }: FacturacionManagerProps) {
+// Cada cuánto se refresca la lista mientras haya comprobantes en cola o en proceso en Hacienda.
+// Es solo de la pantalla (la cola real corre en el servidor con su intervalo de parametros_sistema).
+const REFRESCO_PANTALLA_MS = 30_000;
+
+export default function FacturacionManager({ facturas, patients, company, servicios, puedeAnular, soloLectura = false, onAnularFactura, onEmitirNotaCredito, onEmitirNotaDebito, onVerificarEstadoFactura, onReenviarCorreo, onReintentarClaveNueva, onReintentarEnvio, onRecargar }: FacturacionManagerProps) {
+  const { catalogos } = useCatalogosHacienda();
+  const [reintentandoId, setReintentandoId] = useState<number | null>(null);
+  const hayEnProceso = facturas.some(f => f.estado === 'PENDIENTE' || f.estado === 'ENVIADA');
+  // Ref: el padre crea la función en cada render y eso reiniciaría el intervalo.
+  const recargarRef = useRef(onRecargar);
+  recargarRef.current = onRecargar;
+  useEffect(() => {
+    if (!hayEnProceso) return;
+    const t = setInterval(() => { recargarRef.current?.().catch(() => {}); }, REFRESCO_PANTALLA_MS);
+    return () => clearInterval(t);
+  }, [hayEnProceso]);
   const [anulandoId, setAnulandoId] = useState<number | null>(null);
   const [motivoAnulacion, setMotivoAnulacion] = useState('');
   const [anulando, setAnulando] = useState(false);
@@ -121,6 +143,7 @@ export default function FacturacionManager({ facturas, patients, company, servic
       if (actualizada.estado === 'RECHAZADA') notify.error(actualizada.mensajeError || 'Hacienda rechazó el comprobante.', 'Comprobante rechazado');
       else if (actualizada.mensajeError) notify.warning(actualizada.mensajeError, actualizada.estado === 'ACEPTADA' ? 'Aceptado — requiere ajuste manual' : undefined);
       else if (actualizada.estado === 'ACEPTADA') notify.success(`Hacienda aceptó el comprobante ${actualizada.consecutivo}.`);
+      else if (actualizada.estado === 'PENDIENTE') notify.info('El comprobante sigue en cola de envío; el sistema lo transmitirá automáticamente.');
       else notify.info('Hacienda todavía está procesando el comprobante. Vuelva a verificar en unos minutos.');
     } catch (err: any) {
       // Antes este error iba al recuadro del panel de anulación, que casi nunca está abierto.
@@ -130,12 +153,45 @@ export default function FacturacionManager({ facturas, patients, company, servic
     }
   };
 
+  const handleReintentar = async (f: Factura, tipo: 'CLAVE_NUEVA' | 'ENVIO') => {
+    const accion = tipo === 'CLAVE_NUEVA' ? onReintentarClaveNueva : onReintentarEnvio;
+    if (!accion) return;
+    const ok = await confirmar(tipo === 'CLAVE_NUEVA'
+      ? {
+          title: '¿Reintentar con clave nueva?',
+          message: `Se emite de nuevo el ${nombreComprobante(f.tipoDocumento).toLowerCase()} ${f.consecutivo} con un consecutivo, una clave y una fecha nuevos, y se transmite a Hacienda. Úselo solo después de corregir la causa del rechazo. La clave rechazada queda en el historial.`,
+          confirmText: 'Reintentar con clave nueva',
+          tone: 'warning'
+        }
+      : {
+          title: '¿Reintentar el envío?',
+          message: `El ${nombreComprobante(f.tipoDocumento).toLowerCase()} ${f.consecutivo} vuelve a la cola con el mismo comprobante firmado. Si su envío fue incierto, primero se consulta a Hacienda.`,
+          confirmText: 'Reintentar envío'
+        });
+    if (!ok) return;
+    setReintentandoId(f.id);
+    try {
+      const r = await accion(f.id);
+      if (r.estado === 'ACEPTADA') notify.success(`Hacienda aceptó el comprobante ${r.consecutivo}.`);
+      else if (r.estado === 'RECHAZADA' || r.estado === 'ERROR') notify.error(r.mensajeError || 'Hacienda no aceptó el comprobante.', `Comprobante ${r.estado.toLowerCase()}`);
+      else notify.info(`Comprobante ${r.consecutivo}: ${r.estado === 'PENDIENTE' ? 'en cola de envío' : 'Hacienda lo está procesando'}.`);
+    } catch (err: any) {
+      notify.error(err.message || 'No se pudo reintentar.');
+    } finally {
+      setReintentandoId(null);
+    }
+  };
+
   // Si el paciente no está en la lista cargada (p. ej. el Contador no carga pacientes), se usa el receptor que trae la factura.
-  const nombrePaciente = (idPaciente: number, factura?: Factura) =>
-    patients.find(p => p.id === idPaciente)?.nombreCompleto || factura?.receptorNombre || `Paciente #${idPaciente}`;
+  const nombrePaciente = (idPaciente: number, factura?: Factura) => {
+    const paciente = patients.find(p => p.id === idPaciente)?.nombreCompleto || factura?.pacienteNombre || null;
+    if (factura?.receptorEsTercero) return `${factura.receptorNombre}${paciente ? ` · paciente ${paciente}` : ''}`;
+    return paciente || factura?.receptorNombre || `Paciente #${idPaciente}`;
+  };
   const referenciaFactura = (idFacturaReferencia: number | null) => {
     if (idFacturaReferencia == null) return null;
-    return facturas.find(f => f.id === idFacturaReferencia)?.consecutivo || `#${idFacturaReferencia}`;
+    const original = facturas.find(f => f.id === idFacturaReferencia);
+    return original ? `${nombreComprobante(original.tipoDocumento).toLowerCase()} ${original.consecutivo}` : `#${idFacturaReferencia}`;
   };
 
   const meses = Array.from(new Set([mesActual, ...facturas.map(f => f.fechaEmision.slice(0, 7))])).sort().reverse();
@@ -149,25 +205,28 @@ export default function FacturacionManager({ facturas, patients, company, servic
   // Crédito sigue contando en su mes y la Nota resta en el suyo; sin eso, la anulación restaría dos veces.
   const cuentaEnVentas = (f: Factura) =>
     f.estado === 'ACEPTADA' ||
-    (f.tipoDocumento === '01' && f.estado === 'ANULADA' && facturas.some(nc => nc.idFacturaReferencia === f.id && nc.tipoDocumento === '03'));
+    ((f.tipoDocumento === '01' || f.tipoDocumento === '04') && f.estado === 'ANULADA' && facturas.some(nc => nc.idFacturaReferencia === f.id && nc.tipoDocumento === '03'));
   const resumen = delMes.reduce((acc, f) => {
     if (f.ambiente === 'PRODUCCION' && cuentaEnVentas(f)) {
       const signo = f.tipoDocumento === '03' ? -1 : 1;
       acc.ventas += signo * f.subtotal;
       acc.iva += signo * f.totalIva;
     }
-    if (f.estado === 'ENVIADA' || f.estado === 'ERROR' || f.estado === 'FIRMADA') acc.porResolver++;
+    if (f.estado === 'PENDIENTE' || f.estado === 'ENVIADA' || f.estado === 'ERROR' || f.estado === 'FIRMADA') acc.porResolver++;
     if (f.estado === 'RECHAZADA') acc.rechazadas++;
     return acc;
   }, { ventas: 0, iva: 0, porResolver: 0, rechazadas: 0 });
 
   // Una Nota referencia la factura por su clave: solo tiene sentido sobre una que Hacienda aceptó.
   // soloLectura (rol Contador): nunca se ofrecen ajustes, anulación ni consultas a Hacienda.
-  const puedeAjustar = (f: Factura) => !soloLectura && f.tipoDocumento === '01' && f.estado === 'ACEPTADA';
-  // Anular sirve para cualquier factura (también rechazadas o de prueba, que antes no tenían forma
-  // de reversarse), salvo mientras Hacienda la procesa: primero hay que verificar su estado.
-  const puedeAnularFactura = (f: Factura) => !soloLectura && puedeAnular && f.tipoDocumento === '01' && f.estado !== 'ANULADA' && f.estado !== 'ENVIADA';
-  const puedeVerificar = (f: Factura) => !soloLectura && (f.estado === 'ENVIADA' || f.estado === 'ERROR');
+  const esVenta = (f: Factura) => f.tipoDocumento === '01' || f.tipoDocumento === '04';
+  const puedeAjustar = (f: Factura) => !soloLectura && esVenta(f) && f.estado === 'ACEPTADA';
+  // Anular sirve para cualquier factura o tiquete (también rechazados o de prueba), salvo mientras
+  // Hacienda lo procesa o está en cola: primero hay que consultar su estado.
+  const puedeAnularFactura = (f: Factura) => !soloLectura && puedeAnular && esVenta(f) && f.estado !== 'ANULADA' && f.estado !== 'ENVIADA' && f.estado !== 'PENDIENTE';
+  const puedeVerificar = (f: Factura) => !soloLectura && (f.estado === 'ENVIADA' || f.estado === 'ERROR' || f.estado === 'PENDIENTE');
+  const puedeReintentarClave = (f: Factura) => !soloLectura && puedeAnular && !!onReintentarClaveNueva && f.estado === 'RECHAZADA';
+  const puedeReintentarEnvio = (f: Factura) => !soloLectura && puedeAnular && !!onReintentarEnvio && f.estado === 'ERROR';
 
   const handleConfirmarAnular = async (id: number) => {
     if (!motivoAnulacion.trim()) {
@@ -177,10 +236,11 @@ export default function FacturacionManager({ facturas, patients, company, servic
     setAnulando(true);
     setError('');
     try {
-      const { factura, notaCredito } = await onAnularFactura(id, motivoAnulacion.trim());
-      notify.success(notaCredito
-        ? `Factura ${factura.consecutivo} anulada con la Nota de Crédito ${notaCredito.consecutivo} (${notaCredito.estado}).`
-        : `Factura ${factura.consecutivo} anulada en el sistema, sin Nota de Crédito.`);
+      const { factura, notaCredito, aviso } = await onAnularFactura(id, motivoAnulacion.trim()) as { factura: Factura; notaCredito: Factura | null; aviso?: string };
+      if (aviso) notify.warning(aviso, 'Nota de Crédito en cola');
+      else notify.success(notaCredito
+        ? `${nombreComprobante(factura.tipoDocumento)} ${factura.consecutivo} anulado con la Nota de Crédito ${notaCredito.consecutivo} (${notaCredito.estado}).`
+        : `${nombreComprobante(factura.tipoDocumento)} ${factura.consecutivo} anulado en el sistema, sin Nota de Crédito.`);
       setAnulandoId(null);
       setMotivoAnulacion('');
     } catch (err: any) {
@@ -249,34 +309,47 @@ export default function FacturacionManager({ facturas, patients, company, servic
           const esNotaCredito = f.tipoDocumento === '03';
           const esNotaDebito = f.tipoDocumento === '02';
           const esNota = esNotaCredito || esNotaDebito;
-          const tipoTexto = esNotaCredito ? 'Nota de Crédito' : esNotaDebito ? 'Nota de Débito' : 'Factura';
+          const tipoTexto = nombreComprobante(f.tipoDocumento);
           return (
             <li key={f.id} className="p-4 hover:bg-surface-muted/40 transition-colors">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <span className="font-semibold text-fg inline-flex items-center gap-1.5 text-body">
-                    {esNotaCredito ? <FileMinus className="w-4 h-4 text-danger" aria-hidden="true" /> : esNotaDebito ? <FilePlus className="w-4 h-4 text-warning" aria-hidden="true" /> : <Receipt className="w-4 h-4 text-fg-subtle" aria-hidden="true" />}
+                    {esNotaCredito ? <FileMinus className="w-4 h-4 text-danger" aria-hidden="true" /> : esNotaDebito ? <FilePlus className="w-4 h-4 text-warning" aria-hidden="true" /> : f.tipoDocumento === '04' ? <Ticket className="w-4 h-4 text-fg-subtle" aria-hidden="true" /> : <Receipt className="w-4 h-4 text-fg-subtle" aria-hidden="true" />}
                     {tipoTexto} {f.consecutivo}
                   </span>
                   <span className="text-xs text-fg-muted block break-words sm:truncate">
                     {nombrePaciente(f.idPaciente, f)} &middot; {new Date(f.fechaEmision).toLocaleString('es-CR')}
-                    {f.condicionVenta === '02' ? ' · Crédito' : !esNotaCredito ? ` · ${MEDIO_PAGO_HACIENDA[f.medioPago] || f.medioPago}` : ''}
+                    {f.condicionVenta === '02' ? ' · Crédito' : !esNotaCredito ? ` · ${textoMediosPago(f, catalogos)}` : ''}
                     {!esNota && f.montoRecibido != null && ` · Vuelto ${colones(f.montoRecibido - f.total)}`}
                   </span>
                   {esNota && f.idFacturaReferencia != null && (
-                    <span className="text-xs text-fg-muted block">{esNotaCredito ? 'Ajusta' : 'Debita'} factura {referenciaFactura(f.idFacturaReferencia)}{f.motivoAnulacion ? ` — ${f.motivoAnulacion}` : ''}</span>
+                    <span className="text-xs text-fg-muted block">{esNotaCredito ? 'Ajusta' : 'Debita'} {referenciaFactura(f.idFacturaReferencia)}{f.motivoAnulacion ? ` — ${f.motivoAnulacion}` : ''}</span>
                   )}
                   {!esNota && f.estado === 'ANULADA' && f.motivoAnulacion && (
                     <span className="text-xs text-fg-muted block truncate" title={f.motivoAnulacion}>Anulada — {f.motivoAnulacion}</span>
                   )}
+                  {f.estado === 'PENDIENTE' && (
+                    <span className="text-xs block text-warning">
+                      En cola de envío · intento {f.haciendaIntentos ?? 0}
+                      {f.haciendaProximoIntento ? ` · próximo ${new Date(f.haciendaProximoIntento).toLocaleTimeString('es-CR', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                    </span>
+                  )}
                   {f.mensajeError && f.estado !== 'SIMULADA' && (
-                    <span className={`text-xs block truncate ${f.estado === 'ERROR' || f.estado === 'RECHAZADA' ? 'text-danger' : 'text-warning'}`} title={f.mensajeError}>{f.mensajeError}</span>
+                    <span className={`text-xs block truncate ${f.estado === 'ERROR' || f.estado === 'RECHAZADA' ? 'text-danger' : 'text-warning'}`} title={[f.mensajeError, f.haciendaErrorDetalle].filter(Boolean).join(' — ')}>{f.mensajeError}</span>
+                  )}
+                  {f.correoError && !f.correoEnviado && (
+                    <span className="text-xs block truncate text-fg-muted" title={f.correoError}>Correo: {f.correoError}</span>
                   )}
                 </div>
                 {/* flex-wrap: en móvil los botones bajan a otra fila en vez de desbordar */}
                 <div className="flex flex-wrap items-center lg:justify-end gap-x-3 gap-y-1 lg:shrink-0">
                   <span className={`text-body font-semibold tabular-nums text-right lg:min-w-28 ${esNotaCredito ? 'text-danger' : 'text-fg'}`}>{esNotaCredito ? '−' : ''}{colones(f.total)}</span>
-                  <Badge tone={ESTADO_TONO[f.estado] || 'neutral'}>{f.estado}</Badge>
+                  <Badge tone={ESTADO_TONO[f.estado] || 'neutral'}>
+                    {f.estado === 'PENDIENTE'
+                      ? <span className="inline-flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />EN COLA</span>
+                      : f.estado}
+                  </Badge>
                   <div className="flex items-center gap-0.5 ml-auto lg:ml-0 -mr-2 lg:mr-0">
                   <button
                     type="button"
@@ -292,11 +365,35 @@ export default function FacturacionManager({ facturas, patients, company, servic
                       type="button"
                       onClick={() => handleVerificarEstado(f.id)}
                       disabled={verificandoId === f.id}
-                      title="Verificar estado con Hacienda"
+                      title="Consultar estado en Hacienda"
                       className={`${botonIcono} text-warning hover:bg-warning-soft`}
-                      aria-label={`Verificar estado con Hacienda de ${tipoTexto} ${f.consecutivo}`}
+                      aria-label={`Consultar estado en Hacienda de ${tipoTexto} ${f.consecutivo}`}
                     >
                       <RefreshCw className={`w-4 h-4 ${verificandoId === f.id ? 'animate-spin' : ''}`} aria-hidden="true" />
+                    </button>
+                  )}
+                  {puedeReintentarEnvio(f) && (
+                    <button
+                      type="button"
+                      onClick={() => handleReintentar(f, 'ENVIO')}
+                      disabled={reintentandoId === f.id}
+                      title="Reintentar envío (mismo comprobante firmado)"
+                      className={`${botonIcono} text-brand-ink hover:bg-brand-soft`}
+                      aria-label={`Reintentar el envío de ${tipoTexto} ${f.consecutivo}`}
+                    >
+                      <Send className={`w-4 h-4 ${reintentandoId === f.id ? 'animate-pulse' : ''}`} aria-hidden="true" />
+                    </button>
+                  )}
+                  {puedeReintentarClave(f) && (
+                    <button
+                      type="button"
+                      onClick={() => handleReintentar(f, 'CLAVE_NUEVA')}
+                      disabled={reintentandoId === f.id}
+                      title="Reintentar con clave nueva"
+                      className={`${botonIcono} text-warning hover:bg-warning-soft`}
+                      aria-label={`Reintentar con clave nueva ${tipoTexto} ${f.consecutivo}`}
+                    >
+                      <RotateCcw className={`w-4 h-4 ${reintentandoId === f.id ? 'animate-spin' : ''}`} aria-hidden="true" />
                     </button>
                   )}
                   {/* Una Nota de Crédito puede acreditar todo lo vendido (equivale a anular): mismo permiso. */}
@@ -326,9 +423,9 @@ export default function FacturacionManager({ facturas, patients, company, servic
                     <button
                       type="button"
                       onClick={() => { setAnulandoId(f.id); setMotivoAnulacion(''); setError(''); }}
-                      title="Anular factura"
+                      title={`Anular ${tipoTexto.toLowerCase()}`}
                       className={`${botonIcono} text-danger hover:bg-danger-soft`}
-                      aria-label={`Anular la factura ${f.consecutivo}`}
+                      aria-label={`Anular ${tipoTexto.toLowerCase()} ${f.consecutivo}`}
                     >
                       <XCircle className="w-4 h-4" aria-hidden="true" />
                     </button>

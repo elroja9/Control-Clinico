@@ -781,10 +781,22 @@ export interface HaciendaConfig {
   tieneCertificado: boolean;
   certificadoNombreArchivo: string | null;
   certificadoVenceEn: string | null; // YYYY-MM-DD
-  // Último consecutivo emitido de Factura / Nota de Crédito / Nota de Débito (el siguiente es +1).
+  // Último consecutivo emitido de Factura / Nota de Crédito / Nota de Débito / Tiquete (el siguiente es +1).
   ultimoConsecutivo: number;
   ultimoConsecutivoNc: number;
   ultimoConsecutivoNd: number;
+  ultimoConsecutivoTe?: number;
+  // Sucursal (3 dígitos) y terminal (5) del consecutivo; null = todavía sin fila (se usan los valores por omisión de la BD).
+  sucursal?: string | null;
+  terminal?: string | null;
+  // Numeración mínima por tipo (empresa que viene de otro sistema): el siguiente es max(último, mínimo) + 1.
+  numeracionMinimaFe?: number;
+  numeracionMinimaNc?: number;
+  numeracionMinimaNd?: number;
+  numeracionMinimaTe?: number;
+  correoAutomatico?: boolean; // enviar el comprobante por correo al quedar ACEPTADO
+  configVerificada?: boolean; // «Probar configuración» pasó (se reinicia al cambiar credenciales o certificado)
+  configVerificadaEn?: string | null;
 }
 
 export type HaciendaConfigInput = {
@@ -799,6 +811,14 @@ export type HaciendaConfigInput = {
   ultimoConsecutivo?: number;
   ultimoConsecutivoNc?: number;
   ultimoConsecutivoNd?: number;
+  ultimoConsecutivoTe?: number;
+  sucursal?: string;
+  terminal?: string;
+  numeracionMinimaFe?: number;
+  numeracionMinimaNc?: number;
+  numeracionMinimaNd?: number;
+  numeracionMinimaTe?: number;
+  correoAutomatico?: boolean;
 };
 
 export interface CompanyPayment {
@@ -870,13 +890,23 @@ export interface FacturaLinea {
   porcentajeIva: number;
   codigoTarifaIva: string;
   montoIva: number;
-  subTotal: number; // cantidad * precioUnitario
+  montoTotal?: number; // cantidad * precioUnitario (bruto, antes del descuento)
+  montoDescuento?: number; // descuento de la línea en colones (0 = sin descuento)
+  codigoDescuento?: string | null; // catálogo "Código del descuento" de Hacienda
+  subTotal: number; // montoTotal − montoDescuento (base imponible)
   montoTotalLinea: number; // subTotal + montoIva
 }
 
-export type EstadoFactura = 'FIRMADA' | 'ENVIADA' | 'ACEPTADA' | 'RECHAZADA' | 'ERROR' | 'ANULADA' | 'SIMULADA';
-// 01 = Factura Electrónica, 02 = Nota de Débito Electrónica, 03 = Nota de Crédito Electrónica
-export type TipoDocumentoFactura = '01' | '02' | '03';
+// Un medio de pago del comprobante (se admiten varios; su suma es el total).
+export interface MedioPagoFactura {
+  tipo: string; // catálogo de Hacienda (GET /api/hacienda/catalogos)
+  monto: number;
+  otros?: string | null; // descripción cuando el tipo es "99" (otros)
+}
+
+export type EstadoFactura = 'PENDIENTE' | 'FIRMADA' | 'ENVIADA' | 'ACEPTADA' | 'RECHAZADA' | 'ERROR' | 'ANULADA' | 'SIMULADA';
+// 01 = Factura Electrónica, 02 = Nota de Débito, 03 = Nota de Crédito, 04 = Tiquete Electrónico
+export type TipoDocumentoFactura = '01' | '02' | '03' | '04';
 
 export interface Factura {
   id: number;
@@ -902,10 +932,43 @@ export interface Factura {
   medioPago: string; // '01' Efectivo, '02' Tarjeta, '06' SINPE Móvil — catálogo de Hacienda
   montoRecibido: number | null; // solo informativo, para trazabilidad del vuelto entregado
   plazoCredito?: number | null; // días de crédito con que se emitió (solo condicionVenta '02')
-  // Receptor (solo nombre e identificación, nada clínico): lo agrega GET /api/facturas para el rol Contador, que no carga pacientes.
+  // Receptor del comprobante: la copia guardada al emitir (el paciente o un tercero) o, en los
+  // comprobantes anteriores, el paciente. Solo nombre, identificación y correo: nada clínico.
   receptorNombre?: string | null;
   receptorIdentificacion?: string | null;
   receptorTipoIdentificacion?: string | null;
+  receptorCorreo?: string | null;
+  receptorActividad?: string | null;
+  receptorEsTercero?: boolean; // true = se facturó a un tercero (no al paciente)
+  pacienteNombre?: string | null; // paciente atendido (se muestra cuando el receptor es un tercero)
+  correoCopiaPaciente?: boolean;
+  mediosPago?: MedioPagoFactura[] | null; // null en comprobantes anteriores (usar medioPago)
+  totalDescuentos?: number;
+  // Cola de transmisión a Hacienda
+  haciendaIntentos?: number;
+  haciendaProximoIntento?: string | null;
+  haciendaUltimoIntento?: string | null;
+  haciendaErrorDetalle?: string | null;
+  // Correo automático al quedar ACEPTADA
+  correoEnviado?: boolean;
+  correoEnviadoEn?: string | null;
+  correoError?: string | null;
+  // Solo en la respuesta de emitir una Nota que quedó en cola de envío.
+  aviso?: string;
+}
+
+// Tercero guardado al que un paciente pide facturar (p. ej. la empresa donde trabaja).
+export interface ReceptorFacturaGuardado {
+  id: number;
+  idCompania: number;
+  idPaciente: number;
+  tipoIdentificacion: '01' | '02' | '03' | '04' | 'EXT';
+  numero: string;
+  nombre: string;
+  correo: string | null;
+  telefono: string | null;
+  codigoActividad: string | null;
+  creadoEn: string;
 }
 
 // CXC — Cuentas por Cobrar. Se crea automáticamente al facturar con condicionVenta='02'

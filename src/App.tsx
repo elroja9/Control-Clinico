@@ -860,7 +860,24 @@ export default function App() {
     }
   };
 
-  const handleAnularFactura = async (idFactura: number, motivo: string): Promise<{ factura: Factura; notaCredito: Factura | null }> => {
+  // Solo la lista de comprobantes (la pantalla de facturación la refresca mientras haya alguno en cola).
+  const recargarFacturas = async () => {
+    const res = await fetch('/api/facturas');
+    if (res.ok) setFacturas(await res.json());
+  };
+
+  // Reintentos (Administrador): con clave nueva un RECHAZADO, o el envío de uno en ERROR.
+  const reintentarComprobante = async (idFactura: number, ruta: 'reintentar-clave-nueva' | 'reintentar-envio'): Promise<Factura> => {
+    const res = await fetch(`/api/facturas/${idFactura}/${ruta}`, { method: 'POST' });
+    const data = await res.json();
+    await recargarFacturacion().catch(() => {});
+    if (!res.ok) throw new Error(data.error || 'No se pudo reintentar el comprobante.');
+    return data;
+  };
+  const handleReintentarClaveNueva = (idFactura: number) => reintentarComprobante(idFactura, 'reintentar-clave-nueva');
+  const handleReintentarEnvio = (idFactura: number) => reintentarComprobante(idFactura, 'reintentar-envio');
+
+  const handleAnularFactura = async (idFactura: number, motivo: string): Promise<{ factura: Factura; notaCredito: Factura | null; aviso?: string }> => {
     const res = await fetch(`/api/facturas/${idFactura}/anular`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -869,7 +886,7 @@ export default function App() {
     const data = await res.json();
     await recargarFacturacion().catch(() => {});
     if (!res.ok) throw new Error(data.error || 'No se pudo anular la factura.');
-    return { factura: data.factura, notaCredito: data.notaCredito };
+    return { factura: data.factura, notaCredito: data.notaCredito, aviso: data.aviso };
   };
 
   const handleEmitirNotaCredito = async (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }> }): Promise<Factura> => {
@@ -900,13 +917,15 @@ export default function App() {
     const res = await fetch(`/api/facturas/${idFactura}/estado`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'No se pudo verificar el estado con Hacienda.');
-    let facturaActualizada: Factura | undefined;
+    let facturaActualizada: Factura | undefined = data.factura ?? undefined;
     setFacturas(prev => prev.map(f => {
       if (f.id !== idFactura) return f;
-      facturaActualizada = { ...f, estado: data.estado, mensajeError: data.mensajeError ?? null };
-      return facturaActualizada;
+      facturaActualizada = data.factura ?? { ...f, estado: data.estado, mensajeError: data.mensajeError ?? null };
+      return facturaActualizada as Factura;
     }));
     if (!facturaActualizada) throw new Error('Factura no encontrada en el estado local.');
+    // Una Nota que Hacienda recibió aplica sus efectos (inventario, CxC): se recarga lo demás.
+    recargarFacturacion().catch(() => {});
     return facturaActualizada;
   };
 
@@ -2137,6 +2156,9 @@ export default function App() {
                   onEmitirNotaDebito={handleEmitirNotaDebito}
                   onVerificarEstadoFactura={handleVerificarEstadoFactura}
                   onReenviarCorreo={handleReenviarFacturaCorreo}
+                  onReintentarClaveNueva={handleReintentarClaveNueva}
+                  onReintentarEnvio={handleReintentarEnvio}
+                  onRecargar={recargarFacturas}
                 />
                 <CxCManager
                   cxc={cxc.filter(c => c.idCompania === selectedCompanyId)}

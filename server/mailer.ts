@@ -10,6 +10,8 @@ export interface AdjuntoEmail {
 
 export interface OutgoingEmail {
   to: string;
+  /** Copia visible (p. ej. al paciente cuando el comprobante se facturó a un tercero). */
+  cc?: string;
   subject: string;
   html: string;
   text: string;
@@ -47,6 +49,7 @@ export async function sendMail(config: CompaniaSmtpConfig, message: OutgoingEmai
   const info = await transporter.sendMail({
     from: `"${config.remitenteNombre}" <${config.remitenteCorreo}>`,
     to: message.to,
+    ...(message.cc ? { cc: message.cc } : {}),
     subject: message.subject,
     html: message.html,
     text: message.text,

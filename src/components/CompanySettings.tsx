@@ -16,8 +16,28 @@ const reservaActiva = (v: boolean | number | null | undefined): boolean => (v ==
 const CAMPOS_CONSECUTIVO = [
   { campo: 'ultimoConsecutivo', etiqueta: 'Facturas' },
   { campo: 'ultimoConsecutivoNc', etiqueta: 'Notas de Crédito' },
-  { campo: 'ultimoConsecutivoNd', etiqueta: 'Notas de Débito' }
+  { campo: 'ultimoConsecutivoNd', etiqueta: 'Notas de Débito' },
+  { campo: 'ultimoConsecutivoTe', etiqueta: 'Tiquetes' }
 ] as const;
+
+// Numeración mínima por tipo de documento (empresa que viene de otro sistema).
+const CAMPOS_NUMERACION_MINIMA = [
+  { campo: 'numeracionMinimaFe', etiqueta: 'Facturas' },
+  { campo: 'numeracionMinimaNc', etiqueta: 'Notas de Crédito' },
+  { campo: 'numeracionMinimaNd', etiqueta: 'Notas de Débito' },
+  { campo: 'numeracionMinimaTe', etiqueta: 'Tiquetes' }
+] as const;
+type CampoMinimo = typeof CAMPOS_NUMERACION_MINIMA[number]['campo'];
+const MINIMOS_VACIOS: Record<CampoMinimo, string> = { numeracionMinimaFe: '', numeracionMinimaNc: '', numeracionMinimaNd: '', numeracionMinimaTe: '' };
+
+interface ResultadoPruebaHacienda {
+  ok: boolean;
+  problemas: string[];
+  avisos: string[];
+  certificado: { sujeto: string; emisor: string; validoHasta: string; expirado: boolean } | null;
+  idp: { ok: boolean; omitido?: boolean; ambiente: string; mensaje?: string; expiraEnSeg?: number | null } | null;
+  verificadaEn: string | null;
+}
 
 const MAX_TRAMOS_DOMICILIO = 4;
 const DIAS_HORARIO: DiaSemana[] = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'];
@@ -334,8 +354,17 @@ export default function CompanySettings({
   const [haciendaInfoCertificado, setHaciendaInfoCertificado] = useState<{ sujeto: string; emisor: string; validoHasta: string; expirado: boolean } | null>(null);
   // Último consecutivo ya emitido por tipo, tal como está en el servidor, y lo que el
   // Administrador escriba para corregirlo (vacío = no tocar).
-  const [haciendaConsecutivos, setHaciendaConsecutivos] = useState({ ultimoConsecutivo: 0, ultimoConsecutivoNc: 0, ultimoConsecutivoNd: 0 });
-  const [haciendaCorreccion, setHaciendaCorreccion] = useState({ ultimoConsecutivo: '', ultimoConsecutivoNc: '', ultimoConsecutivoNd: '' });
+  const [haciendaConsecutivos, setHaciendaConsecutivos] = useState({ ultimoConsecutivo: 0, ultimoConsecutivoNc: 0, ultimoConsecutivoNd: 0, ultimoConsecutivoTe: 0 });
+  const [haciendaCorreccion, setHaciendaCorreccion] = useState({ ultimoConsecutivo: '', ultimoConsecutivoNc: '', ultimoConsecutivoNd: '', ultimoConsecutivoTe: '' });
+  // Sucursal/terminal del consecutivo, numeración mínima, correo automático y verificación.
+  const [haciendaSucursal, setHaciendaSucursal] = useState('');
+  const [haciendaTerminal, setHaciendaTerminal] = useState('');
+  const [haciendaMinimos, setHaciendaMinimos] = useState<Record<CampoMinimo, string>>(MINIMOS_VACIOS);
+  const [haciendaCorreoAutomatico, setHaciendaCorreoAutomatico] = useState(true);
+  const [haciendaVerificada, setHaciendaVerificada] = useState<{ ok: boolean; en: string | null }>({ ok: false, en: null });
+  const [haciendaPrueba, setHaciendaPrueba] = useState<ResultadoPruebaHacienda | null>(null);
+  const [haciendaTextoAjuste, setHaciendaTextoAjuste] = useState('');
+  const [haciendaAjustando, setHaciendaAjustando] = useState(false);
   const [smtpTieneContrasena, setSmtpTieneContrasena] = useState(false);
   // Ambiente y usuario ATV tal como están guardados (para detectar cambios sin guardar).
   const [haciendaGuardada, setHaciendaGuardada] = useState<{ ambiente: string; usuarioAtv: string } | null>(null);
@@ -377,7 +406,9 @@ export default function CompanySettings({
     setHaciendaCertificadoNombreNuevo('');
     setHaciendaCertificadoPin('');
     setHaciendaPasswordAtv('');
-    setHaciendaCorreccion({ ultimoConsecutivo: '', ultimoConsecutivoNc: '', ultimoConsecutivoNd: '' });
+    setHaciendaCorreccion({ ultimoConsecutivo: '', ultimoConsecutivoNc: '', ultimoConsecutivoNd: '', ultimoConsecutivoTe: '' });
+    setHaciendaPrueba(null);
+    setHaciendaTextoAjuste('');
     fetch(`/api/hacienda-config/${selectedCompanyId}`)
       .then(res => res.json())
       .then((data: HaciendaConfig) => {
@@ -388,7 +419,7 @@ export default function CompanySettings({
         setHaciendaTieneCertificado(data.tieneCertificado);
         setHaciendaCertificadoNombreArchivo(data.certificadoNombreArchivo);
         setHaciendaCertificadoVenceEn(data.certificadoVenceEn);
-        setHaciendaConsecutivos({ ultimoConsecutivo: data.ultimoConsecutivo || 0, ultimoConsecutivoNc: data.ultimoConsecutivoNc || 0, ultimoConsecutivoNd: data.ultimoConsecutivoNd || 0 });
+        aplicarConfigHacienda(data);
       })
       .catch(err => console.error('Error cargando configuración de Hacienda:', err));
   }, [selectedCompanyId]);
@@ -427,6 +458,52 @@ export default function CompanySettings({
     reader.readAsArrayBuffer(file);
   };
 
+  // Numeración, sucursal/terminal, correo automático y verificación tal como los devuelve el servidor.
+  const aplicarConfigHacienda = (data: HaciendaConfig) => {
+    setHaciendaConsecutivos({ ultimoConsecutivo: data.ultimoConsecutivo || 0, ultimoConsecutivoNc: data.ultimoConsecutivoNc || 0, ultimoConsecutivoNd: data.ultimoConsecutivoNd || 0, ultimoConsecutivoTe: data.ultimoConsecutivoTe || 0 });
+    setHaciendaSucursal(data.sucursal || '');
+    setHaciendaTerminal(data.terminal || '');
+    setHaciendaMinimos({
+      numeracionMinimaFe: String(data.numeracionMinimaFe || 0), numeracionMinimaNc: String(data.numeracionMinimaNc || 0),
+      numeracionMinimaNd: String(data.numeracionMinimaNd || 0), numeracionMinimaTe: String(data.numeracionMinimaTe || 0)
+    });
+    setHaciendaCorreoAutomatico(data.correoAutomatico !== false);
+    setHaciendaVerificada({ ok: !!data.configVerificada, en: data.configVerificadaEn ?? null });
+  };
+
+  // Sube la numeración desde una clave o consecutivo pegado de otro sistema (solo sube).
+  const handleAjustarNumeracion = async () => {
+    const texto = haciendaTextoAjuste.replace(/[\s-]/g, '');
+    if (!/^\d{20}$|^\d{50}$/.test(texto)) {
+      notify.error('Pegue una clave de 50 dígitos o un consecutivo de 20 dígitos.');
+      return;
+    }
+    const ok = await confirmar({
+      title: '¿Subir la numeración desde este número?',
+      message: 'El contador de ese tipo de comprobante queda, como mínimo, en el número pegado; el siguiente comprobante usará ese más uno. No se puede volver a bajar.',
+      confirmText: 'Subir numeración',
+      tone: 'warning'
+    });
+    if (!ok) return;
+    setHaciendaAjustando(true);
+    try {
+      const res = await fetch('/api/hacienda-config/ajustar-numeracion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texto })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'No se pudo ajustar la numeración.');
+      aplicarConfigHacienda(data.config);
+      setHaciendaTextoAjuste('');
+      notify.success(`Numeración de ${data.nombre} ajustada: el siguiente será, como mínimo, el ${data.secuencialPegado + 1}.`);
+    } catch (err: any) {
+      notify.error(err.message);
+    } finally {
+      setHaciendaAjustando(false);
+    }
+  };
+
   const handleSaveHacienda = async (e: React.FormEvent) => {
     e.preventDefault();
     setHaciendaGuardando(true);
@@ -439,10 +516,18 @@ export default function CompanySettings({
         ...(haciendaPasswordAtv.trim() ? { passwordAtv: haciendaPasswordAtv.trim() } : {}),
         ...(haciendaCertificadoBase64 ? { certificadoP12Base64: haciendaCertificadoBase64, certificadoNombreArchivo: haciendaCertificadoNombreNuevo } : {}),
         ...(haciendaCertificadoPin.trim() ? { certificadoPin: haciendaCertificadoPin.trim() } : {}),
+        ...(haciendaSucursal.trim() ? { sucursal: haciendaSucursal.trim() } : {}),
+        ...(haciendaTerminal.trim() ? { terminal: haciendaTerminal.trim() } : {}),
+        correoAutomatico: haciendaCorreoAutomatico,
+        ...Object.fromEntries(CAMPOS_NUMERACION_MINIMA
+          .filter(({ campo }) => haciendaMinimos[campo].trim() !== '')
+          .map(({ campo }) => [campo, Number(haciendaMinimos[campo])])),
         ...Object.fromEntries(CAMPOS_CONSECUTIVO
           .filter(({ campo }) => haciendaCorreccion[campo].trim() !== '')
           .map(({ campo }) => [campo, Number(haciendaCorreccion[campo])]))
       };
+      if (haciendaSucursal.trim() && !/^\d{3}$/.test(haciendaSucursal.trim())) throw new Error('La sucursal debe tener exactamente 3 dígitos (ej. 001).');
+      if (haciendaTerminal.trim() && !/^\d{5}$/.test(haciendaTerminal.trim())) throw new Error('La terminal debe tener exactamente 5 dígitos (ej. 00001).');
       const correcciones = CAMPOS_CONSECUTIVO.filter(({ campo }) => haciendaCorreccion[campo].trim() !== '');
       if (correcciones.some(({ campo }) => Number(haciendaCorreccion[campo]) < haciendaConsecutivos[campo])) {
         throw new Error('El último consecutivo solo se puede subir: bajarlo volvería a emitir números que Hacienda ya tiene.');
@@ -473,8 +558,8 @@ export default function CompanySettings({
       setHaciendaCertificadoBase64('');
       setHaciendaCertificadoNombreNuevo('');
       setHaciendaCertificadoPin('');
-      setHaciendaConsecutivos({ ultimoConsecutivo: data.ultimoConsecutivo || 0, ultimoConsecutivoNc: data.ultimoConsecutivoNc || 0, ultimoConsecutivoNd: data.ultimoConsecutivoNd || 0 });
-      setHaciendaCorreccion({ ultimoConsecutivo: '', ultimoConsecutivoNc: '', ultimoConsecutivoNd: '' });
+      aplicarConfigHacienda(data);
+      setHaciendaCorreccion({ ultimoConsecutivo: '', ultimoConsecutivoNc: '', ultimoConsecutivoNd: '', ultimoConsecutivoTe: '' });
       setHaciendaMensaje({ tipo: 'ok', texto: 'Configuración de Hacienda guardada con éxito.' });
     } catch (err: any) {
       setHaciendaMensaje({ tipo: 'error', texto: err.message });
@@ -506,19 +591,21 @@ export default function CompanySettings({
     }
   };
 
+  // «Probar configuración»: .p12 + PIN localmente y un inicio de sesión REAL en el IdP de Hacienda
+  // con el usuario ATV guardado (no envía comprobantes). Prueba lo GUARDADO, no lo escrito sin guardar.
   const handleProbarCertificado = async () => {
     setHaciendaProbando(true);
     setHaciendaMensaje(null);
     setHaciendaInfoCertificado(null);
+    setHaciendaPrueba(null);
     try {
-      const res = await fetch('/api/hacienda/verificar-certificado', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idCompania: selectedCompanyId })
-      });
+      const res = await fetch('/api/hacienda/probar-configuracion', { method: 'POST' });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'No se pudo verificar el certificado.');
-      setHaciendaInfoCertificado(data);
+      if (!res.ok) throw new Error(data.error || 'No se pudo probar la configuración.');
+      setHaciendaPrueba(data);
+      if (data.certificado) setHaciendaInfoCertificado(data.certificado);
+      setHaciendaVerificada({ ok: !!data.ok, en: data.verificadaEn ?? null });
+      if (data.ok) notify.success('La configuración de Hacienda funciona: certificado vigente e inicio de sesión correcto.');
     } catch (err: any) {
       setHaciendaMensaje({ tipo: 'error', texto: err.message });
     } finally {
@@ -1951,7 +2038,9 @@ export default function CompanySettings({
                     icon={<ShieldCheck />}
                     title="Firma digital Hacienda (facturación electrónica)"
                     description="Certificado criptográfico (.p12) y credenciales ATV para firmar comprobantes electrónicos."
-                    badge={<Badge tone={haciendaTieneCertificado ? 'success' : 'warning'}>{haciendaTieneCertificado ? 'Certificado cargado' : 'Sin certificado'}</Badge>}
+                    badge={haciendaVerificada.ok
+                      ? <Badge tone="success">Configuración verificada</Badge>
+                      : <Badge tone={haciendaTieneCertificado ? 'neutral' : 'warning'}>{haciendaTieneCertificado ? 'Sin verificar' : 'Sin certificado'}</Badge>}
                   >
                     <CardBody className="space-y-5">
                       {avisoPlataformaSinComprobantes}
@@ -1976,6 +2065,30 @@ export default function CompanySettings({
                           <div><dt className="inline font-semibold text-fg-muted">Vence: </dt><dd className="inline text-fg">{new Date(haciendaInfoCertificado.validoHasta).toLocaleDateString('es-CR')}</dd></div>
                           {haciendaInfoCertificado.expirado && <div className="text-danger font-semibold">Este certificado está VENCIDO.</div>}
                         </dl>
+                      )}
+
+                      {haciendaPrueba && (
+                        <div
+                          role={haciendaPrueba.ok ? 'status' : 'alert'}
+                          className={cx('p-3 rounded-control border text-sm space-y-1 [overflow-wrap:anywhere]',
+                            haciendaPrueba.ok ? 'bg-success-soft border-success/20 text-success' : 'bg-danger-soft border-danger/20 text-danger')}
+                        >
+                          <p className="font-semibold">{haciendaPrueba.ok ? 'Configuración verificada' : 'La configuración tiene problemas'}</p>
+                          {haciendaPrueba.idp && (
+                            <p>
+                              Inicio de sesión en Hacienda ({haciendaPrueba.idp.ambiente}): {haciendaPrueba.idp.omitido ? haciendaPrueba.idp.mensaje : haciendaPrueba.idp.ok ? 'correcto' : `falló — ${haciendaPrueba.idp.mensaje}`}
+                            </p>
+                          )}
+                          {haciendaPrueba.problemas.length > 0 && (
+                            <ul className="list-disc pl-5 space-y-0.5">{haciendaPrueba.problemas.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                          )}
+                          {haciendaPrueba.avisos.length > 0 && (
+                            <ul className="list-disc pl-5 space-y-0.5 text-warning">{haciendaPrueba.avisos.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                          )}
+                        </div>
+                      )}
+                      {!haciendaPrueba && haciendaVerificada.ok && haciendaVerificada.en && (
+                        <p className="text-xs text-success">Verificada el {new Date(haciendaVerificada.en).toLocaleString('es-CR')}.</p>
                       )}
 
                       <div>
@@ -2046,6 +2159,51 @@ export default function CompanySettings({
                         </Field>
                       </div>
 
+                      {/* Divisor en lugar de un recuadro: evita una tarjeta dentro de la tarjeta en móvil. */}
+                      <div className="pt-5 border-t border-border space-y-4">
+                        <fieldset className="min-w-0 space-y-3">
+                          <legend className="text-sm font-semibold text-fg">Numeración y envío</legend>
+                          <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                            <Field label="Sucursal" hint="3 dígitos (ej. 001)">
+                              <Input inputMode="numeric" maxLength={3} value={haciendaSucursal} placeholder="001" onChange={(e) => setHaciendaSucursal(e.target.value.replace(/\D/g, ''))} />
+                            </Field>
+                            <Field label="Terminal" hint="5 dígitos (ej. 00001)">
+                              <Input inputMode="numeric" maxLength={5} value={haciendaTerminal} placeholder="00001" onChange={(e) => setHaciendaTerminal(e.target.value.replace(/\D/g, ''))} />
+                            </Field>
+                          </div>
+                          <label className="flex items-start gap-3 min-h-11 cursor-pointer text-sm text-fg">
+                            <input type="checkbox" className="mt-0.5 w-4 h-4" checked={haciendaCorreoAutomatico} onChange={(e) => setHaciendaCorreoAutomatico(e.target.checked)} />
+                            <span>
+                              Enviar el comprobante por correo automáticamente cuando Hacienda lo acepte
+                              <span className="block text-xs text-fg-muted">Va al receptor (el paciente o el tercero facturado) con el PDF, el XML firmado y la respuesta de Hacienda. Requiere el correo SMTP activo.</span>
+                            </span>
+                          </label>
+                        </fieldset>
+
+                        <fieldset className="min-w-0 space-y-3">
+                          <legend className="text-sm font-semibold text-fg">Numeración mínima</legend>
+                          <p className="text-xs text-fg-muted">
+                            Si la clínica viene de otro sistema con la misma sucursal y terminal, indique el último número que ya usó allá: el siguiente comprobante de ese tipo usará ese más uno.
+                          </p>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                            {CAMPOS_NUMERACION_MINIMA.map(({ campo, etiqueta }) => (
+                              <Field key={campo} label={etiqueta}>
+                                <Input type="number" min="0" step="1" inputMode="numeric" value={haciendaMinimos[campo]}
+                                  onChange={(e) => setHaciendaMinimos(prev => ({ ...prev, [campo]: e.target.value }))} />
+                              </Field>
+                            ))}
+                          </div>
+                          <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                            <Field label="Ajustar desde una clave o consecutivo de otro sistema" hint="Pegue la clave de 50 dígitos o el consecutivo de 20 del último comprobante emitido allá. Solo sube la numeración." className="flex-1">
+                              <Input inputMode="numeric" value={haciendaTextoAjuste} onChange={(e) => setHaciendaTextoAjuste(e.target.value)} placeholder="506…" />
+                            </Field>
+                            <Button variant="outline" onClick={handleAjustarNumeracion} loading={haciendaAjustando} disabled={haciendaAjustando || !haciendaTextoAjuste.trim()}>
+                              Ajustar
+                            </Button>
+                          </div>
+                        </fieldset>
+                      </div>
+
                       {currentUser.rol === 'Administrador' && (
                         // Divisor en lugar de un recuadro: evita una tarjeta dentro de la tarjeta en móvil.
                         <div className="pt-5 border-t border-border">
@@ -2055,7 +2213,7 @@ export default function CompanySettings({
                               Úselo solo si Hacienda rechaza con «el documento ya fue emitido» porque esta empresa ya facturó con otro sistema.
                               Escriba el último número que ya emitió ante Hacienda; el siguiente comprobante usará ese más uno. Solo se puede subir.
                             </p>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
                               {CAMPOS_CONSECUTIVO.map(({ campo, etiqueta }) => (
                                 <Field key={campo} label={etiqueta} hint={`Último emitido: ${haciendaConsecutivos[campo]}`}>
                                   <Input
@@ -2075,7 +2233,7 @@ export default function CompanySettings({
                       <Button
                         variant="outline"
                         onClick={handleProbarCertificado}
-                        disabled={haciendaProbando || !haciendaTieneCertificado}
+                        disabled={haciendaProbando}
                         loading={haciendaProbando}
                         icon={<ShieldCheck className="w-4 h-4" aria-hidden="true" />}
                       >

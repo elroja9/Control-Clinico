@@ -116,7 +116,7 @@ describe('esperarResolucionHacienda', () => {
       .mockResolvedValueOnce(respuesta(200, { 'ind-estado': 'procesando' }))
       .mockResolvedValueOnce(respuesta(200, { 'ind-estado': 'aceptado' }));
     vi.stubGlobal('fetch', f);
-    expect((await esperarResolucionHacienda(ENDPOINTS, 't', CLAVE, 4, 0)).estado).toBe('aceptado');
+    expect((await esperarResolucionHacienda(ENDPOINTS, 't', CLAVE, { intentos: 4, esperaMs: 0, plazoMs: 12000, consultaTimeoutMs: 5000 })).estado).toBe('aceptado');
     expect(f).toHaveBeenCalledTimes(2);
   });
 
@@ -128,7 +128,7 @@ describe('esperarResolucionHacienda', () => {
     // La función espera el intervalo ANTES de cada consulta. Con 150 ms de intervalo y 400 ms de
     // plazo caben ~2 consultas (< 4 intentos) y hay ~250 ms de margen si la máquina va cargada
     // (suite en paralelo). Con 30/50 ms la primera espera podía pasarse del plazo: inestable.
-    const r = await esperarResolucionHacienda(ENDPOINTS, 't', CLAVE, 4, 150, 400);
+    const r = await esperarResolucionHacienda(ENDPOINTS, 't', CLAVE, { intentos: 4, esperaMs: 150, plazoMs: 400, consultaTimeoutMs: 5000 });
     expect(r.estado).toBe('procesando');
     expect(f.mock.calls.length).toBeLessThan(4);
   });

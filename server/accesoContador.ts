@@ -8,7 +8,10 @@ export const RUTAS_CONTADOR: Array<{ metodo: string; patron: RegExp }> = [
   { metodo: "GET", patron: /^\/api\/facturas-correo\/\d+\/xml$/ },
   // Consultas fiscales a Hacienda (CABYS, contribuyentes, tipo de cambio, exoneraciones y
   // comprobantes emitidos): solo lectura, sin datos clínicos.
-  { metodo: "GET", patron: /^\/api\/hacienda\/(cabys|cabys\/sugeridos|tipo-cambio|comprobantes)$/ },
+  // Catálogos de Hacienda (condición de venta, medios de pago) para leer los comprobantes.
+  { metodo: "GET", patron: /^\/api\/hacienda\/(cabys|cabys\/sugeridos|tipo-cambio|comprobantes|catalogos)$/ },
+  // Claves rechazadas que se reemplazaron con «Reintentar con clave nueva» (auditoría).
+  { metodo: "GET", patron: /^\/api\/facturas\/\d+\/historial-rechazos$/ },
   { metodo: "GET", patron: /^\/api\/hacienda\/(contribuyente|exoneracion|comprobantes)\/[^/]+$/ },
   { metodo: "POST", patron: /^\/api\/(logout|users)$/ },
   // Todo usuario (también el Contador) puede cambiar su propia contraseña.

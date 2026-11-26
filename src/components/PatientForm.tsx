@@ -262,7 +262,10 @@ export default function PatientForm({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
-            <Field label="Tipo de cédula (Hacienda)">
+            <Field
+              label="Tipo de cédula (Hacienda)"
+              hint={tipoId === 'EXT' ? 'Sin identificación costarricense: se le emitirá Tiquete Electrónico (o factúrele a un tercero). No se le puede vender a crédito.' : undefined}
+            >
               <Select
                 value={tipoId}
                 onChange={(e: any) => setTipoId(e.target.value as any)}

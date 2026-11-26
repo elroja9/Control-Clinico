@@ -85,17 +85,21 @@ function documentoShell(company: Company, titulo: string, cuerpoHtml: string): s
 }
 
 /** Comprobante de la factura, para adjuntar al correo del paciente. */
-export function renderFacturaPdf(params: { company: Company; patient: Patient; factura: Factura }): string {
+// `patient` es el RECEPTOR del comprobante (el paciente o el tercero a quien se facturó); si es un
+// tercero, `factura.pacienteNombre` trae el paciente atendido y se imprime como "Paciente".
+export function renderFacturaPdf(params: { company: Company; patient: Patient; factura: Factura & { mediosPagoTexto?: string | null; pacienteNombre?: string | null } }): string {
   const { company, patient, factura } = params;
   const esNotaCredito = factura.tipoDocumento === "03";
   const esNotaDebito = factura.tipoDocumento === "02";
-  const titulo = esNotaCredito ? "Nota de Crédito Electrónica" : esNotaDebito ? "Nota de Débito Electrónica" : "Factura Electrónica";
+  const titulo = esNotaCredito ? "Nota de Crédito Electrónica" : esNotaDebito ? "Nota de Débito Electrónica" : factura.tipoDocumento === "04" ? "Tiquete Electrónico" : "Factura Electrónica";
+  const hayDescuentos = (factura.lineas || []).some(l => Number(l.montoDescuento) > 0);
 
   const filas = (factura.lineas || []).map(l => `
     <tr>
       <td>${escapeHtml(l.detalle)}</td>
       <td class="cen">${l.cantidad}</td>
       <td class="der">${colones(l.precioUnitario)}</td>
+      ${hayDescuentos ? `<td class="der">${Number(l.montoDescuento) > 0 ? colones(Number(l.montoDescuento)) : "—"}</td>` : ""}
       <td class="cen">${l.porcentajeIva}%</td>
       <td class="der">${colones(l.montoTotalLinea)}</td>
     </tr>`).join("");
@@ -120,18 +124,21 @@ export function renderFacturaPdf(params: { company: Company; patient: Patient; f
       <tr><td class="et">Nombre</td><td>${escapeHtml(patient.nombreCompleto)}</td></tr>
       <tr><td class="et">Identificaci&oacute;n</td><td>${escapeHtml(patient.identificacion)}</td></tr>
       <tr><td class="et">Correo</td><td>${escapeHtml(patient.correoElectronico || "")}</td></tr>
+      ${factura.pacienteNombre ? `<tr><td class="et">Paciente</td><td>${escapeHtml(factura.pacienteNombre)}</td></tr>` : ""}
+      ${factura.mediosPagoTexto && factura.condicionVenta !== "02" ? `<tr><td class="et">Medio de pago</td><td>${escapeHtml(factura.mediosPagoTexto)}</td></tr>` : ""}
     </table>
 
     <h2>Detalle</h2>
     <table class="lineas">
       <thead><tr>
         <th>Descripci&oacute;n</th><th class="cen">Cant.</th>
-        <th class="der">Precio unit.</th><th class="cen">IVA</th><th class="der">Total</th>
+        <th class="der">Precio unit.</th>${hayDescuentos ? `<th class="der">Desc.</th>` : ""}<th class="cen">IVA</th><th class="der">Total</th>
       </tr></thead>
       <tbody>${filas}</tbody>
     </table>
 
     <table class="datos" style="margin-top:12px;width:270px;margin-left:auto;">
+      ${Number(factura.totalDescuentos) > 0 ? `<tr><td class="et">Descuentos</td><td class="der">${colones(Number(factura.totalDescuentos))}</td></tr>` : ""}
       <tr><td class="et">Subtotal</td><td class="der">${colones(factura.subtotal)}</td></tr>
       <tr><td class="et">IVA</td><td class="der">${colones(factura.totalIva)}</td></tr>
       <tr><td class="et tot">TOTAL</td><td class="der tot">${colones(factura.total)}</td></tr>

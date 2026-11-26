@@ -497,6 +497,7 @@ export default function ReportView({ consultation, patient, company, servicios, 
           idCita={null}
           idConsulta={consultation.id}
           nombrePaciente={patient.nombreCompleto}
+          paciente={patient}
           servicios={companyServicios}
           ivaPorDefecto={company.ivaPorDefecto}
           plazoCreditoDefecto={company.plazoCreditoClientesDias}

@@ -21,7 +21,7 @@ describe('fechaEmisionCR', () => {
 describe('generarClaveNumerica', () => {
   it('usa el día de Costa Rica, el mismo de <FechaEmision>', () => {
     const fecha = new Date('2026-10-01T02:00:00Z'); // 30/09 a las 8 p.m. en Costa Rica
-    const clave = generarClaveNumerica('3-101-123456', generarConsecutivo(1), fecha);
+    const clave = generarClaveNumerica('3-101-123456', generarConsecutivo(1, '001', '00001', '01'), fecha);
     expect(clave).toHaveLength(50);
     expect(clave.slice(0, 9)).toBe('506300926');
     expect(fechaEmisionCR(fecha).slice(0, 10)).toBe('2026-09-30');
@@ -44,7 +44,7 @@ const base = () => {
   const lineas = calcularLineas([{ codigoCabys: '8610000000000', detalle: 'Consulta', unidadMedida: 'Sp', cantidad: 1, precioUnitario: 10000, porcentajeIva: 4 }]);
   return {
     clave: '5'.repeat(50),
-    consecutivo: generarConsecutivo(1),
+    consecutivo: generarConsecutivo(1, '001', '00001', '01'),
     fechaEmision: new Date('2026-09-30T15:00:00Z'),
     emisor: { nombre: 'Clinica', nombreComercial: '', tipoIdentificacion: '02', identificacion: '3101123456', correoElectronico: 'a@b.cr', provincia: '1', canton: '01', distrito: '01', otrasSenas: 'x', codigoActividad: '869001' },
     receptor: { nombre: 'Paciente', tipoIdentificacion: '01', identificacion: '101110111' },

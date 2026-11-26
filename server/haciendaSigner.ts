@@ -20,16 +20,18 @@ Application.setEngine('NodeJS', webcrypto as unknown as Crypto);
 // depende xadesjs) los busca aquí en vez de asumir un engine por defecto.
 setNodeDependencies({ DOMParser, XMLSerializer, xpath });
 
-// Identificador y hash de la política de firma XAdES-EPES vigente para Hacienda Costa Rica.
-// Verificados contra el ejemplo OFICIAL que trae el propio Ministerio de Hacienda en
-// "ANEXOS Y ESTRUCTURAS_V4.4.pdf" (página 86 de 98, cuatro ejemplos de firma distintos,
-// todos consistentes en este mismo valor) — NO el identificador de 2016
-// (tribunet.hacienda.go.cr/.../DGT-R-48-2016.pdf) que trae el paquete comunitario
-// "haciendacostarica-signer" en npm: ese dominio y resolución están desactualizados y Hacienda
-// rechazaría la firma con ellos.
-const POLITICA_FIRMA_URL =
-  'https://cdn.comprobanteselectronicos.go.cr/xml-schemas/Resoluci%C3%B3n_General_sobre_disposiciones_t%C3%A9cnicas_comprobantes_electr%C3%B3nicos_para_efectos_tributarios.pdf';
-const POLITICA_FIRMA_HASH_SHA256 = 'DWxin1xWOeI8OuWQXazh4VjLWAaCLAA954em7DMh0h8=';
+// Identificador y hash de la política de firma XAdES-EPES vigente para Hacienda Costa Rica: se leen
+// de parametros_sistema (hacienda_politica_firma_url / hacienda_politica_firma_hash) y server.ts los
+// pasa a firmarXadesEpes. Los valores sembrados en docs/sql/2026-11-27-facturacion-robusta.sql se
+// verificaron contra el ejemplo OFICIAL de "ANEXOS Y ESTRUCTURAS_V4.4.pdf" (página 86 de 98) — NO
+// el identificador de 2016 (tribunet.hacienda.go.cr/.../DGT-R-48-2016.pdf) del paquete comunitario
+// "haciendacostarica-signer": ese dominio y resolución están desactualizados.
+export interface PoliticaFirma {
+  /** URL (identificador OIDAsURI) de la política. */
+  url: string;
+  /** Digest SHA-256 en base64 del documento de la política. */
+  hashSha256: string;
+}
 
 const ALGORITMO_FIRMA: RsaHashedImportParams = {
   name: 'RSASSA-PKCS1-v1_5',
@@ -137,7 +139,8 @@ export function verificarLlaveP12(p12Base64: string, pin: string): InfoCertifica
  * Firma un XML de Hacienda Costa Rica (Factura o Nota de Crédito Electrónica) con XAdES-EPES,
  * usando la llave criptográfica (.p12) y el PIN de la empresa.
  */
-export async function firmarXadesEpes(xml: string, p12Base64: string, pin: string): Promise<string> {
+export async function firmarXadesEpes(xml: string, p12Base64: string, pin: string, politica: PoliticaFirma): Promise<string> {
+  if (!politica?.url || !politica?.hashSha256) throw new Error('Falta configurar la política de firma de Hacienda (parámetros del sistema).');
   const { certificadoBase64, llavePrivadaBase64, llavePublicaBase64 } = separarP12(p12Base64, pin);
 
   const privateKey = await webcrypto.subtle.importKey(
@@ -181,10 +184,10 @@ export async function firmarXadesEpes(xml: string, p12Base64: string, pin: strin
       signingCertificate: { certificate: certificadoBase64, digestAlgorithm: 'SHA-1' },
       policy: {
         hash: 'SHA-256',
-        digestValue: POLITICA_FIRMA_HASH_SHA256,
+        digestValue: politica.hashSha256,
         identifier: {
           qualifier: 'OIDAsURI',
-          value: POLITICA_FIRMA_URL
+          value: politica.url
         }
       }
     }

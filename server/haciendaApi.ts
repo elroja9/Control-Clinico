@@ -9,8 +9,10 @@
 export type AmbienteHacienda = "SANDBOX" | "PRODUCCION" | "PRUEBAS_LOCAL";
 
 // Sin límite, un IdP o API de recepción que acepta la conexión y nunca responde deja colgada la
-// solicitud de facturar indefinidamente. Mismo valor que usa el POS. Exportado para que todo fetch
-// a Hacienda (también las consultas públicas de server/haciendaPublica.ts) use el mismo.
+// solicitud de facturar indefinidamente. El valor vigente sale de parametros_sistema
+// (hacienda_fetch_timeout_ms) y server.ts lo pasa a cada función; este es solo el valor por
+// omisión documentado de los parámetros opcionales (el mismo del POS y el que siembra la
+// migración), para las consultas públicas de server/haciendaPublica.ts y las pruebas.
 export const HACIENDA_FETCH_TIMEOUT_MS = 20000;
 
 export class HaciendaApiError extends Error {}
@@ -53,7 +55,14 @@ export function resolverEndpointsHacienda(ambiente: AmbienteHacienda, leer: Lect
   };
 }
 
-export async function obtenerTokenHacienda(endpoints: EndpointsHacienda, usuarioAtv: string, passwordAtv: string): Promise<string> {
+export interface TokenHacienda {
+  token: string;
+  /** Vigencia que informó el IdP (expires_in, segundos); null si no la informó. */
+  expiraEnSeg: number | null;
+}
+
+/** Login en el IdP de Hacienda: token y su vigencia. */
+export async function obtenerTokenHaciendaConVigencia(endpoints: EndpointsHacienda, usuarioAtv: string, passwordAtv: string, timeoutMs = HACIENDA_FETCH_TIMEOUT_MS): Promise<TokenHacienda> {
   const body = new URLSearchParams({
     grant_type: "password",
     client_id: endpoints.clientId,
@@ -65,7 +74,7 @@ export async function obtenerTokenHacienda(endpoints: EndpointsHacienda, usuario
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
-    signal: AbortSignal.timeout(HACIENDA_FETCH_TIMEOUT_MS)
+    signal: AbortSignal.timeout(timeoutMs)
   });
 
   if (!res.ok) {
@@ -76,13 +85,70 @@ export async function obtenerTokenHacienda(endpoints: EndpointsHacienda, usuario
   if (!data.access_token || typeof data.access_token !== "string") {
     throw new HaciendaApiError("Hacienda no devolvió un access_token.");
   }
-  return data.access_token;
+  const expira = Number(data.expires_in);
+  return { token: data.access_token, expiraEnSeg: Number.isFinite(expira) && expira > 0 ? expira : null };
+}
+
+export async function obtenerTokenHacienda(endpoints: EndpointsHacienda, usuarioAtv: string, passwordAtv: string, timeoutMs = HACIENDA_FETCH_TIMEOUT_MS): Promise<string> {
+  return (await obtenerTokenHaciendaConVigencia(endpoints, usuarioAtv, passwordAtv, timeoutMs)).token;
+}
+
+/**
+ * Caché de tokens del IdP por (empresa, ambiente, usuario ATV). Un token vale hasta
+ * `expires_in − margen`; sin `expires_in` no se guarda. Se invalida al recibir un 401 y al cambiar
+ * las credenciales o el certificado de la empresa (invalidarEmpresa). Pura: el reloj se inyecta.
+ */
+export interface CacheTokensHacienda {
+  obtener(clave: string): string | null;
+  guardar(clave: string, token: TokenHacienda): void;
+  invalidar(clave: string): void;
+  invalidarEmpresa(idCompania: number): void;
+  tamano(): number;
+}
+
+export function claveCacheToken(idCompania: number, ambiente: AmbienteHacienda, usuarioAtv: string): string {
+  return `${idCompania}|${ambiente}|${usuarioAtv}`;
+}
+
+export function crearCacheTokensHacienda(opciones: { margenSeg: () => number; ahora?: () => number }): CacheTokensHacienda {
+  const ahora = opciones.ahora ?? (() => Date.now());
+  const entradas = new Map<string, { token: string; expira: number }>();
+  return {
+    obtener(clave) {
+      const e = entradas.get(clave);
+      if (!e) return null;
+      if (e.expira <= ahora()) {
+        entradas.delete(clave);
+        return null;
+      }
+      return e.token;
+    },
+    guardar(clave, t) {
+      if (!t.expiraEnSeg) return;
+      const vigenciaMs = (t.expiraEnSeg - Math.max(0, opciones.margenSeg())) * 1000;
+      if (vigenciaMs <= 0) return;
+      entradas.set(clave, { token: t.token, expira: ahora() + vigenciaMs });
+    },
+    invalidar(clave) {
+      entradas.delete(clave);
+    },
+    invalidarEmpresa(idCompania) {
+      for (const k of Array.from(entradas.keys())) if (k.startsWith(`${idCompania}|`)) entradas.delete(k);
+    },
+    tamano() {
+      return entradas.size;
+    }
+  };
 }
 
 export interface EnvioHaciendaResultado {
   aceptadoParaProcesar: boolean;
   location: string | null;
   mensaje: string | null;
+  /** Código HTTP de la respuesta (para distinguir 401, clave repetida, 5xx…). */
+  status?: number;
+  /** Header X-Error-Cause de Hacienda, si vino. */
+  causa?: string | null;
 }
 
 /**
@@ -99,6 +165,7 @@ export async function enviarFacturaHacienda(params: {
   tipoIdentificacionReceptor?: string;
   cedulaReceptor?: string;
   xmlFirmado: string;
+  timeoutMs?: number;
 }): Promise<EnvioHaciendaResultado> {
   const { endpoints, token, clave, fechaEmisionIso, tipoIdentificacionEmisor, cedulaEmisor, tipoIdentificacionReceptor, cedulaReceptor, xmlFirmado } = params;
 
@@ -119,18 +186,18 @@ export async function enviarFacturaHacienda(params: {
       "Authorization": `Bearer ${token}`
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(HACIENDA_FETCH_TIMEOUT_MS)
+    signal: AbortSignal.timeout(params.timeoutMs ?? HACIENDA_FETCH_TIMEOUT_MS)
   });
 
   const texto = await res.text().catch(() => "");
   if (res.status === 201 || res.status === 202) {
-    return { aceptadoParaProcesar: true, location: res.headers.get("location"), mensaje: null };
+    return { aceptadoParaProcesar: true, location: res.headers.get("location"), mensaje: null, status: res.status, causa: null };
   }
   // Hacienda explica el rechazo de la recepción en el header X-Error-Cause, a menudo con el cuerpo
   // vacío (así responde, por ejemplo, a un comprobante que ya había recibido).
   const causa = res.headers.get("x-error-cause");
   const detalle = [causa, texto.slice(0, 500)].filter(Boolean).join(" — ");
-  return { aceptadoParaProcesar: false, location: null, mensaje: `Hacienda rechazó el envío (${res.status})${detalle ? `: ${detalle}` : ""}` };
+  return { aceptadoParaProcesar: false, location: null, mensaje: `Hacienda rechazó el envío (${res.status})${detalle ? `: ${detalle}` : ""}`, status: res.status, causa };
 }
 
 export interface EstadoHaciendaResultado {
@@ -144,6 +211,8 @@ export interface EstadoHaciendaResultado {
   respuestaXmlBase64: string | null;
   // Motivo legible del rechazo (<DetalleMensaje> del MensajeHacienda), si lo hay.
   detalleMensaje: string | null;
+  // Código HTTP de la consulta (401 = token vencido), si hubo respuesta.
+  httpStatus?: number;
 }
 
 /** Extrae <DetalleMensaje> del MensajeHacienda (base64) — es donde Hacienda explica un rechazo. */
@@ -176,7 +245,7 @@ export async function consultarEstadoHacienda(endpoints: EndpointsHacienda, toke
     return { estado: "no_encontrado", respuestaXmlBase64: null, detalleMensaje: null };
   }
   if (!res.ok) {
-    return { estado: "error", respuestaXmlBase64: null, detalleMensaje: res.headers.get("x-error-cause") };
+    return { estado: "error", respuestaXmlBase64: null, detalleMensaje: res.headers.get("x-error-cause"), httpStatus: res.status };
   }
   const data: any = await res.json().catch(() => null);
   const estadoCrudo = String(data?.["ind-estado"] || "").toLowerCase();
@@ -202,14 +271,27 @@ export async function consultarEstadoHacienda(endpoints: EndpointsHacienda, toke
  * (POST /api/facturas/:id/estado), nunca reenviarlo: Hacienda rechaza el reenvío de una clave que ya
  * tiene, y el POS llegó a reintentar así una factura durante 7 horas que Hacienda ya había aceptado.
  */
-export async function esperarResolucionHacienda(endpoints: EndpointsHacienda, token: string, clave: string, intentos = 4, esperaMs = 2000, plazoMs = 12000): Promise<EstadoHaciendaResultado> {
+export interface ParametrosSondeo {
+  intentos: number;
+  esperaMs: number;
+  /** Plazo total del sondeo. */
+  plazoMs: number;
+  /** Tope de cada consulta individual. */
+  consultaTimeoutMs: number;
+}
+
+/** Valores por omisión documentados (los mismos que siembra la migración en parametros_sistema). */
+export const SONDEO_POR_OMISION: ParametrosSondeo = { intentos: 4, esperaMs: 2000, plazoMs: 12000, consultaTimeoutMs: 5000 };
+
+export async function esperarResolucionHacienda(endpoints: EndpointsHacienda, token: string, clave: string, sondeo: ParametrosSondeo = SONDEO_POR_OMISION): Promise<EstadoHaciendaResultado> {
+  const { intentos, esperaMs, plazoMs, consultaTimeoutMs } = sondeo;
   const limite = Date.now() + plazoMs;
   let ultimo: EstadoHaciendaResultado = { estado: "recibido", respuestaXmlBase64: null, detalleMensaje: null };
   for (let i = 0; i < intentos; i++) {
     await new Promise(r => setTimeout(r, esperaMs));
     const restante = limite - Date.now();
     if (restante <= 0) break;
-    const consulta = await consultarEstadoHacienda(endpoints, token, clave, Math.min(5000, restante));
+    const consulta = await consultarEstadoHacienda(endpoints, token, clave, Math.min(consultaTimeoutMs, restante));
     if (consulta.estado === "aceptado" || consulta.estado === "rechazado") return consulta;
     ultimo = consulta;
   }
@@ -296,6 +378,7 @@ export async function listarComprobantesEmitidos(params: {
   offset: number;
   limit: number;
   endpoints: EndpointsHacienda;
+  timeoutMs?: number;
 }): Promise<ListaComprobantesHacienda> {
   const { token, ambiente, emisor, offset, limit, endpoints } = params;
   if (ambiente === "PRUEBAS_LOCAL") {
@@ -313,7 +396,7 @@ export async function listarComprobantesEmitidos(params: {
   try {
     res = await fetch(url, {
       headers: { "Authorization": `Bearer ${token}`, "Accept": "application/json" },
-      signal: AbortSignal.timeout(HACIENDA_FETCH_TIMEOUT_MS)
+      signal: AbortSignal.timeout(params.timeoutMs ?? HACIENDA_FETCH_TIMEOUT_MS)
     });
   } catch (err: any) {
     return { items: [], errorCausa: `No se pudo comunicar con Hacienda (${err?.name === "TimeoutError" ? "tiempo de espera agotado" : err?.message || err}).` };
