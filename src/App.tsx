@@ -100,6 +100,9 @@ type TabId = 'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' 
 
 const TAB_IDS: TabId[] = ['dashboard', 'patients', 'consultations', 'agenda', 'branding', 'saas-admin', 'mi-perfil', 'reservas-online', 'facturacion', 'cxp', 'reportes-fiscales', 'reporteria', 'casos', 'manual'];
 
+// Pestañas permitidas al rol Contador (finanzas + perfil + manual).
+const TABS_CONTADOR: TabId[] = ['facturacion', 'cxp', 'reportes-fiscales', 'mi-perfil', 'manual'];
+
 // La pestaña activa vive en el hash (#/agenda): refrescar la página no la pierde, se puede
 // enlazar directo a una sección y el botón "Atrás" del navegador vuelve a la anterior.
 const tabFromHash = (): TabId => {
@@ -155,6 +158,8 @@ export default function App() {
   // httpOnly firmada por el servidor (ver server/auth.ts) y se recupera vía GET /api/me al
   // montar la app — así un valor de localStorage manipulado no puede simular un login.
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  // Contador: solo finanzas, en solo lectura y sin datos clínicos (el servidor lo hace cumplir).
+  const esContador = currentUser?.rol === 'Contador';
   const [authChecked, setAuthChecked] = useState(false);
 
   const [citas, setCitas] = useState<Cita[]>(() => {
@@ -238,6 +243,8 @@ export default function App() {
       .then(data => { if (data && data.length > 0) setCompanies(data); })
       .catch(err => console.log("MySQL offline, using local storage fallback for companies"));
 
+    // El Contador no carga nada clínico ni de configuración (el servidor le respondería 403).
+    if (!esContador) {
     fetch('/api/users')
       .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
       .then(data => { if (data && data.length > 0) setUsers(data); })
@@ -282,6 +289,7 @@ export default function App() {
       .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
       .then(data => { if (Array.isArray(data)) setPlantillasDieta(data); })
       .catch(err => console.log("MySQL offline, using local fallback for plantillas de dieta"));
+    }
 
     fetch('/api/servicios')
       .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
@@ -308,10 +316,12 @@ export default function App() {
       .then(data => { if (data) setCxp(data); })
       .catch(err => console.log("MySQL offline, no CxP history available"));
 
-    fetch('/api/casos')
-      .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
-      .then(data => { if (Array.isArray(data)) setCasos(data); })
-      .catch(err => console.log("No se pudieron cargar los casos legales"));
+    if (!esContador) {
+      fetch('/api/casos')
+        .then(res => { if (!res.ok) throw new Error("API error"); return res.json(); })
+        .then(data => { if (Array.isArray(data)) setCasos(data); })
+        .catch(err => console.log("No se pudieron cargar los casos legales"));
+    }
   }, [currentUser?.id]);
 
   // Citas created externally (public online booking, src/components/PublicBooking.tsx —
@@ -319,7 +329,7 @@ export default function App() {
   // already-open tab. Refetch on tab refocus (fast path for "I just came back to check")
   // plus a timer as a safety net for a tab that stays continuously visible.
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || esContador) return;
 
     const cargarCitas = () => {
       fetch('/api/citas')
@@ -398,8 +408,15 @@ export default function App() {
   const activeCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
   // App Navigation Tabs (sincronizadas con el hash de la URL, ver tabFromHash)
-  const [activeTab, setActiveTabState] = useState<TabId>(tabFromHash);
+  const [activeTabState, setActiveTabState] = useState<TabId>(tabFromHash);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // El Contador solo ve estas pestañas: cualquier otra (hash manual, enlace viejo) cae en Facturación.
+  // El servidor además le niega los datos clínicos (lista blanca por rol), esto es solo la capa visual.
+  const activeTab: TabId = esContador && !TABS_CONTADOR.includes(activeTabState) ? 'facturacion' : activeTabState;
+  useEffect(() => {
+    if (esContador && activeTab !== activeTabState) window.location.hash = `/${activeTab}`;
+  }, [esContador, activeTab, activeTabState]);
 
   const setActiveTab = (tab: TabId) => {
     setActiveTabState(tab);
@@ -642,28 +659,30 @@ export default function App() {
   };
 
   // --- Agenda / Citas / SMTP / SOAP Integration Handlers ---
-  const handleSaveCita = (savedCita: Cita) => {
-    fetch('/api/citas', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(savedCita)
-    })
-    .then(res => res.json())
-    .then(data => {
-      setCitas(prev => {
-        const exists = prev.some(c => c.id === data.id);
-        return exists ? prev.map(c => c.id === data.id ? data : c) : [...prev, data];
+  // Devuelve la cita guardada (con el id real del servidor) y, si el servidor la envía, una
+  // `advertencia`. Rechaza con el mensaje de error del servidor para que la agenda lo muestre.
+  const handleSaveCita = async (savedCita: Cita): Promise<Cita & { advertencia?: string }> => {
+    let res: Response;
+    try {
+      res = await fetch('/api/citas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(savedCita)
       });
-    })
-    .catch(err => {
+    } catch (err) {
       console.error("Error saving cita to MySQL:", err);
-      const exists = citas.some(c => c.id === savedCita.id);
-      if (exists) {
-        setCitas(prev => prev.map(c => c.id === savedCita.id ? savedCita : c));
-      } else {
-        setCitas(prev => [...prev, savedCita]);
-      }
+      throw new Error('No se pudo conectar con el servidor para guardar la cita.');
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'No se pudo guardar la cita.');
+    const { advertencia, ...cita } = data as Cita & { advertencia?: string };
+    setCitas(prev => {
+      // Una cita nueva se envía con un id provisional (Date.now): el servidor devuelve el real.
+      const sinProvisional = cita.id !== savedCita.id ? prev.filter(c => c.id !== savedCita.id) : prev;
+      const exists = sinProvisional.some(c => c.id === cita.id);
+      return exists ? sinProvisional.map(c => c.id === cita.id ? cita : c) : [...sinProvisional, cita];
     });
+    return advertencia ? { ...cita, advertencia } : cita;
   };
 
   const handleSaveCalendarBlock = (block: CalendarBlock) => {
@@ -1225,7 +1244,7 @@ export default function App() {
   const evaDistribution = getEvaDistribution();
   const hayConsultasFisio = filteredConsultationsByCompany.some(c => c.tipo === 'Fisioterapia');
 
-  const navGroups: { label: string; items: NavItem[] }[] = [
+  const navGroupsTodos: { label: string; items: NavItem[] }[] = [
     {
       label: esLegal ? 'Despacho' : 'Clínica',
       items: [
@@ -1258,6 +1277,13 @@ export default function App() {
       ]
     }
   ];
+
+  // El Contador solo ve Finanzas (Facturación, CxP, Reportes Fiscales) más Mi Perfil y Manual.
+  const navGroups = esContador
+    ? navGroupsTodos
+        .map(g => ({ ...g, items: g.items.filter(i => TABS_CONTADOR.includes(i.id)) }))
+        .filter(g => g.items.length > 0)
+    : navGroupsTodos;
 
   const badgeLabel = (id: TabId) =>
     id === 'agenda' ? 'citas sin confirmar' : id === 'cxp' ? 'cuentas pendientes' : id === 'facturacion' ? 'comprobantes' : id === 'casos' ? 'documentos pendientes' : 'registros';
@@ -1451,6 +1477,7 @@ export default function App() {
 
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           {/* Resumen rápido (oculto en móvil/tablet) */}
+          {!esContador && (
           <div className="hidden xl:flex items-center gap-4 text-xs font-medium text-fg-muted bg-surface-muted px-3.5 py-2 rounded-control">
             <div className="flex items-center gap-1.5">
               <Users className="w-3.5 h-3.5" aria-hidden="true" />
@@ -1462,6 +1489,7 @@ export default function App() {
               <span>{filteredConsultationsByCompany.length} consultas</span>
             </div>
           </div>
+          )}
 
           <Badge tone="brand" className="hidden sm:inline-flex">Hacienda CR</Badge>
 
@@ -2095,6 +2123,7 @@ export default function App() {
                   company={activeCompany}
                   servicios={servicios}
                   puedeAnular={currentUser.rol === 'Administrador'}
+                  soloLectura={esContador}
                   onAnularFactura={handleAnularFactura}
                   onEmitirNotaCredito={handleEmitirNotaCredito}
                   onEmitirNotaDebito={handleEmitirNotaDebito}
@@ -2105,6 +2134,7 @@ export default function App() {
                   cxc={cxc.filter(c => c.idCompania === selectedCompanyId)}
                   patients={filteredPatientsByCompany}
                   onRegistrarPago={handleRegistrarPagoCxc}
+                  soloLectura={esContador}
                 />
               </div>
             )}
@@ -2115,6 +2145,7 @@ export default function App() {
                 <ProveedorManager
                   proveedores={proveedores.filter(p => p.idCompania === selectedCompanyId)}
                   onSaveProveedor={handleSaveProveedor}
+                  soloLectura={esContador}
                 />
                 <CxPManager
                   cxp={cxp.filter(c => c.idCompania === selectedCompanyId)}
@@ -2124,13 +2155,14 @@ export default function App() {
                   onCrearCxp={handleCrearCxp}
                   onRegistrarPago={handleRegistrarPagoCxp}
                   onImportarXml={handleImportarXmlCxp}
+                  soloLectura={esContador}
                 />
               </div>
             )}
 
             {/* ================= REPORTES FISCALES D-104 / D-101 ================= */}
             {activeTab === 'reportes-fiscales' && (
-              <ReportesFiscales company={activeCompany} />
+              <ReportesFiscales company={activeCompany} soloLectura={esContador} />
             )}
 
             {/* ================= REPORTERÍA DE CLIENTES Y SESIONES ================= */}

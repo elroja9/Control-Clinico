@@ -30,6 +30,7 @@ interface CxPManagerProps {
   }) => Promise<void>;
   onRegistrarPago: (idCuentaPagar: number, monto: number, medioPago: string, referencia: string) => Promise<void>;
   onImportarXml: (xmlTexto: string, alimentaInventario: boolean) => Promise<ImportarXmlResultado>;
+  soloLectura?: boolean; // Contador: solo consulta (sin crear, importar, pagar ni eliminar)
 }
 
 // Con la fecha de hoy en Costa Rica: con la fecha UTC, después de las 6 p.m. una cuenta que vence
@@ -54,7 +55,7 @@ interface LineaForm {
   costoUnitario: string;
 }
 
-export default function CxPManager({ cxp, proveedores, articulos, plazoCreditoDefecto, onCrearCxp, onRegistrarPago, onImportarXml }: CxPManagerProps) {
+export default function CxPManager({ cxp, proveedores, articulos, plazoCreditoDefecto, onCrearCxp, onRegistrarPago, onImportarXml, soloLectura = false }: CxPManagerProps) {
   const [filtro, setFiltro] = useState<'TODAS' | 'PENDIENTE' | 'VENCIDA' | 'PAGADA'>('TODAS');
 
   // idFacturaCorreo: el XML vino de la bandeja de correo; tras importarlo se marca allí como IMPORTADA.
@@ -279,6 +280,8 @@ export default function CxPManager({ cxp, proveedores, articulos, plazoCreditoDe
             <p className="text-[11px] text-slate-500">Facturas de proveedores y sus abonos</p>
           </div>
         </div>
+        {/* Contador (soloLectura): sin crear, importar ni pagar */}
+        {!soloLectura && (
         <div className="flex items-center gap-2">
           {!formAbierto && (
             <button onClick={abrirForm} className="flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all">
@@ -295,10 +298,12 @@ export default function CxPManager({ cxp, proveedores, articulos, plazoCreditoDe
             <input type="file" accept=".xml" onChange={handleXmlFileChange} className="hidden" />
           </label>
         </div>
+        )}
       </div>
 
       <BandejaFacturasCorreo
         version={bandejaVersion}
+        soloLectura={soloLectura}
         onImportar={(f, xml) => {
           setXmlError('');
           setXmlResultado(null);
@@ -510,7 +515,7 @@ export default function CxPManager({ cxp, proveedores, articulos, plazoCreditoDe
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${ESTADO_ESTILO[estado]}`}>{estado}</span>
-                  {c.estado === 'PENDIENTE' && (
+                  {!soloLectura && c.estado === 'PENDIENTE' && (
                     <button type="button" onClick={() => abrirAbono(c)} title="Registrar abono" className="w-10 h-10 flex items-center justify-center rounded-lg text-emerald-700 hover:bg-emerald-50" aria-label={`Registrar abono a ${nombreProveedor(c.idProveedor)}${c.numeroFacturaProveedor ? `, factura ${c.numeroFacturaProveedor}` : ''}`}>
                       <DollarSign className="w-4 h-4" aria-hidden="true" />
                     </button>

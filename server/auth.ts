@@ -20,7 +20,7 @@ function getSessionKey(): Buffer {
 export interface SessionPayload {
   userId: number;
   idCompania: number;
-  rol: "Administrador" | "Profesional";
+  rol: "Administrador" | "Profesional" | "Contador";
 }
 
 export function createSessionToken(payload: SessionPayload): string {

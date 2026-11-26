@@ -114,7 +114,7 @@ export default function CompanySettings({
   const [newUserUsuario, setNewUserUsuario] = useState('');
   const [newUserCorreo, setNewUserCorreo] = useState('');
   const [newUserContrasena, setNewUserContrasena] = useState('');
-  const [newUserRol, setNewUserRol] = useState<'Administrador' | 'Profesional'>('Profesional');
+  const [newUserRol, setNewUserRol] = useState<'Administrador' | 'Profesional' | 'Contador'>('Profesional');
 
   const [horario, setHorario] = useState<HorarioAtencion>(currentCompany.horarioAtencion || DEFAULT_HORARIO_ATENCION);
   const [horarioGuardado, setHorarioGuardado] = useState(false);
@@ -1417,12 +1417,19 @@ export default function CompanySettings({
                 <label htmlFor="companyset-rol" className="block text-slate-600 font-medium mb-1">Rol</label>
                 <select id="companyset-rol"
                   value={newUserRol}
-                  onChange={(e) => setNewUserRol(e.target.value as 'Administrador' | 'Profesional')}
+                  onChange={(e) => setNewUserRol(e.target.value as 'Administrador' | 'Profesional' | 'Contador')}
+                  aria-describedby="companyset-rol-ayuda"
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800"
                 >
                   <option value="Profesional">Profesional</option>
                   <option value="Administrador">Administrador</option>
+                  <option value="Contador">Contador</option>
                 </select>
+                {newUserRol === 'Contador' && (
+                  <p id="companyset-rol-ayuda" className="text-[11px] text-slate-500 mt-1">
+                    Contador: acceso de solo lectura a facturación, CxP y reportes fiscales; sin acceso a expedientes ni citas.
+                  </p>
+                )}
               </div>
               <div className="flex gap-2 justify-end pt-1">
                 <button
@@ -1448,7 +1455,10 @@ export default function CompanySettings({
               <div key={u.id} className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg">
                 <div>
                   <span className="font-semibold text-slate-800 block">{u.nombre}</span>
-                  <span className="text-[11px] text-slate-500">{u.usuario} &middot; {u.rol}</span>
+                  <span className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                    {u.usuario}
+                    <Badge tone={u.rol === 'Administrador' ? 'brand' : u.rol === 'Contador' ? 'info' : 'neutral'}>{u.rol}</Badge>
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${u.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>

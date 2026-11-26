@@ -126,7 +126,9 @@ export function renderCitaEmail(params: {
 
   const intro =
     tipoNotif === "CONFIRMACION"
-      ? "Le confirmamos que su cita ha sido programada con éxito:"
+      ? cita.estadoCita === "CONFIRMADA"
+        ? "Le confirmamos que su cita ha sido confirmada:"
+        : "Su cita ha sido registrada, pendiente de confirmación:"
       : tipoNotif === "CANCELACION"
       ? "Le informamos que su cita ha sido CANCELADA:"
       : "Le informamos que su cita ha sido modificada. Estos son los nuevos detalles:";

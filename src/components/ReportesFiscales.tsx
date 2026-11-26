@@ -6,6 +6,7 @@ import { colones } from '../utils/facturacion';
 
 interface ReportesFiscalesProps {
   company: Company;
+  soloLectura?: boolean; // Contador: consulta los reportes sin cerrar períodos ni editar gastos
 }
 
 const MESES_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
@@ -35,7 +36,7 @@ const ETIQUETA_GASTO: Record<keyof GastosManualesAnuales, string> = {
 const periodoLegible = (periodo: string) =>
   /^\d{4}-\d{2}$/.test(periodo) ? `${MESES_ES[parseInt(periodo.slice(5)) - 1]} de ${periodo.slice(0, 4)}` : periodo;
 
-export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
+export default function ReportesFiscales({ company, soloLectura = false }: ReportesFiscalesProps) {
   const [subTab, setSubTab] = useState<'d104' | 'd101' | 'historial'>('d104');
 
   // --- D-104 ---
@@ -278,7 +279,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
 
               <p className="text-[11px] text-slate-500">{d104.cantidadFacturas} factura(s) · {d104.cantidadNotasCredito} nota(s) de crédito · {d104.cantidadNotasDebito} nota(s) de débito en este período.</p>
 
-              {!d104.yaCerrado && (
+              {!soloLectura && !d104.yaCerrado && (
                 <button
                   type="button"
                   onClick={handleCerrarD104}
@@ -365,14 +366,14 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
                         step="0.01"
                         inputMode="decimal"
                         value={gastosForm[campo]}
-                        disabled={d101.yaCerrado}
+                        disabled={d101.yaCerrado || soloLectura}
                         onChange={(e) => setGastosForm(prev => ({ ...prev, [campo]: Math.max(0, parseFloat(e.target.value) || 0) }))}
                         className="w-full min-h-10 bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs text-slate-800 disabled:opacity-60"
                       />
                     </div>
                   ))}
                 </div>
-                {!d101.yaCerrado && (
+                {!soloLectura && !d101.yaCerrado && (
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
@@ -402,7 +403,7 @@ export default function ReportesFiscales({ company }: ReportesFiscalesProps) {
 
               <p className="text-[11px] text-slate-500">{d101.cantidadFacturas} factura(s){d101.cantidadNotasCredito != null ? ` · ${d101.cantidadNotasCredito} nota(s) de crédito` : ''} · {d101.cantidadNotasDebito} nota(s) de débito emitidas en {d101.anio}.</p>
 
-              {!d101.yaCerrado && (
+              {!soloLectura && !d101.yaCerrado && (
                 <button
                   type="button"
                   onClick={handleCerrarD101}

@@ -115,7 +115,8 @@ const secciones = (perfil: string): Seccion[] => {
         {
           sub: 'Usuarios y colaboradores',
           pasos: [
-            'Pulse "Nuevo Colaborador", indique nombre, usuario, correo, contraseña y rol (Administrador o Profesional), y pulse "Guardar Colaborador".',
+            'Pulse "Nuevo Colaborador", indique nombre, usuario, correo, contraseña y rol (Administrador, Profesional o Contador), y pulse "Guardar Colaborador".',
+            'Contador: acceso de solo lectura a facturación, cuentas por pagar y reportes fiscales; sin acceso a expedientes ni citas.',
             'Un colaborador inactivo ya no puede ingresar. La cantidad de usuarios depende de su plan.'
           ]
         },

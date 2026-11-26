@@ -81,7 +81,7 @@ export interface User {
   usuario: string;
   correo: string;
   contrasena: string;
-  rol: 'Administrador' | 'Profesional';
+  rol: 'Administrador' | 'Profesional' | 'Contador';
   activo: boolean;
   ubicacionDireccion: string | null;
   ubicacionLat: number | null;

@@ -54,7 +54,9 @@ interface AgendaCalendarProps {
   logs: NotificationLog[];
   activeCompanyId: number;
   currentUser: User;
-  onSaveCita: (cita: Cita) => void;
+  // Devuelve la cita guardada (id real del servidor) y una advertencia opcional; rechaza con el
+  // mensaje de error del servidor.
+  onSaveCita: (cita: Cita) => Promise<Cita & { advertencia?: string }>;
   onTriggerNotification: (log: NotificationLog) => void;
   onStartConsultation: (patient: Patient, citaId: number) => void;
   calendarBlocks: CalendarBlock[];
@@ -378,7 +380,7 @@ export default function AgendaCalendar({
   // Save changes. `estado` is a parameter (not read from `formStatus` directly)
   // so handleCancelarCita can force CANCELADA regardless of whatever the
   // status dropdown currently shows.
-  const guardarCita = (estado: Cita['estadoCita']) => {
+  const guardarCita = async (estado: Cita['estadoCita']) => {
     setFormError('');
 
     if (!formPatientId || !formDate || !formTime) {
@@ -452,20 +454,33 @@ export default function AgendaCalendar({
       tiempoTrasladoMinutos: selectedCita?.tiempoTrasladoMinutos
     };
 
-    onSaveCita(savedCita);
+    // Se espera el guardado: el servidor valida (solape, fecha pasada, transiciones) y asigna el
+    // id real, que la notificación necesita para encontrar la cita.
+    let citaGuardada: Cita & { advertencia?: string };
+    try {
+      citaGuardada = await onSaveCita(savedCita);
+    } catch (err: any) {
+      setFormError(err?.message || 'No se pudo guardar la cita.');
+      notify.error(err?.message || 'No se pudo guardar la cita.');
+      return;
+    }
     setIsFormOpen(false);
     notify.success(
       !selectedCita ? `Cita creada para ${patient.nombreCompleto}.` : estado === 'CANCELADA' && selectedCita.estadoCita !== 'CANCELADA' ? 'Cita cancelada.' : 'Cita actualizada.'
     );
+    if (citaGuardada.advertencia) notify.warning(citaGuardada.advertencia);
 
     // --- Real SMTP Notification Triggers ---
     if (activeSmtp.activo) {
-      let tipoNotif: 'CONFIRMACION' | 'CANCELACION' | 'MODIFICACION' = 'CONFIRMACION';
+      let tipoNotif: 'CONFIRMACION' | 'CANCELACION' | 'MODIFICACION';
       if (!selectedCita) {
         tipoNotif = 'CONFIRMACION';
       } else if (selectedCita.estadoCita !== estado && estado === 'CANCELADA') {
         tipoNotif = 'CANCELACION';
+      } else if (selectedCita.estadoCita === 'PROGRAMADA' && estado === 'CONFIRMADA') {
+        tipoNotif = 'CONFIRMACION';
       } else {
+        // Cambio de fecha u hora (y cualquier otra edición): MODIFICACION, como antes.
         tipoNotif = 'MODIFICACION';
       }
 
@@ -477,7 +492,8 @@ export default function AgendaCalendar({
           idCompania: activeCompanyId,
           tipoNotif,
           patient,
-          cita: savedCita
+          cita: citaGuardada,
+          estadoCita: citaGuardada.estadoCita
         })
       })
         .then(async (res) => {

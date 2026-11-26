@@ -8,6 +8,7 @@ interface CxCManagerProps {
   cxc: CuentaCobrar[];
   patients: Patient[];
   onRegistrarPago: (idCuentaCobrar: number, monto: number, medioPago: string, referencia: string) => Promise<void>;
+  soloLectura?: boolean; // Contador: sin registrar abonos
 }
 
 // Con la fecha de hoy en Costa Rica: con la fecha UTC, después de las 6 p.m. una cuenta que vence
@@ -26,7 +27,7 @@ const ESTADO_ESTILO: Record<string, string> = {
 
 const FILTROS = [['TODAS', 'Todas'], ['PENDIENTE', 'Al día'], ['VENCIDA', 'Vencidas'], ['PAGADA', 'Pagadas']] as const;
 
-export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManagerProps) {
+export default function CxCManager({ cxc, patients, onRegistrarPago, soloLectura = false }: CxCManagerProps) {
   const [filtro, setFiltro] = useState<'TODAS' | 'PENDIENTE' | 'VENCIDA' | 'PAGADA'>('TODAS');
   const [abonandoId, setAbonandoId] = useState<number | null>(null);
   const [montoAbono, setMontoAbono] = useState('');
@@ -140,7 +141,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago }: CxCManage
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${ESTADO_ESTILO[estado]}`}>{estado}</span>
-                  {c.estado === 'PENDIENTE' && (
+                  {!soloLectura && c.estado === 'PENDIENTE' && (
                     <button
                       type="button"
                       onClick={() => abrirAbono(c)}

@@ -13,6 +13,7 @@ interface FacturacionManagerProps {
   company: Company;
   servicios: Servicio[];
   puedeAnular: boolean; // Administrador: anular y Notas de Crédito (el servidor también lo exige)
+  soloLectura?: boolean; // Contador: solo ver, imprimir y reenviar por correo (sin anular, notas ni verificar)
   onAnularFactura: (idFactura: number, motivo: string) => Promise<{ factura: Factura; notaCredito: Factura | null }>;
   onEmitirNotaCredito: (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }> }) => Promise<Factura>;
   onEmitirNotaDebito: (idFactura: number, payload: { motivo: string; lineas: Array<{ idServicio: number; cantidad: number }>; medioPago?: string }) => Promise<Factura>;
@@ -91,7 +92,7 @@ function explicacionAnulacion(f: Factura, acreditado: Record<number, number>): s
   return `${inicio}.${efectos.length ? ` Además, ${unirFrases(efectos)}.` : ''} No se puede deshacer.`;
 }
 
-export default function FacturacionManager({ facturas, patients, company, servicios, puedeAnular, onAnularFactura, onEmitirNotaCredito, onEmitirNotaDebito, onVerificarEstadoFactura, onReenviarCorreo }: FacturacionManagerProps) {
+export default function FacturacionManager({ facturas, patients, company, servicios, puedeAnular, soloLectura = false, onAnularFactura, onEmitirNotaCredito, onEmitirNotaDebito, onVerificarEstadoFactura, onReenviarCorreo }: FacturacionManagerProps) {
   const [anulandoId, setAnulandoId] = useState<number | null>(null);
   const [motivoAnulacion, setMotivoAnulacion] = useState('');
   const [anulando, setAnulando] = useState(false);
@@ -151,11 +152,12 @@ export default function FacturacionManager({ facturas, patients, company, servic
   }, { ventas: 0, iva: 0, porResolver: 0, rechazadas: 0 });
 
   // Una Nota referencia la factura por su clave: solo tiene sentido sobre una que Hacienda aceptó.
-  const puedeAjustar = (f: Factura) => f.tipoDocumento === '01' && f.estado === 'ACEPTADA';
+  // soloLectura (rol Contador): nunca se ofrecen ajustes, anulación ni consultas a Hacienda.
+  const puedeAjustar = (f: Factura) => !soloLectura && f.tipoDocumento === '01' && f.estado === 'ACEPTADA';
   // Anular sirve para cualquier factura (también rechazadas o de prueba, que antes no tenían forma
   // de reversarse), salvo mientras Hacienda la procesa: primero hay que verificar su estado.
-  const puedeAnularFactura = (f: Factura) => puedeAnular && f.tipoDocumento === '01' && f.estado !== 'ANULADA' && f.estado !== 'ENVIADA';
-  const puedeVerificar = (f: Factura) => f.estado === 'ENVIADA' || f.estado === 'ERROR';
+  const puedeAnularFactura = (f: Factura) => !soloLectura && puedeAnular && f.tipoDocumento === '01' && f.estado !== 'ANULADA' && f.estado !== 'ENVIADA';
+  const puedeVerificar = (f: Factura) => !soloLectura && (f.estado === 'ENVIADA' || f.estado === 'ERROR');
 
   const handleConfirmarAnular = async (id: number) => {
     if (!motivoAnulacion.trim()) {
@@ -376,7 +378,9 @@ export default function FacturacionManager({ facturas, patients, company, servic
       </ul>
 
       {viewingFactura && (() => {
-        const pacienteFactura = patients.find(p => p.id === viewingFactura.idPaciente);
+        // El Contador no carga pacientes (datos clínicos): se muestra un receptor genérico, sin datos personales.
+        const pacienteFactura = patients.find(p => p.id === viewingFactura.idPaciente)
+          ?? (soloLectura ? ({ id: viewingFactura.idPaciente, nombreCompleto: `Receptor #${viewingFactura.idPaciente}`, identificacion: '—', correoElectronico: '' } as Patient) : undefined);
         if (!pacienteFactura) return null;
         return (
           <FacturaDetailView

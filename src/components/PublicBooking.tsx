@@ -86,6 +86,7 @@ export default function PublicBooking() {
   const [telefono, setTelefono] = useState('');
   const [correoElectronico, setCorreoElectronico] = useState('');
   const [pacienteEncontrado, setPacienteEncontrado] = useState(false);
+  const [nombrePacienteExistente, setNombrePacienteExistente] = useState('');
 
   const [citaCreada, setCitaCreada] = useState<any>(null);
 
@@ -199,19 +200,17 @@ export default function PublicBooking() {
         return res.json();
       })
       .then(data => {
-        setNombreCompleto(data.nombreCompleto);
-        setTelefono(data.telefono);
-        setCorreoElectronico(data.correoElectronico);
-        setTipoIdentificacion(data.tipoIdentificacion);
-        setFechaNacimiento(data.fechaNacimiento);
-        setPacienteEncontrado(true);
+        // El servidor solo revela el primer nombre: los datos de contacto registrados se usan
+        // tal cual y no se piden ni se precargan aquí.
+        setNombrePacienteExistente(typeof data.nombre === 'string' ? data.nombre : '');
+        setPacienteEncontrado(data.existe === true);
       })
-      .catch(() => setPacienteEncontrado(false));
+      .catch(() => { setPacienteEncontrado(false); setNombrePacienteExistente(''); });
   };
 
   const confirmarCita = () => {
     setError('');
-    if (!nombreCompleto.trim() || !telefono.trim() || !correoElectronico.trim() || !cedula.trim()) {
+    if (!cedula.trim() || (!pacienteEncontrado && (!nombreCompleto.trim() || !telefono.trim() || !correoElectronico.trim()))) {
       setError('Por favor complete todos los campos.');
       return;
     }
@@ -232,7 +231,9 @@ export default function PublicBooking() {
         direccionDomicilio: tipoVisita === 'DOMICILIO' ? direccionDomicilio : undefined,
         pacienteLat: tipoVisita === 'DOMICILIO' ? pacienteLat : undefined,
         pacienteLng: tipoVisita === 'DOMICILIO' ? pacienteLng : undefined,
-        paciente: { identificacion: cedula, tipoIdentificacion, nombreCompleto, telefono, correoElectronico, fechaNacimiento }
+        paciente: pacienteEncontrado
+          ? { identificacion: cedula.trim() }
+          : { identificacion: cedula.trim(), tipoIdentificacion, nombreCompleto, telefono, correoElectronico, fechaNacimiento }
       })
     })
       .then(async res => {
@@ -589,15 +590,18 @@ export default function PublicBooking() {
                 inputMode="numeric"
                 required
                 value={cedula}
-                onChange={(e) => setCedula(e.target.value)}
+                onChange={(e) => { setCedula(e.target.value); setPacienteEncontrado(false); setNombrePacienteExistente(''); }}
                 onBlur={buscarPacientePorCedula}
                 aria-describedby="reserva-cedula-ayuda"
                 className={inputClass}
               />
               <p id="reserva-cedula-ayuda" className={`text-xs mt-1.5 ${pacienteEncontrado ? 'text-emerald-700 font-medium' : 'text-slate-600'}`} aria-live="polite">
-                {pacienteEncontrado ? '¡Bienvenido(a) de nuevo! Verifique sus datos.' : 'Si ya es paciente, completaremos sus datos automáticamente.'}
+                {pacienteEncontrado
+                  ? `Ya está registrado(a) como ${nombrePacienteExistente}. Usaremos los datos de contacto que tenemos registrados.`
+                  : 'Si ya es paciente, lo reconoceremos con su cédula.'}
               </p>
             </div>
+            {!pacienteEncontrado && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="sm:col-span-2">
                 <label htmlFor="reserva-nombre" className={labelClass}>Nombre completo *</label>
@@ -616,6 +620,7 @@ export default function PublicBooking() {
                 <input id="reserva-correo" type="email" required autoComplete="email" value={correoElectronico} onChange={(e) => setCorreoElectronico(e.target.value)} placeholder="nombre@correo.com" className={inputClass} />
               </div>
             </div>
+            )}
             <button
               type="submit"
               disabled={submitting}

@@ -7,9 +7,10 @@ import { errorIdentificacion } from '../utils/identificacion';
 interface ProveedorManagerProps {
   proveedores: Proveedor[];
   onSaveProveedor: (proveedor: Partial<Proveedor>) => Promise<void>;
+  soloLectura?: boolean; // Contador: solo consulta el directorio
 }
 
-export default function ProveedorManager({ proveedores, onSaveProveedor }: ProveedorManagerProps) {
+export default function ProveedorManager({ proveedores, onSaveProveedor, soloLectura = false }: ProveedorManagerProps) {
   const [formAbierto, setFormAbierto] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [tipoIdentificacion, setTipoIdentificacion] = useState<'01' | '02' | '03' | '04'>('02');
@@ -96,7 +97,7 @@ export default function ProveedorManager({ proveedores, onSaveProveedor }: Prove
             <p className="text-[11px] text-slate-500">Directorio de proveedores para Cuentas por Pagar</p>
           </div>
         </div>
-        {!formAbierto && (
+        {!soloLectura && !formAbierto && (
           <button
             onClick={abrirNuevo}
             className="min-h-10 flex items-center gap-1 bg-slate-800 hover:bg-slate-900 text-white px-3 rounded-lg text-xs font-semibold transition-colors"
@@ -173,12 +174,16 @@ export default function ProveedorManager({ proveedores, onSaveProveedor }: Prove
               <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${p.activo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
                 {p.activo ? 'Activo' : 'Inactivo'}
               </span>
-              <button type="button" onClick={() => abrirEditar(p)} title="Editar" className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100" aria-label={`Editar ${p.nombre}`}>
-                <Edit className="w-4 h-4" aria-hidden="true" />
-              </button>
-              <button type="button" onClick={() => handleToggleActivo(p)} title={p.activo ? 'Desactivar' : 'Activar'} className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100" aria-label={`${p.activo ? 'Desactivar' : 'Activar'} ${p.nombre}`}>
-                <Power className="w-4 h-4" aria-hidden="true" />
-              </button>
+              {!soloLectura && (
+                <>
+                  <button type="button" onClick={() => abrirEditar(p)} title="Editar" className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100" aria-label={`Editar ${p.nombre}`}>
+                    <Edit className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                  <button type="button" onClick={() => handleToggleActivo(p)} title={p.activo ? 'Desactivar' : 'Activar'} className="w-10 h-10 flex items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100" aria-label={`${p.activo ? 'Desactivar' : 'Activar'} ${p.nombre}`}>
+                    <Power className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                </>
+              )}
             </div>
           </div>
         ))}

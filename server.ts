@@ -50,6 +50,7 @@ import { renderFacturaPdf, renderConsultaPacientePdf } from "./server/pdfTemplat
 import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderFacturaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail, renderRecordatorioDocumentosEmail, renderSmtpTestEmail } from "./server/emailTemplates";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
 import { tocaRecordatorio } from "./server/recordatoriosCasos";
+import { slotLibre, haySolapeConCitas, minutosDesdeMedianoche, validarTransicionEstado, esFechaHoraValida, fechaHoraEsPasada, esEstadoActivo, ESTADOS_CITA } from "./server/citasReglas";
 import { calcularImpuestoRenta, validarParametrosRenta } from "./server/impuestoRenta";
 import type { ParametrosRenta } from "./server/impuestoRenta";
 import { recolectarComprobantes, verificarConexionImap, listarCarpetas, carpetasDe } from "./server/correoProveedores";
@@ -373,62 +374,57 @@ function generarSlotsCandidatos(tramos: Array<{ abre: string; cierra: string }>)
   return [...slots].sort();
 }
 
-function minutosDesdeMedianoche(hhmm: string): number {
-  const [h, m] = hhmm.split(":").map(Number);
-  return h * 60 + m;
-}
-
 const DURACION_POR_TIPO_VISITA: Record<"CONSULTORIO" | "DOMICILIO", number> = {
   CONSULTORIO: 45,
   DOMICILIO: 60
 };
 
-function slotLibre(params: {
-  candidatoInicioMin: number;
-  duracionMin: number;
-  citasDelDia: Array<{ fechaHora: string; duracionMinutos: number; tipoVisita: string; tiempoTrasladoMinutos: number | null }>;
-  bloqueosDelDia: CalendarBlock[];
-  fecha: string;
-  horaCandidato: string;
-  tramos: Array<{ abre: string; cierra: string }>;
-}): boolean {
-  const { candidatoInicioMin, duracionMin, citasDelDia, bloqueosDelDia, fecha, horaCandidato, tramos } = params;
-  const candidatoFinMin = candidatoInicioMin + duracionMin;
+// slotLibre / haySolapeConCitas / validarTransicionEstado viven en server/citasReglas.ts (puras y
+// con tests). Las citas CANCELADAS no ocupan agenda.
 
-  // generarSlotsCandidatos() solo genera horas de INICIO anteriores al cierre — no garantiza
-  // que la cita quepa completa antes de cerrar. Sin este chequeo, un servicio de 60 min
-  // ofrecía como "libre" un inicio a las 17:30 con cierre a las 18:00 (terminaría a las 18:30,
-  // media hora después de cerrado). Verificado contra datos reales: la cita #15 de ELRONUTRI
-  // quedó agendada viernes 17:30–18:30 con horario de cierre 18:00.
-  // Con horario fraccionado, la cita completa debe caber dentro de UN solo tramo.
-  const cabeEnUnTramo = tramos.some(t =>
-    candidatoInicioMin >= minutosDesdeMedianoche(t.abre) && candidatoFinMin <= minutosDesdeMedianoche(t.cierra)
-  );
-  if (!cabeEnUnTramo) return false;
-  // El listado de disponibilidad (generarSlotsCandidatos) nunca ofrece horas antes de la
-  // apertura, pero POST /api/public/citas reutiliza esta misma función para re-verificar el
-  // horario justo antes de guardar — sin este límite inferior, una llamada directa al API (sin
-  // pasar por el listado) podía agendar antes de que abra el negocio (cubierto arriba por el
-  // límite inferior de cabeEnUnTramo).
+// Error con código HTTP para abortar POST /api/citas desde dentro de la transacción.
+class CitaError extends Error {
+  constructor(public status: number, message: string) { super(message); }
+}
 
-  for (const b of bloqueosDelDia) {
-    if (fecha < b.fechaInicio || fecha > b.fechaFin) continue;
-    if (!b.horaInicio || !b.horaFin) return false;
-    if (horaCandidato >= b.horaInicio && horaCandidato < b.horaFin) return false;
+// Campos de contacto de un paciente existente que están vacíos y que la solicitud pública puede
+// completar. Nunca devuelve campos que ya tienen valor (columnas fijas: seguras para SQL).
+function camposVaciosDelPaciente(existente: any, enviado: any): Record<string, any> {
+  const resultado: Record<string, any> = {};
+  for (const campo of ["nombreCompleto", "correoElectronico", "telefono", "tipoIdentificacion", "fechaNacimiento"]) {
+    const actual = existente?.[campo];
+    const vacio = actual == null || (typeof actual === "string" && actual.trim() === "");
+    const nuevo = enviado?.[campo];
+    if (vacio && typeof nuevo === "string" && nuevo.trim() !== "") resultado[campo] = nuevo.trim();
   }
+  return resultado;
+}
 
-  for (const c of citasDelDia) {
-    const citaFecha = c.fechaHora.split("T")[0];
-    if (citaFecha !== fecha) continue;
-    const citaHora = c.fechaHora.split("T")[1];
-    const citaInicioMin = minutosDesdeMedianoche(citaHora);
-    const padding = c.tipoVisita === "DOMICILIO" ? (c.tiempoTrasladoMinutos || 0) : 0;
-    const ocupadoInicio = citaInicioMin - padding;
-    const ocupadoFin = citaInicioMin + c.duracionMinutos + padding;
-    if (candidatoInicioMin < ocupadoFin && candidatoFinMin > ocupadoInicio) return false;
+// Un paciente nuevo sí necesita todos sus datos de contacto (uno existente no los envía).
+function validarDatosPacienteNuevo(pac: any): void {
+  for (const campo of ["identificacion", "nombreCompleto", "correoElectronico", "telefono", "tipoIdentificacion", "fechaNacimiento"]) {
+    if (typeof pac?.[campo] !== "string" || pac[campo].trim() === "") {
+      throw new CitaError(400, "Faltan datos del paciente: nombre, correo, teléfono y fecha de nacimiento son obligatorios.");
+    }
   }
+}
 
-  return true;
+// Límite por IP en memoria para la consulta pública de pacientes por cédula (anti-enumeración).
+const CONSULTA_PACIENTE_MAX = 20;
+const CONSULTA_PACIENTE_VENTANA_MS = 15 * 60 * 1000;
+const consultasPacientePorIp = new Map<string, { desde: number; cuenta: number }>();
+function excedeLimiteConsultaPaciente(ip: string): boolean {
+  const ahora = Date.now();
+  if (consultasPacientePorIp.size > 5000) {
+    for (const [k, v] of consultasPacientePorIp) if (ahora - v.desde > CONSULTA_PACIENTE_VENTANA_MS) consultasPacientePorIp.delete(k);
+  }
+  const e = consultasPacientePorIp.get(ip);
+  if (!e || ahora - e.desde > CONSULTA_PACIENTE_VENTANA_MS) {
+    consultasPacientePorIp.set(ip, { desde: ahora, cuenta: 1 });
+    return false;
+  }
+  e.cuenta += 1;
+  return e.cuenta > CONSULTA_PACIENTE_MAX;
 }
 
 // `ownIdColumn` es obligatorio a propósito: antes esta función adivinaba probando
@@ -1211,6 +1207,46 @@ async function startServer() {
     next();
   }
 
+  // Roles que un usuario puede tener (lista blanca para validar el body de POST /api/users).
+  const ROLES_USUARIO = ["Administrador", "Profesional", "Contador"];
+
+  // --- Rol 'Contador': acceso de solo lectura a lo financiero, SIN datos clínicos ---
+  // Lista blanca (todo lo que no esté aquí responde 403). Se aplica a cualquier petición con
+  // sesión de Contador, antes de llegar a las rutas. Rutas reales de server.ts permitidas:
+  //   GET  /api/me, /api/db-status, /api/companies (ya filtra por la empresa de la sesión),
+  //        /api/servicios, /api/facturas, /api/cxc, /api/cxp, /api/proveedores,
+  //        /api/reportes/{clientes-sesiones,d104,d101,cierres}, /api/parametros-renta,
+  //        /api/hacienda-config/:idCompania (solo banderas, nunca llave ni PIN),
+  //        /api/facturas-correo y /api/facturas-correo/:id/xml
+  //   POST /api/logout, /api/facturas/:id/reenviar-correo,
+  //        /api/users (solo para Mi perfil: el handler limita a no administradores a editarse a
+  //        sí mismos sin cambiar rol/empresa/estado, y nunca pueden crear usuarios)
+  //   Públicas sin sesión (cualquier método): /api/login, /api/forgot-password, /api/public/*
+  // Quedan bloqueados, entre otros: pacientes, consultas, casos/expedientes, citas, calendario,
+  // dietas, plantillas, notificaciones, usuarios (GET), SMTP, IMAP config, hacienda firmar y
+  // config POST, crear/anular facturas, notas de crédito/débito, pagos CxC/CxP y cierres.
+  const RUTAS_CONTADOR: Array<{ metodo: string; patron: RegExp }> = [
+    { metodo: "GET", patron: /^\/api\/(me|db-status|companies|servicios|facturas|cxc|cxp|proveedores|parametros-renta|facturas-correo)$/ },
+    { metodo: "GET", patron: /^\/api\/reportes\/(clientes-sesiones|d104|d101|cierres)$/ },
+    { metodo: "GET", patron: /^\/api\/hacienda-config\/\d+$/ },
+    { metodo: "GET", patron: /^\/api\/facturas-correo\/\d+\/xml$/ },
+    { metodo: "POST", patron: /^\/api\/(logout|users)$/ },
+    { metodo: "POST", patron: /^\/api\/facturas\/\d+\/reenviar-correo$/ },
+    { metodo: "ANY", patron: /^\/api\/(login|forgot-password|public\/.*)$/ },
+  ];
+
+  app.use((req, res, next) => {
+    if (!req.path.startsWith("/api/")) return next();
+    const session = getSession(req);
+    if (!session || session.rol !== "Contador") return next();
+    const ruta = req.path.length > 1 ? req.path.replace(/\/+$/, "") : req.path;
+    const permitido = RUTAS_CONTADOR.some(r => (r.metodo === "ANY" || r.metodo === req.method) && r.patron.test(ruta));
+    if (!permitido) {
+      return res.status(403).json({ error: "Su rol (Contador) no tiene acceso a esta sección." });
+    }
+    next();
+  });
+
   function sessionOf(req: express.Request): SessionPayload {
     return (req as any).session as SessionPayload;
   }
@@ -1761,7 +1797,19 @@ async function startServer() {
   app.post("/api/users", async (req, res) => {
     try {
       const u = req.body;
-      const idCompania = parseInt(u.idCompania);
+      const sessionUsuarios = getSession(req);
+      // Solo el SaaS admin (o el alta pública de la primera empresa, sin sesión) elige la empresa
+      // desde el body. Con sesión de empresa, el idCompania es SIEMPRE el de la sesión: así un
+      // administrador no puede mover ni crear usuarios en otra empresa.
+      const idCompania = sessionUsuarios && !isSaasAdmin(sessionUsuarios)
+        ? sessionUsuarios.idCompania
+        : parseInt(u.idCompania);
+      u.idCompania = idCompania;
+      // Quien puede cambiar rol/activo: SaaS admin o Administrador de esta empresa.
+      const esAdminDeEmpresa = !!sessionUsuarios && (
+        isSaasAdmin(sessionUsuarios) ||
+        (sessionUsuarios.idCompania === idCompania && sessionUsuarios.rol === "Administrador")
+      );
 
       let totalUsuariosCompania = 0;
       let maxUsuarios = 5;
@@ -1783,7 +1831,7 @@ async function startServer() {
       // public self-registration flow's founding admin (see POST /api/companies immediately
       // before it, in the same flow).
       if (u.id || totalUsuariosCompania > 0) {
-        const session = getSession(req);
+        const session = sessionUsuarios;
         const authorized = !!session && (
           isSaasAdmin(session) ||
           (u.id && session.userId === parseInt(u.id)) ||
@@ -1792,6 +1840,17 @@ async function startServer() {
         if (!authorized) {
           return res.status(403).json({ error: "No autorizado." });
         }
+      }
+
+      // El rol solo se toma del body al crear o cuando edita un administrador; en la auto-edición
+      // de un no administrador se ignora (más abajo), pero cuando se usa debe ser un rol válido.
+      if ((!u.id || esAdminDeEmpresa) && !ROLES_USUARIO.includes(u.rol)) {
+        return res.status(400).json({ error: "Rol no válido." });
+      }
+      // Un no administrador nunca crea usuarios ni cae al INSERT con un id suyo: evita escalar
+      // privilegios creando una fila nueva con el rol que él elija.
+      if (u.id && !esAdminDeEmpresa && !(sessionUsuarios && sessionUsuarios.userId === parseInt(u.id))) {
+        return res.status(403).json({ error: "No autorizado." });
       }
 
       if (!u.id) {
@@ -1820,9 +1879,19 @@ async function startServer() {
           // Scoped by idCompania too — an id that only collides by coincidence (never a real
           // edit of this tenant's own record) must fall through to INSERT below instead of
           // overwriting another company's user.
-          const [exists] = await pool.query("SELECT * FROM usuarios WHERE id_usuario = ? AND idCompania = ?", [u.id, parseInt(u.idCompania)]);
+          const [exists] = await pool.query("SELECT * FROM usuarios WHERE id_usuario = ? AND idCompania = ?", [u.id, idCompania]);
           const existingRow = (exists as any[])[0];
+          if (!existingRow && !esAdminDeEmpresa) {
+            // Auto-edición de un no administrador sin fila vigente: nunca se convierte en INSERT.
+            return res.status(403).json({ error: "No autorizado." });
+          }
           if (existingRow) {
+            // Un no administrador (auto-edición desde Mi perfil) conserva lo que ya tiene en la
+            // base para rol, empresa, estado y usuario de acceso; el body no puede cambiarlos.
+            const rolFinal = esAdminDeEmpresa ? u.rol : existingRow.rol;
+            const activoFinal = esAdminDeEmpresa ? (u.activo ? 1 : 0) : (existingRow.activo ? 1 : 0);
+            const usuarioFinal = esAdminDeEmpresa ? u.usuario : existingRow.usuario;
+            const idCompaniaFinal = esAdminDeEmpresa ? idCompania : existingRow.idCompania;
             // Un `contrasena` vacío significa "no está cambiando la contraseña" (el cliente ya
             // no recibe hashes de contraseña en ninguna respuesta, así que un guardado que solo
             // cambia p.ej. `activo` llega sin este campo) — se conserva el hash existente en ese
@@ -1832,10 +1901,10 @@ async function startServer() {
               : existingRow.contrasena;
             await pool.query(
               "UPDATE usuarios SET idCompania = ?, nombre = ?, usuario = ?, correo = ?, contrasena = ?, rol = ?, activo = ?, ubicacionDireccion = ?, ubicacionLat = ?, ubicacionLng = ?, maxTiempoTrasladoMinutos = ? WHERE id_usuario = ?",
-              [parseInt(u.idCompania), u.nombre, u.usuario, u.correo, contrasenaFinal, u.rol, u.activo ? 1 : 0, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45, u.id]
+              [idCompaniaFinal, u.nombre, usuarioFinal, u.correo, contrasenaFinal, rolFinal, activoFinal, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45, u.id]
             );
             const { contrasena, ...safeUser } = u;
-            return res.json(safeUser);
+            return res.json({ ...safeUser, idCompania: idCompaniaFinal, rol: rolFinal, activo: !!activoFinal, usuario: usuarioFinal });
           }
         }
         const contrasenaNueva = hashPassword(String(u.contrasena || "").trim());
@@ -1849,9 +1918,14 @@ async function startServer() {
         res.json(safeUser);
       } else {
         if (u.id) {
-          const existing = localUsers.find(item => item.id === u.id);
+          const existing = localUsers.find(item => item.id === u.id && item.idCompania === idCompania);
+          if (!existing) {
+            return res.status(403).json({ error: "No autorizado." });
+          }
           const merged = {
             ...u,
+            // Misma regla que en MySQL: un no administrador no cambia rol, empresa, estado ni usuario.
+            ...(esAdminDeEmpresa ? {} : { rol: existing.rol, idCompania: existing.idCompania, activo: existing.activo, usuario: existing.usuario }),
             contrasena: u.contrasena && String(u.contrasena).trim() ? hashPassword(String(u.contrasena).trim()) : existing?.contrasena
           };
           localUsers = localUsers.map(item => item.id === u.id ? merged : item);
@@ -2140,36 +2214,184 @@ async function startServer() {
 
   app.post("/api/citas", requireAuth, async (req, res) => {
     try {
-      const ct = req.body;
-      ct.idCompania = sessionOf(req).idCompania;
-      if (dbConnected && pool) {
-        if (ct.id) {
-          // Scoped by idCompania too — see comment on the equivalent usuarios check above.
-          const [exists] = await pool.query("SELECT * FROM citas WHERE id = ? AND idCompania = ?", [ct.id, parseInt(ct.idCompania)]);
-          if ((exists as any).length > 0) {
-            await pool.query(
-              "UPDATE citas SET idCompania = ?, idPaciente = ?, idUsuarioNutricionista = ?, idConsulta = ?, idServicio = ?, fechaHora = ?, duracionMinutos = ?, estadoCita = ?, notas = ?, confirmacionEnviadaEn = ?, recordatorioEnviadoEn = ?, cancelacionEnviadaEn = ?, tipoVisita = ?, direccionDomicilio = ?, pacienteLat = ?, pacienteLng = ?, tiempoTrasladoMinutos = ? WHERE id = ?",
-              [parseInt(ct.idCompania), parseInt(ct.idPaciente), parseInt(ct.idUsuarioNutricionista), ct.idConsulta || null, ct.idServicio || null, ct.fechaHora, parseInt(ct.duracionMinutos), ct.estadoCita, ct.notas || '', ct.confirmacionEnviadaEn || null, ct.recordatorioEnviadoEn || null, ct.cancelacionEnviadaEn || null, ct.tipoVisita || 'CONSULTORIO', ct.direccionDomicilio || null, ct.pacienteLat != null ? parseFloat(ct.pacienteLat) : null, ct.pacienteLng != null ? parseFloat(ct.pacienteLng) : null, ct.tiempoTrasladoMinutos != null ? parseInt(ct.tiempoTrasladoMinutos) : null, ct.id]
-            );
-            return res.json(ct);
-          }
+      const ct = req.body ?? {};
+      const idCompania: number = sessionOf(req).idCompania;
+      ct.idCompania = idCompania;
+      const idCitaBody = ct.id ? parseInt(ct.id) : null;
+      const idPaciente = parseInt(ct.idPaciente);
+      const idProf = parseInt(ct.idUsuarioNutricionista);
+      const duracion = parseInt(ct.duracionMinutos);
+      const idServicio = ct.idServicio ? parseInt(ct.idServicio) : null;
+      const estado = ct.estadoCita;
+      const tipoVisita = ct.tipoVisita === "DOMICILIO" ? "DOMICILIO" : "CONSULTORIO";
+
+      if (!ESTADOS_CITA.includes(estado)) return res.status(400).json({ error: "Estado de cita inválido." });
+      if (!esFechaHoraValida(ct.fechaHora)) return res.status(400).json({ error: "Fecha y hora de la cita inválidas." });
+      if (!idPaciente || !idProf) return res.status(400).json({ error: "Falta el paciente o el profesional de la cita." });
+      if (!(duracion > 0)) return res.status(400).json({ error: "La duración de la cita no es válida." });
+      if (ct.idServicio && !idServicio) return res.status(400).json({ error: "Servicio inválido." });
+      const fecha: string = ct.fechaHora.slice(0, 10);
+
+      // Reglas de agenda (transición de estado, fecha pasada, solape con otras citas del profesional).
+      const validarAgendaCita = (existing: any, citasDelDia: any[], facturada: boolean) => {
+        const errTransicion = validarTransicionEstado(existing ? existing.estadoCita : null, estado, { facturada });
+        if (errTransicion) throw new CitaError(400, errTransicion);
+        if (!esEstadoActivo(estado)) return; // registrar/editar en el pasado es válido si ya está cerrada/cancelada
+        const pasoAActivo = !existing || !esEstadoActivo(existing.estadoCita);
+        const fechaCambio = !existing || String(existing.fechaHora).slice(0, 16) !== ct.fechaHora;
+        if ((pasoAActivo || fechaCambio) && fechaHoraEsPasada(ct.fechaHora)) {
+          throw new CitaError(400, "No se puede programar ni confirmar una cita en una fecha y hora pasada.");
         }
-        const [result] = await pool.query(
-          "INSERT INTO citas (idCompania, idPaciente, idUsuarioNutricionista, idConsulta, idServicio, fechaHora, duracionMinutos, estadoCita, notas, confirmacionEnviadaEn, recordatorioEnviadoEn, cancelacionEnviadaEn, tipoVisita, direccionDomicilio, pacienteLat, pacienteLng, tiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [parseInt(ct.idCompania), parseInt(ct.idPaciente), parseInt(ct.idUsuarioNutricionista), ct.idConsulta || null, ct.idServicio || null, ct.fechaHora, parseInt(ct.duracionMinutos), ct.estadoCita, ct.notas || '', ct.confirmacionEnviadaEn || null, ct.recordatorioEnviadoEn || null, ct.cancelacionEnviadaEn || null, ct.tipoVisita || 'CONSULTORIO', ct.direccionDomicilio || null, ct.pacienteLat != null ? parseFloat(ct.pacienteLat) : null, ct.pacienteLng != null ? parseFloat(ct.pacienteLng) : null, ct.tiempoTrasladoMinutos != null ? parseInt(ct.tiempoTrasladoMinutos) : null]
-        );
-        ct.id = (result as any).insertId;
-        res.json(ct);
+        const cambioSlot = pasoAActivo || fechaCambio
+          || Number(existing.idUsuarioNutricionista) !== idProf
+          || Number(existing.duracionMinutos) !== duracion;
+        if (cambioSlot && haySolapeConCitas({
+          candidatoInicioMin: minutosDesdeMedianoche(ct.fechaHora.slice(11)),
+          duracionMin: duracion,
+          fecha,
+          citasDelDia,
+          excluirId: existing ? existing.id : null
+        })) {
+          throw new CitaError(409, "Este profesional ya tiene otra cita en ese horario. Elija otra fecha u hora.");
+        }
+      };
+
+      const db = dbConnected && pool ? pool : null;
+
+      // Fase 1 (sin bloqueo): pertenencia a la empresa de la sesión y cita actual.
+      let profesional: any;
+      let pacienteOk = false;
+      let servicioOk = true;
+      let existingPre: any;
+      if (db) {
+        const [uRows] = await db.query("SELECT * FROM usuarios WHERE id_usuario = ? AND idCompania = ?", [idProf, idCompania]);
+        profesional = (uRows as any[]).map(r => normalizeRow(r, "id_usuario"))[0];
+        const [pRows] = await db.query("SELECT id_paciente FROM pacientes WHERE id_paciente = ? AND idCompania = ?", [idPaciente, idCompania]);
+        pacienteOk = (pRows as any[]).length > 0;
+        if (idServicio) {
+          const [sRows] = await db.query("SELECT id_servicio FROM servicios WHERE id_servicio = ? AND idCompania = ?", [idServicio, idCompania]);
+          servicioOk = (sRows as any[]).length > 0;
+        }
+        if (idCitaBody) {
+          const [eRows] = await db.query("SELECT * FROM citas WHERE id = ? AND idCompania = ?", [idCitaBody, idCompania]);
+          existingPre = (eRows as any[])[0];
+        }
       } else {
-        if (ct.id) {
-          localCitas = localCitas.map(item => item.id === ct.id ? ct : item);
+        profesional = localUsers.find(u => u.id === idProf && u.idCompania === idCompania);
+        pacienteOk = localPatients.some(p => p.id === idPaciente && p.idCompania === idCompania);
+        if (idServicio) servicioOk = localServicios.some(s => s.id === idServicio && s.idCompania === idCompania);
+        if (idCitaBody) existingPre = localCitas.find(c => c.id === idCitaBody && c.idCompania === idCompania);
+      }
+      if (!profesional) return res.status(400).json({ error: "El profesional no pertenece a esta empresa." });
+      if (!pacienteOk) return res.status(400).json({ error: "El paciente no pertenece a esta empresa." });
+      if (!servicioOk) return res.status(400).json({ error: "El servicio no pertenece a esta empresa." });
+
+      // Reagendar una cita a domicilio: recalcular el traslado (misma lógica que la ruta pública).
+      // Si no se puede calcular se conserva el valor anterior. Excederlo se permite (personal
+      // interno) pero se devuelve una advertencia.
+      let advertencia: string | undefined;
+      const latPac = ct.pacienteLat != null ? parseFloat(ct.pacienteLat) : NaN;
+      const lngPac = ct.pacienteLng != null ? parseFloat(ct.pacienteLng) : NaN;
+      const reagendada = !!existingPre && (String(existingPre.fechaHora).slice(0, 16) !== ct.fechaHora || Number(existingPre.idUsuarioNutricionista) !== idProf);
+      if (tipoVisita === "DOMICILIO" && esEstadoActivo(estado) && reagendada && !isNaN(latPac) && !isNaN(lngPac)
+          && profesional.ubicacionLat != null && profesional.ubicacionLng != null) {
+        try {
+          let citasPrevias: any[];
+          if (db) {
+            const [r] = await db.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ? AND estadoCita <> 'CANCELADA'", [idProf, `${fecha}%`]);
+            citasPrevias = r as any[];
+          } else {
+            citasPrevias = localCitas.filter(c => c.idUsuarioNutricionista === idProf && c.fechaHora.startsWith(fecha) && c.estadoCita !== "CANCELADA");
+          }
+          const citaAnterior = citasPrevias
+            .filter(c => c.id !== existingPre.id && c.fechaHora < ct.fechaHora)
+            .sort((a, b) => (a.fechaHora < b.fechaHora ? 1 : -1))[0];
+          let origenLat = parseFloat(profesional.ubicacionLat);
+          let origenLng = parseFloat(profesional.ubicacionLng);
+          if (citaAnterior && citaAnterior.tipoVisita === "DOMICILIO" && citaAnterior.pacienteLat != null && citaAnterior.pacienteLng != null) {
+            origenLat = parseFloat(citaAnterior.pacienteLat);
+            origenLng = parseFloat(citaAnterior.pacienteLng);
+          }
+          const tiempo = await calcularTiempoTrasladoMinutos({ origenLat, origenLng, destinoLat: latPac, destinoLng: lngPac });
+          ct.tiempoTrasladoMinutos = tiempo;
+          const maxTraslado = profesional.maxTiempoTrasladoMinutos != null ? Number(profesional.maxTiempoTrasladoMinutos) : null;
+          if (maxTraslado != null && tiempo > maxTraslado) {
+            advertencia = `El tiempo de traslado estimado (${tiempo} min) supera el máximo que este profesional acepta (${maxTraslado} min).`;
+          }
+        } catch (err: any) {
+          // TrasladoNoCalculableError, sin API key o falla de red: se conserva el traslado anterior.
+          console.warn("No se pudo recalcular el traslado de la cita reagendada:", err?.message || err);
+        }
+      }
+
+      const valores = [
+        idCompania, idPaciente, idProf, ct.idConsulta || null, idServicio, ct.fechaHora, duracion, estado, ct.notas || "",
+        tipoVisita, ct.direccionDomicilio || null,
+        ct.pacienteLat != null ? parseFloat(ct.pacienteLat) : null,
+        ct.pacienteLng != null ? parseFloat(ct.pacienteLng) : null,
+        ct.tiempoTrasladoMinutos != null ? parseInt(ct.tiempoTrasladoMinutos) : null
+      ];
+
+      if (db) {
+        // Fase 2: transacción con lock sobre el profesional (siempre existe; ver POST /api/public/citas)
+        // para que dos solicitudes simultáneas no agenden doble.
+        const connection = await db.getConnection();
+        try {
+          await connection.beginTransaction();
+          await connection.query("SELECT id_usuario FROM usuarios WHERE id_usuario = ? FOR UPDATE", [idProf]);
+
+          let existing: any;
+          if (idCitaBody) {
+            const [eRows] = await connection.query("SELECT * FROM citas WHERE id = ? AND idCompania = ?", [idCitaBody, idCompania]);
+            existing = (eRows as any[])[0];
+          }
+          const [cRows] = await connection.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ? AND estadoCita <> 'CANCELADA'", [idProf, `${fecha}%`]);
+          let facturada = false;
+          if (existing && existing.estadoCita === "COMPLETADA" && estado === "CANCELADA") {
+            const [fRows] = await connection.query("SELECT id_factura FROM facturas WHERE idCita = ? AND idCompania = ? AND estado IN ('ACEPTADA', 'ENVIADA') LIMIT 1", [existing.id, idCompania]);
+            facturada = (fRows as any[]).length > 0;
+          }
+          validarAgendaCita(existing, cRows as any[], facturada);
+
+          // confirmacionEnviadaEn / recordatorioEnviadoEn / cancelacionEnviadaEn son columnas sin uso:
+          // ya no se tocan (quedan como estén en la base).
+          if (existing) {
+            await connection.query(
+              "UPDATE citas SET idCompania = ?, idPaciente = ?, idUsuarioNutricionista = ?, idConsulta = ?, idServicio = ?, fechaHora = ?, duracionMinutos = ?, estadoCita = ?, notas = ?, tipoVisita = ?, direccionDomicilio = ?, pacienteLat = ?, pacienteLng = ?, tiempoTrasladoMinutos = ? WHERE id = ?",
+              [...valores, existing.id]
+            );
+            ct.id = existing.id;
+          } else {
+            const [result] = await connection.query(
+              "INSERT INTO citas (idCompania, idPaciente, idUsuarioNutricionista, idConsulta, idServicio, fechaHora, duracionMinutos, estadoCita, notas, tipoVisita, direccionDomicilio, pacienteLat, pacienteLng, tiempoTrasladoMinutos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              valores
+            );
+            ct.id = (result as any).insertId;
+          }
+          await connection.commit();
+        } catch (err) {
+          try { await connection.rollback(); } catch { /* conexión ya caída */ }
+          throw err;
+        } finally {
+          connection.release();
+        }
+      } else {
+        const existing = idCitaBody ? localCitas.find(c => c.id === idCitaBody && c.idCompania === idCompania) : undefined;
+        const citasDelDia = localCitas.filter(c => c.idUsuarioNutricionista === idProf && c.fechaHora.startsWith(fecha) && c.estadoCita !== "CANCELADA");
+        const facturada = !!existing && existing.estadoCita === "COMPLETADA" && estado === "CANCELADA"
+          && localFacturas.some(f => f.idCita === existing.id && f.idCompania === idCompania && (f.estado === "ACEPTADA" || f.estado === "ENVIADA"));
+        validarAgendaCita(existing, citasDelDia, facturada);
+        if (existing) {
+          ct.id = existing.id;
+          localCitas = localCitas.map(item => item.id === existing.id ? ct : item);
         } else {
           ct.id = Math.max(0, ...localCitas.map(item => item.id)) + 1;
           localCitas.push(ct);
         }
-        res.json(ct);
       }
+      res.json(advertencia ? { ...ct, advertencia } : ct);
     } catch (err: any) {
+      if (err instanceof CitaError) return res.status(err.status).json({ error: err.message });
       res.status(500).json({ error: err.message });
     }
   });
@@ -6255,10 +6477,10 @@ async function startServer() {
 
       async function fetchPatientById(id: number): Promise<Patient | undefined> {
         if (dbConnected && pool) {
-          const [rows] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ?", [id]);
+          const [rows] = await pool.query("SELECT * FROM pacientes WHERE id_paciente = ? AND idCompania = ?", [id, idCompania]);
           return (rows as any[]).map(row => normalizeRow(row, 'id_paciente'))[0];
         }
-        return localPatients.find(p => p.id === id);
+        return localPatients.find(p => p.id === id && p.idCompania === idCompania);
       }
 
       async function fetchCitaById(id: number): Promise<Cita | undefined> {
@@ -6266,15 +6488,15 @@ async function startServer() {
           // Note: unlike pacientes/consultas, the dynamically-created `citas` table (see CREATE TABLE
           // IF NOT EXISTS citas above) has no `id_cita` column at all -- its real PK is just `id`.
           // Querying "id_cita" here throws "Unknown column 'id_cita'" (verified live), so we only match on `id`.
-          const [rows] = await pool.query("SELECT * FROM citas WHERE id = ?", [id]);
+          const [rows] = await pool.query("SELECT * FROM citas WHERE id = ? AND idCompania = ?", [id, idCompania]);
           return (rows as any[]).map(row => normalizeRow(row, 'id'))[0];
         }
-        return localCitas.find(c => c.id === id);
+        return localCitas.find(c => c.id === id && c.idCompania === idCompania);
       }
 
       async function fetchConsultationById(id: number): Promise<Consultation | undefined> {
         if (dbConnected && pool) {
-          const [rows] = await pool.query(`SELECT ${CONSULTA_EVAL_SELECT} FROM consultas c ${CONSULTA_EVAL_JOIN} WHERE c.id_consulta = ?`, [id]);
+          const [rows] = await pool.query(`SELECT ${CONSULTA_EVAL_SELECT} FROM consultas c ${CONSULTA_EVAL_JOIN} WHERE c.id_consulta = ? AND c.idCompania = ?`, [id, idCompania]);
           const rawRow = (rows as any[])[0];
           if (!rawRow) return undefined;
           const row = normalizeRow(rawRow, 'id_consulta');
@@ -6284,7 +6506,7 @@ async function startServer() {
             ...evaluaciones
           };
         }
-        return localConsultations.find(c => c.id === id);
+        return localConsultations.find(c => c.id === id && c.idCompania === idCompania);
       }
 
       let rendered;
@@ -6307,7 +6529,7 @@ async function startServer() {
         const patient = await fetchPatientById(idPaciente);
         const cita = await fetchCitaById(idCitaBody);
         if (!patient || !cita) {
-          return res.status(400).json({ error: "Paciente o cita no encontrados." });
+          return res.status(404).json({ error: "Paciente o cita no encontrados." });
         }
         rendered = renderCitaEmail({ company, patient, cita, tipoNotif });
         idCita = cita.id;
@@ -6322,7 +6544,7 @@ async function startServer() {
         const patient = await fetchPatientById(idPaciente);
         const consultation = await fetchConsultationById(idConsultaBody);
         if (!patient || !consultation) {
-          return res.status(400).json({ error: "Paciente o consulta no encontrados." });
+          return res.status(404).json({ error: "Paciente o consulta no encontrados." });
         }
         rendered = renderConsultaEmail({ company, patient, consultation });
         // Documento para el paciente: plan e indicaciones para seguir en casa. Si el PDF no se
@@ -6464,6 +6686,11 @@ async function startServer() {
 
   app.get("/api/public/clinicas/:id/pacientes/:identificacion", async (req, res) => {
     try {
+      // Sin autenticación: se limita por IP (anti-enumeración de cédulas) y solo se revela
+      // el primer nombre, nunca datos de contacto.
+      if (excedeLimiteConsultaPaciente(req.ip || req.socket.remoteAddress || "desconocida")) {
+        return res.status(429).json({ error: "Demasiadas consultas. Intente de nuevo en unos minutos." });
+      }
       const idCompania = parseInt(req.params.id);
       const identificacion = req.params.identificacion;
       let patient: Patient | undefined;
@@ -6474,13 +6701,7 @@ async function startServer() {
         patient = localPatients.find(p => p.idCompania === idCompania && p.identificacion === identificacion);
       }
       if (!patient) return res.status(404).json({ error: "Paciente no encontrado." });
-      res.json({
-        nombreCompleto: patient.nombreCompleto,
-        telefono: patient.telefono,
-        correoElectronico: patient.correoElectronico,
-        tipoIdentificacion: patient.tipoIdentificacion,
-        fechaNacimiento: patient.fechaNacimiento
-      });
+      res.json({ existe: true, nombre: (patient.nombreCompleto || "").trim().split(/\s+/)[0] || "" });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -6509,7 +6730,7 @@ async function startServer() {
           company.horarioDomicilio = await fetchHorarioDomicilioCompania(company.id);
         }
 
-        const [citaRows] = await pool.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ?", [idUsuario, `${fecha}%`]);
+        const [citaRows] = await pool.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ? AND estadoCita <> 'CANCELADA'", [idUsuario, `${fecha}%`]);
         citasDelDia = citaRows as any[];
 
         const [blockRows] = await pool.query("SELECT * FROM calendar_blocks WHERE idUsuarioNutricionista = ?", [idUsuario]);
@@ -6518,7 +6739,7 @@ async function startServer() {
         user = localUsers.find(u => u.id === idUsuario);
         if (!user) return res.status(404).json({ error: "Profesional no encontrado." });
         company = localCompanies.find(c => c.id === user.idCompania);
-        citasDelDia = localCitas.filter(c => c.idUsuarioNutricionista === idUsuario && c.fechaHora.startsWith(fecha));
+        citasDelDia = localCitas.filter(c => c.idUsuarioNutricionista === idUsuario && c.fechaHora.startsWith(fecha) && c.estadoCita !== "CANCELADA");
         bloqueosDelDia = localCalendarBlocks.filter(b => b.idUsuarioNutricionista === idUsuario);
       }
 
@@ -6565,7 +6786,10 @@ async function startServer() {
       const idCompania = parseInt(body.idCompania);
       const idUsuarioNutricionista = parseInt(body.idUsuarioNutricionista);
       const tipoVisita: "CONSULTORIO" | "DOMICILIO" = body.tipoVisita === "DOMICILIO" ? "DOMICILIO" : "CONSULTORIO";
+      if (!esFechaHoraValida(body.fechaHora)) return res.status(400).json({ error: "Fecha y hora de la cita inválidas." });
       const fechaHora = body.fechaHora as string;
+      if (fechaHoraEsPasada(fechaHora)) return res.status(400).json({ error: "No se puede agendar una cita en una fecha y hora pasada." });
+      if (!body.paciente || typeof body.paciente !== "object") return res.status(400).json({ error: "Faltan los datos del paciente." });
       const fecha = fechaHora.split("T")[0];
       const hora = fechaHora.split("T")[1];
 
@@ -6585,6 +6809,10 @@ async function startServer() {
         company = localCompanies.find(c => c.id === idCompania);
       }
       if (!user) return res.status(404).json({ error: "Profesional no encontrado." });
+      // El profesional debe pertenecer a la empresa indicada y estar activo.
+      if (user.idCompania !== idCompania || !user.activo) {
+        return res.status(400).json({ error: "El profesional seleccionado no está disponible en esta empresa." });
+      }
 
       if (!reservaAutoActiva(company, tipoVisita)) return res.status(403).json({ error: ERROR_SOLO_WHATSAPP });
 
@@ -6627,10 +6855,10 @@ async function startServer() {
         let origenLng = parseFloat(user.ubicacionLng);
         let citasDelDiaPrevias: any[];
         if (dbConnected && pool) {
-          const [citaRows] = await pool.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ?", [idUsuarioNutricionista, `${fecha}%`]);
+          const [citaRows] = await pool.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ? AND estadoCita <> 'CANCELADA'", [idUsuarioNutricionista, `${fecha}%`]);
           citasDelDiaPrevias = citaRows as any[];
         } else {
-          citasDelDiaPrevias = localCitas.filter(c => c.idUsuarioNutricionista === idUsuarioNutricionista && c.fechaHora.startsWith(fecha));
+          citasDelDiaPrevias = localCitas.filter(c => c.idUsuarioNutricionista === idUsuarioNutricionista && c.fechaHora.startsWith(fecha) && c.estadoCita !== "CANCELADA");
         }
         const citaAnterior = citasDelDiaPrevias
           .filter(c => c.fechaHora < fechaHora)
@@ -6685,7 +6913,7 @@ async function startServer() {
 
           await connection.query("SELECT id_usuario FROM usuarios WHERE id_usuario = ? FOR UPDATE", [idUsuarioNutricionista]);
 
-          const [citaRows] = await connection.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ?", [idUsuarioNutricionista, `${fecha}%`]);
+          const [citaRows] = await connection.query("SELECT * FROM citas WHERE idUsuarioNutricionista = ? AND fechaHora LIKE ? AND estadoCita <> 'CANCELADA'", [idUsuarioNutricionista, `${fecha}%`]);
           const citasDelDia = citaRows as any[];
           const [blockRows] = await connection.query("SELECT * FROM calendar_blocks WHERE idUsuarioNutricionista = ?", [idUsuarioNutricionista]);
           const bloqueosDelDia = blockRows as any[];
@@ -6700,8 +6928,8 @@ async function startServer() {
             tramos: tramosDelDia(company, fecha, tipoVisita)
           });
           if (!libre) {
+            // El release lo hace el finally (antes se liberaba aquí también: doble release).
             await connection.rollback();
-            connection.release();
             return res.status(409).json({ error: "Ese horario ya no está disponible. Por favor escoja otro." });
           }
 
@@ -6710,6 +6938,7 @@ async function startServer() {
           paciente = (existing as any[]).map(row => normalizeRow(row, 'id_paciente'))[0];
 
           if (!paciente) {
+            validarDatosPacienteNuevo(pac);
             const nuevoPaciente: any = {
               idCompania,
               nombreCompleto: pac.nombreCompleto,
@@ -6752,31 +6981,19 @@ async function startServer() {
             nuevoPaciente.id = (result as any).insertId;
             paciente = nuevoPaciente;
           } else {
-            // Paciente encontrado por cédula: el formulario público precarga estos campos desde
-            // el registro existente pero, sin este UPDATE, cualquier corrección que la persona
-            // escriba aquí (p.ej. un correo desactualizado) se descartaba en silencio — la cita
-            // se guardaba igual, pero la confirmación seguía yendo al correo viejo. Se
-            // actualizan los datos de contacto con lo realmente enviado antes de usarlos para
-            // el correo de confirmación.
-            const contactoActualizado = {
-              nombreCompleto: pac.nombreCompleto,
-              correoElectronico: pac.correoElectronico,
-              telefono: pac.telefono,
-              tipoIdentificacion: pac.tipoIdentificacion,
-              fechaNacimiento: pac.fechaNacimiento
-            };
-            await connection.query(
-              "UPDATE pacientes SET nombreCompleto = ?, correoElectronico = ?, telefono = ?, tipoIdentificacion = ?, fechaNacimiento = ? WHERE id_paciente = ?",
-              [
-                contactoActualizado.nombreCompleto,
-                contactoActualizado.correoElectronico,
-                contactoActualizado.telefono,
-                contactoActualizado.tipoIdentificacion,
-                contactoActualizado.fechaNacimiento,
-                paciente.id
-              ]
-            );
-            paciente = { ...paciente, ...contactoActualizado };
+            // Paciente existente (endpoint SIN autenticación): NO se sobrescriben sus datos de
+            // contacto — si no, cualquiera con una cédula podría cambiar el correo y recibir sus
+            // notificaciones. Solo se completan campos que estén vacíos. Las notificaciones de
+            // la cita van siempre al correo REGISTRADO.
+            const vacios = camposVaciosDelPaciente(paciente, pac);
+            const columnas = Object.keys(vacios);
+            if (columnas.length > 0) {
+              await connection.query(
+                `UPDATE pacientes SET ${columnas.map(c => `${c} = ?`).join(", ")} WHERE id_paciente = ? AND idCompania = ?`,
+                [...columnas.map(c => vacios[c]), paciente.id, idCompania]
+              );
+              paciente = { ...paciente, ...vacios };
+            }
           }
 
           nuevaCita = {
@@ -6832,6 +7049,7 @@ async function startServer() {
         paciente = localPatients.find(p => p.idCompania === idCompania && p.identificacion === pac.identificacion);
 
         if (!paciente) {
+          validarDatosPacienteNuevo(pac);
           const nuevoPaciente: any = {
             idCompania,
             nombreCompleto: pac.nombreCompleto,
@@ -6868,16 +7086,13 @@ async function startServer() {
           localPatients.push(nuevoPaciente);
           paciente = nuevoPaciente;
         } else {
-          const contactoActualizado = {
-            nombreCompleto: pac.nombreCompleto,
-            correoElectronico: pac.correoElectronico,
-            telefono: pac.telefono,
-            tipoIdentificacion: pac.tipoIdentificacion,
-            fechaNacimiento: pac.fechaNacimiento
-          };
-          const idx = localPatients.findIndex(p => p.id === paciente!.id);
-          if (idx !== -1) localPatients[idx] = { ...localPatients[idx], ...contactoActualizado };
-          paciente = { ...paciente, ...contactoActualizado };
+          // Igual que en MySQL: no se sobrescriben datos de contacto, solo se completan los vacíos.
+          const vacios = camposVaciosDelPaciente(paciente, pac);
+          if (Object.keys(vacios).length > 0) {
+            const idx = localPatients.findIndex(p => p.id === paciente!.id);
+            if (idx !== -1) localPatients[idx] = { ...localPatients[idx], ...vacios };
+            paciente = { ...paciente, ...vacios };
+          }
         }
 
         nuevaCita = {
@@ -6951,6 +7166,7 @@ async function startServer() {
 
       res.json(nuevaCita);
     } catch (err: any) {
+      if (err instanceof CitaError) return res.status(err.status).json({ error: err.message });
       res.status(500).json({ error: err.message });
     }
   });
