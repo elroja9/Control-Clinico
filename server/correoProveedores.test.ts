@@ -1,5 +1,35 @@
 import { describe, it, expect } from 'vitest';
-import { extraerMetadatosComprobante, esCompraDeLaEmpresa, partesXmlDelMensaje, carpetasDe } from './correoProveedores';
+import { extraerMetadatosComprobante, esCompraDeLaEmpresa, partesXmlDelMensaje, carpetasDe, describirErrorImap } from './correoProveedores';
+
+describe('describirErrorImap', () => {
+  it('credenciales rechazadas en Gmail: pide contraseña de aplicación', () => {
+    const r = describirErrorImap({ message: 'Command failed', authenticationFailed: true, responseText: 'Invalid credentials (Failure)' }, 'imap.gmail.com');
+    expect(r.esAutenticacion).toBe(true);
+    expect(r.mensaje).toContain('rechazó el usuario o la contraseña');
+    expect(r.mensaje).toContain('apppasswords');
+    expect(r.mensaje).toContain('(Invalid credentials (Failure))');
+  });
+  it('credenciales rechazadas en otro servidor: sin ayuda de Gmail', () => {
+    const r = describirErrorImap({ responseText: 'AUTHENTICATIONFAILED' }, 'mail.empresa.com');
+    expect(r.esAutenticacion).toBe(true);
+    expect(r.mensaje).not.toContain('apppasswords');
+  });
+  it('timeout', () => {
+    const r = describirErrorImap({ code: 'ETIMEOUT', message: 'Socket timeout' }, 'imap.x.com');
+    expect(r.esAutenticacion).toBe(false);
+    expect(r.mensaje).toContain('no respondió a tiempo');
+  });
+  it('servidor inexistente', () => {
+    expect(describirErrorImap({ code: 'ENOTFOUND' }, 'imap.nada.com').mensaje).toBe('No se encontró el servidor imap.nada.com.');
+  });
+  it('conexión rechazada', () => {
+    expect(describirErrorImap({ code: 'ECONNREFUSED' }, 'h').mensaje).toContain('rechazó la conexión');
+  });
+  it('error genérico usa responseText o message', () => {
+    expect(describirErrorImap({ message: 'boom', responseText: 'Falla del servidor' }, 'h')).toEqual({ mensaje: 'Falla del servidor', esAutenticacion: false });
+    expect(describirErrorImap(new Error('boom'), 'h').mensaje).toBe('boom');
+  });
+});
 
 const CLAVE = '50619102600310123456700100001010000000123100000001';
 const EMPRESA = '3101445566';

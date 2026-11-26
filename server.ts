@@ -6136,7 +6136,8 @@ async function startServer() {
       const [filas] = await pool.query(
         `SELECT i.* FROM compania_imap_config i JOIN companias c ON c.id_compania = i.idCompania
           WHERE i.activo = 1 AND c.estadoSaas = 'ACTIVA'
-            AND i.imapHost <> '' AND i.imapUsuario <> '' AND i.imapPasswordCifrado IS NOT NULL`
+            AND i.imapHost <> '' AND i.imapUsuario <> '' AND i.imapPasswordCifrado IS NOT NULL
+            AND i.verificadaEn IS NOT NULL`
       );
       for (const row of filas as any[]) {
         try {
@@ -6145,7 +6146,17 @@ async function startServer() {
             console.log(`[CORREO PROVEEDORES] Empresa ${row.idCompania}: ${r.nuevos} comprobante(s) nuevo(s), ${r.yaRegistrados} ya registrado(s) (de ${r.revisados} correo(s)).`);
           }
         } catch (err: any) {
-          console.error(`[CORREO PROVEEDORES] Falla revisando el buzón de la empresa ${row.idCompania}:`, err.message || err);
+          if (err?.esAutenticacion) {
+            // Insistir con credenciales malas puede hacer que el proveedor bloquee la cuenta.
+            try {
+              await pool.query("UPDATE compania_imap_config SET verificadaEn = NULL WHERE idCompania = ?", [row.idCompania]);
+            } catch (errBd: any) {
+              console.error(`[CORREO PROVEEDORES] Empresa ${row.idCompania}: no se pudo pausar la revisión:`, errBd?.message || errBd);
+            }
+            console.warn(`[CORREO PROVEEDORES] Empresa ${row.idCompania}: credenciales rechazadas; se pausa la revisión automática hasta volver a probar la conexión.`);
+          } else {
+            console.error(`[CORREO PROVEEDORES] Falla revisando el buzón de la empresa ${row.idCompania}: ${err?.message || err}`);
+          }
         }
       }
     } catch (err) {

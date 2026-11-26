@@ -30,6 +30,7 @@ export default function CorreoEntranteSettings({ themeColor }: Props) {
   const [password, setPassword] = useState('');
   const [carpetasDisponibles, setCarpetasDisponibles] = useState<{ ruta: string; seleccionable: boolean }[] | null>(null);
   const [ocupado, setOcupado] = useState<'' | 'guardar' | 'probar' | 'carpetas'>('');
+  const [errorProbar, setErrorProbar] = useState('');
 
   useEffect(() => {
     pedir<CompaniaImapConfig>('/api/imap-config')
@@ -61,12 +62,14 @@ export default function CorreoEntranteSettings({ themeColor }: Props) {
 
   const probar = async () => {
     setOcupado('probar');
+    setErrorProbar('');
     try {
       const r = await pedir<{ verificadaEn: string }>('/api/imap-config/probar', 'POST');
       setConfig({ ...config, verificadaEn: r.verificadaEn });
       notify.success('Conexión correcta: el buzón y sus carpetas se pudieron abrir.');
     } catch (err: any) {
       setConfig({ ...config, verificadaEn: null });
+      setErrorProbar(err.message);
       notify.error(err.message);
     } finally {
       setOcupado('');
@@ -149,6 +152,14 @@ export default function CorreoEntranteSettings({ themeColor }: Props) {
             autoComplete="new-password"
             className={inputBase}
           />
+          {/gmail/i.test(config.imapHost) && (
+            <p className="text-[11px] text-slate-500 mt-1">
+              Use una contraseña de aplicación de Google (16 caracteres), no la contraseña normal.{' '}
+              <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer" className="underline font-semibold" style={{ color: themeColor }}>
+                Generar contraseña de aplicación
+              </a>
+            </p>
+          )}
         </div>
         <div className="sm:col-span-3">
           <label htmlFor="imap-carpetas" className="block text-slate-600 mb-1 font-semibold">Carpetas a revisar</label>
@@ -168,6 +179,18 @@ export default function CorreoEntranteSettings({ themeColor }: Props) {
             ))}
           </div>
         </div>
+      )}
+
+      {config.activo && !config.verificadaEn && (
+        <p className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 font-semibold" role="status">
+          La revisión automática está en pausa: pruebe la conexión para activarla.
+        </p>
+      )}
+
+      {errorProbar && (
+        <p className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 whitespace-pre-wrap break-words" role="alert">
+          {errorProbar}
+        </p>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">

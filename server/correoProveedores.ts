@@ -109,6 +109,60 @@ function crearClienteImap(config: ConfigImap): ImapFlow {
   return cliente;
 }
 
+/**
+ * Traduce un error de imapflow (que casi siempre dice solo "Command failed") a un mensaje claro en
+ * español. `esAutenticacion` permite distinguir credenciales rechazadas de una caída pasajera.
+ */
+export function describirErrorImap(err: any, host?: string): { mensaje: string; esAutenticacion: boolean } {
+  const codigo = String(err?.code || "");
+  const respuesta = String(err?.responseText || "").trim();
+  const texto = String(err?.message || "");
+  const nombreHost = String(host || "").toLowerCase();
+
+  const esAutenticacion = !!err?.authenticationFailed
+    || /invalid credentials|authenticationfailed/i.test(respuesta)
+    || /authenticationfailed/i.test(String(err?.serverResponseCode || ""));
+  if (esAutenticacion) {
+    let mensaje = "El servidor de correo rechazó el usuario o la contraseña.";
+    if (nombreHost.includes("gmail")) {
+      mensaje += " En Gmail debe usar una contraseña de aplicación (16 caracteres): active la verificación en 2 pasos y genérela en myaccount.google.com/apppasswords.";
+    } else if (nombreHost.includes("outlook") || nombreHost.includes("office365")) {
+      mensaje += " En Outlook/Microsoft 365 puede requerirse una contraseña de aplicación (con verificación en 2 pasos) o tener habilitado el acceso IMAP para el buzón.";
+    }
+    if (respuesta) mensaje += ` (${respuesta})`;
+    return { mensaje, esAutenticacion: true };
+  }
+  if (/ETIMEOUT|ETIMEDOUT/i.test(codigo) || /ETIMEOUT|ETIMEDOUT|Socket timeout/i.test(texto)) {
+    return { mensaje: "El servidor de correo no respondió a tiempo (revise servidor y puerto).", esAutenticacion: false };
+  }
+  if (/ENOTFOUND/i.test(codigo) || /ENOTFOUND/i.test(texto)) {
+    return { mensaje: `No se encontró el servidor ${host || "de correo"}.`, esAutenticacion: false };
+  }
+  if (/ECONNREFUSED/i.test(codigo) || /ECONNREFUSED/i.test(texto)) {
+    return { mensaje: "El servidor rechazó la conexión en ese puerto.", esAutenticacion: false };
+  }
+  if (/CERT|SELF_SIGNED|UNABLE_TO_VERIFY|ERR_TLS|EPROTO|SSL/i.test(codigo) || /certificate|self[- ]signed|wrong version number/i.test(texto)) {
+    return { mensaje: "No se pudo establecer una conexión segura con el servidor (certificado TLS inválido o seguridad/puerto incorrectos).", esAutenticacion: false };
+  }
+  return { mensaje: respuesta || texto || "Error desconocido al conectar con el servidor de correo.", esAutenticacion: false };
+}
+
+/** Error ya traducido; conserva `esAutenticacion` para que el llamador decida si pausar la revisión. */
+function errorImapClaro(err: any, host: string): Error {
+  const { mensaje, esAutenticacion } = describirErrorImap(err, host);
+  const nuevo: Error & { esAutenticacion?: boolean } = new Error(mensaje);
+  nuevo.esAutenticacion = esAutenticacion;
+  return nuevo;
+}
+
+async function conectarImap(client: ImapFlow, config: ConfigImap): Promise<void> {
+  try {
+    await client.connect();
+  } catch (err: any) {
+    throw errorImapClaro(err, config.imapHost);
+  }
+}
+
 /** Cierra la sesión sin lanzar: si el socket ya murió, fuerza el cierre. */
 async function cerrarClienteImap(cliente: ImapFlow): Promise<void> {
   try { await cliente.logout(); } catch { try { (cliente as any).close?.(); } catch { /* ya cerrada */ } }
@@ -127,7 +181,7 @@ export function carpetasDe(imapCarpeta: string | null | undefined): string[] {
 export async function verificarConexionImap(config: ConfigImap): Promise<void> {
   const client = crearClienteImap(config);
   try {
-    await client.connect();
+    await conectarImap(client, config);
     for (const carpeta of carpetasDe(config.imapCarpeta)) {
       try {
         const lock = await client.getMailboxLock(carpeta, { readOnly: true });
@@ -145,7 +199,7 @@ export async function verificarConexionImap(config: ConfigImap): Promise<void> {
 export async function listarCarpetas(config: ConfigImap): Promise<{ ruta: string; seleccionable: boolean }[]> {
   const client = crearClienteImap(config);
   try {
-    await client.connect();
+    await conectarImap(client, config);
     const lista = await client.list();
     return (lista || [])
       // \Noselect son nodos de agrupación (el "[Gmail]" a secas), no buzones que se puedan abrir.
@@ -309,7 +363,7 @@ export async function recolectarComprobantes(
   const limiteTiempo = Date.now() + PRESUPUESTO_MS_POR_BUZON;
 
   try {
-    await client.connect();
+    await conectarImap(client, config);
     for (const carpeta of carpetasDe(config.imapCarpeta)) {
       if (Date.now() > limiteTiempo) { buzonAlDia = false; break; }
       let lock;
