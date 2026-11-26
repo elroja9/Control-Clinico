@@ -1,5 +1,6 @@
 import express from "express";
 import https from "https";
+import { randomBytes } from "crypto";
 import path from "path";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
@@ -36,7 +37,7 @@ import {
 } from "./server/haciendaFactura";
 import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda, esperarResolucionHacienda, HACIENDA_FETCH_TIMEOUT_MS } from "./server/haciendaApi";
 import type { AmbienteHacienda, EstadoHaciendaResultado } from "./server/haciendaApi";
-import { fechaCR, sumarDiasCR } from "./src/utils/fechaCR";
+import { fechaCR, fechaHoraCR, sumarDiasCR } from "./src/utils/fechaCR";
 import { errorIdentificacion } from "./src/utils/identificacion";
 import { ivaEfectivo, precioConIva } from "./src/utils/precios";
 import { normalizarWhatsapp, normalizarMensajeWhatsapp, WhatsappInvalidoError } from "./src/utils/whatsapp";
@@ -46,6 +47,7 @@ import { parsearFacturaProveedorXML } from "./server/xmlProveedorParser";
 import type { CompaniaSmtpConfig } from "./src/data/mockData";
 import { sendMail, createTransportFromConfig } from "./server/mailer";
 import type { AdjuntoEmail } from "./server/mailer";
+import { adjuntoIcsParaPaciente, eventoDesdeCita, generarCalendarioIcs } from "./server/ics";
 import { generarPdfDesdeHtml } from "./server/pdf";
 import { renderFacturaPdf, renderConsultaPacientePdf } from "./server/pdfTemplates";
 import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderFacturaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail, renderRecordatorioDocumentosEmail, renderSmtpTestEmail } from "./server/emailTemplates";
@@ -1151,6 +1153,10 @@ setupDatabase();
 
 async function startServer() {
   const app = express();
+  // Confiar en X-Forwarded-For y X-Forwarded-Proto solo cuando la conexión viene de un proxy en red
+  // local o privada, para que req.ip sea la IP real del cliente y req.protocol el del cliente. Un
+  // cliente público no puede falsificarlo, porque su IP no es privada.
+  app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal']);
   // Límite subido de 100kb (default de Express) a 10mb: el logo de empresa ahora se sube como
   // archivo y viaja como data URL base64 dentro del JSON de POST /api/companies (hasta 2MB
   // crudos ~= 2.7MB en base64, ver CompanySettings.tsx).
@@ -1183,6 +1189,16 @@ async function startServer() {
       return company;
     }
     return localCompanies.find(c => c.id === id);
+  }
+
+  // Nombre del servicio de una cita (para el título del .ics); null si no tiene o no existe.
+  async function nombreServicioDeCita(idServicio: number | null | undefined, idCompania: number): Promise<string | null> {
+    if (!idServicio) return null;
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT nombre FROM servicios WHERE id_servicio = ? AND idCompania = ?", [idServicio, idCompania]);
+      return (rows as any[])[0]?.nombre ?? null;
+    }
+    return localServicios.find(s => s.id === idServicio && s.idCompania === idCompania)?.nombre ?? null;
   }
 
   // El rol viaja en el token firmado (TTL 7 días), así que un usuario desactivado o con el rol
@@ -1302,7 +1318,8 @@ async function startServer() {
   // colaborador de la misma empresa (bcrypt es lento, no infranqueable).
   function sanitizeUser(u: any): any {
     if (!u) return u;
-    const { contrasena, ...safeUser } = u;
+    // El calendarioToken es una credencial (suscripción ICS): solo lo ve su dueño en /api/mi-calendario.
+    const { contrasena, calendarioToken, ...safeUser } = u;
     return safeUser;
   }
 
@@ -1355,8 +1372,7 @@ async function startServer() {
       const token = createSessionToken({ userId: user.id, idCompania: user.idCompania, rol: user.rol });
       res.setHeader("Set-Cookie", serializeSessionCookie(token, SESSION_MAX_AGE_SECONDS));
 
-      const { contrasena, ...safeUser } = user;
-      res.json({ user: safeUser, company });
+      res.json({ user: sanitizeUser(user), company });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1524,8 +1540,7 @@ async function startServer() {
     if (!user || user.activo === false) return res.status(401).json({ error: "No autenticado." });
     const company = await fetchCompanyById(session.idCompania);
 
-    const { contrasena, ...safeUser } = user;
-    res.json({ user: safeUser, company });
+    res.json({ user: sanitizeUser(user), company });
   });
 
   // DB Connection Status Endpoint
@@ -6587,6 +6602,17 @@ async function startServer() {
           return res.status(404).json({ error: "Paciente o cita no encontrados." });
         }
         rendered = renderCitaEmail({ company, patient, cita, tipoNotif });
+        // .ics para el calendario del paciente: REQUEST crea/actualiza y CANCEL elimina (mismo UID).
+        // Si algo falla al generarlo, el correo sale igual sin adjunto.
+        try {
+          adjuntos.push(adjuntoIcsParaPaciente(cita, {
+            nombreClinica: company.nombreComercial,
+            servicio: await nombreServicioDeCita(cita.idServicio, idCompania),
+            cancelar: tipoNotif === "CANCELACION"
+          }));
+        } catch (err) {
+          console.error("No se pudo generar el .ics de la cita:", err);
+        }
         idCita = cita.id;
         destinatario = patient.correoElectronico;
         tipoLog = tipoNotif;
@@ -6647,6 +6673,174 @@ async function startServer() {
     } catch (err: any) {
       console.error("Error enviando notificación:", err);
       res.status(500).json({ error: err.message || "No se pudo enviar la notificación." });
+    }
+  });
+
+  // --- Sincronización con el calendario del teléfono (suscripción ICS por profesional) ---
+  // El token (32 bytes aleatorios en hex) ES la credencial de la URL pública; se guarda en
+  // usuarios.calendarioToken y nunca viaja en otras respuestas (ver sanitizeUser).
+
+  function urlCalendario(req: express.Request, token: string): string {
+    // Con `trust proxy`, req.protocol ya refleja el esquema del cliente.
+    const host = req.get("x-forwarded-host") || req.get("host");
+    return `${req.protocol}://${host}/api/public/calendario/${token}.ics`;
+  }
+
+  async function leerConfigCalendario(idUsuario: number): Promise<{ token: string | null; nombreCompleto: boolean }> {
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT calendarioToken, calendarioNombreCompleto FROM usuarios WHERE id_usuario = ?", [idUsuario]);
+      const r = (rows as any[])[0];
+      return { token: r?.calendarioToken ?? null, nombreCompleto: !!r?.calendarioNombreCompleto };
+    }
+    const u: any = localUsers.find(x => x.id === idUsuario);
+    return { token: u?.calendarioToken ?? null, nombreCompleto: !!u?.calendarioNombreCompleto };
+  }
+
+  function respuestaCalendario(req: express.Request, cfg: { token: string | null; nombreCompleto: boolean }) {
+    return cfg.token
+      ? { activo: true, url: urlCalendario(req, cfg.token), nombreCompleto: cfg.nombreCompleto }
+      : { activo: false, nombreCompleto: cfg.nombreCompleto };
+  }
+
+  app.get("/api/mi-calendario", requireAuth, async (req, res) => {
+    try {
+      const session = sessionOf(req);
+      if (session.rol === "Contador") return res.status(403).json({ error: "Su rol no tiene acceso a esta sección." });
+      res.json(respuestaCalendario(req, await leerConfigCalendario(session.userId)));
+    } catch (err: any) {
+      console.error("Error leyendo la configuración del calendario:", err);
+      res.status(500).json({ error: "No se pudo leer la configuración del calendario." });
+    }
+  });
+
+  app.post("/api/mi-calendario", requireAuth, async (req, res) => {
+    try {
+      const session = sessionOf(req);
+      if (session.rol === "Contador") return res.status(403).json({ error: "Su rol no tiene acceso a esta sección." });
+      const accion = req.body?.accion;
+      if (accion !== "generar" && accion !== "regenerar" && accion !== "desactivar") {
+        return res.status(400).json({ error: "Acción no válida." });
+      }
+      const actual = await leerConfigCalendario(session.userId);
+      const nombreCompleto = typeof req.body?.nombreCompleto === "boolean" ? req.body.nombreCompleto : actual.nombreCompleto;
+      // "generar" conserva el enlace vigente (sirve también para cambiar solo el interruptor de privacidad).
+      const token = accion === "desactivar" ? null : accion === "generar" && actual.token ? actual.token : randomBytes(32).toString("hex");
+
+      if (dbConnected && pool) {
+        await pool.query("UPDATE usuarios SET calendarioToken = ?, calendarioNombreCompleto = ? WHERE id_usuario = ?", [token, nombreCompleto ? 1 : 0, session.userId]);
+      } else {
+        const u: any = localUsers.find(x => x.id === session.userId);
+        if (u) { u.calendarioToken = token; u.calendarioNombreCompleto = nombreCompleto; }
+      }
+      res.json(respuestaCalendario(req, { token, nombreCompleto }));
+    } catch (err: any) {
+      console.error("Error actualizando la configuración del calendario:", err);
+      res.status(500).json({ error: "No se pudo actualizar la configuración del calendario." });
+    }
+  });
+
+  // Límites en memoria, 30 peticiones cada 15 minutos:
+  // - por token, para tokens válidos (cada teléfono suscrito consulta su propio enlace);
+  // - por IP, solo para peticiones con token inválido o inexistente (anti-enumeración).
+  // Así una IP compartida por muchos teléfonos legítimos no bloquea a nadie.
+  const CALENDARIO_MAX = 30;
+  const CALENDARIO_VENTANA_MS = 15 * 60 * 1000;
+  const calendarioLimites = new Map<string, { desde: number; cuenta: number }>();
+  function excedeLimiteCalendario(clave: string): boolean {
+    const ahora = Date.now();
+    if (calendarioLimites.size > 5000) {
+      for (const [k, v] of calendarioLimites) if (ahora - v.desde > CALENDARIO_VENTANA_MS) calendarioLimites.delete(k);
+    }
+    const e = calendarioLimites.get(clave);
+    if (!e || ahora - e.desde > CALENDARIO_VENTANA_MS) {
+      calendarioLimites.set(clave, { desde: ahora, cuenta: 1 });
+      return false;
+    }
+    e.cuenta += 1;
+    return e.cuenta > CALENDARIO_MAX;
+  }
+  const limiteCalendarioPorIp = (req: express.Request) => excedeLimiteCalendario(`ip:${req.ip || "desconocida"}`);
+
+  // Público, sin sesión: el token de la URL es la credencial. Nunca incluye notas clínicas.
+  app.get("/api/public/calendario/:archivo", async (req, res) => {
+    try {
+      const demasiadas = () => res.status(429).type("text/plain").send("Demasiadas solicitudes.");
+      const m = /^([0-9a-f]{64})\.ics$/.exec(req.params.archivo);
+      if (!m) {
+        if (limiteCalendarioPorIp(req)) return demasiadas();
+        return res.status(404).end();
+      }
+      const token = m[1];
+
+      let user: any;
+      if (dbConnected && pool) {
+        const [rows] = await pool.query("SELECT * FROM usuarios WHERE calendarioToken = ?", [token]);
+        user = (rows as any[]).map(row => normalizeRow(row, "id_usuario"))[0];
+      } else {
+        user = localUsers.find((u: any) => u.calendarioToken === token);
+      }
+      // Comparación exacta (la collation de MySQL no distingue mayúsculas), usuario activo y no Contador.
+      if (!user || user.calendarioToken !== token || !user.activo || user.rol === "Contador") {
+        if (limiteCalendarioPorIp(req)) return demasiadas();
+        return res.status(404).end();
+      }
+      if (excedeLimiteCalendario(`token:${token}`)) return demasiadas();
+
+      const hoy = fechaCR();
+      const desde = `${sumarDiasCR(hoy, -30)}T00:00`;
+      const hasta = `${sumarDiasCR(hoy, 180)}T23:59`;
+      const ahoraLocal = fechaHoraCR().slice(0, 16);
+
+      let nombreClinica = "Consultorio";
+      let filas: any[];
+      if (dbConnected && pool) {
+        const [companyRows] = await pool.query("SELECT nombreComercial FROM companias WHERE id_compania = ?", [user.idCompania]);
+        nombreClinica = (companyRows as any[])[0]?.nombreComercial || nombreClinica;
+        // Solo se seleccionan columnas necesarias: `notas` queda fuera a propósito.
+        const [rows] = await pool.query(
+          `SELECT c.id, c.fechaHora, c.duracionMinutos, c.estadoCita, c.tipoVisita, c.direccionDomicilio,
+                  p.nombreCompleto AS pacienteNombre, p.telefono AS pacienteTelefono, s.nombre AS servicioNombre
+             FROM citas c
+             LEFT JOIN pacientes p ON p.id_paciente = c.idPaciente
+             LEFT JOIN servicios s ON s.id_servicio = c.idServicio
+            WHERE c.idUsuarioNutricionista = ? AND c.idCompania = ?
+              AND c.fechaHora >= ? AND c.fechaHora <= ?
+              AND NOT (c.estadoCita = 'CANCELADA' AND c.fechaHora < ?)
+            ORDER BY c.fechaHora`,
+          [user.id, user.idCompania, desde, hasta, ahoraLocal]
+        );
+        filas = rows as any[];
+      } else {
+        nombreClinica = localCompanies.find(c => c.id === user.idCompania)?.nombreComercial || nombreClinica;
+        filas = localCitas
+          .filter(c => c.idUsuarioNutricionista === user.id && c.idCompania === user.idCompania
+            && c.fechaHora >= desde && c.fechaHora <= hasta
+            && !(c.estadoCita === "CANCELADA" && c.fechaHora < ahoraLocal))
+          .map(c => {
+            const p = localPatients.find(x => x.id === c.idPaciente);
+            const s = c.idServicio ? localServicios.find(x => x.id === c.idServicio) : undefined;
+            return { ...c, pacienteNombre: p?.nombreCompleto, pacienteTelefono: p?.telefono, servicioNombre: s?.nombre };
+          });
+      }
+
+      const ahora = new Date();
+      const eventos = filas.map(f => eventoDesdeCita(f, {
+        audiencia: "PROFESIONAL",
+        nombreClinica,
+        servicio: f.servicioNombre,
+        nombrePaciente: f.pacienteNombre,
+        telefonoPaciente: f.pacienteTelefono,
+        nombreCompleto: !!user.calendarioNombreCompleto,
+        ahora
+      }));
+
+      res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.setHeader("Content-Disposition", 'inline; filename="citas.ics"');
+      res.send(generarCalendarioIcs({ nombreCalendario: `Citas - ${nombreClinica}`, eventos }));
+    } catch (err: any) {
+      console.error("Error generando el calendario ICS:", err);
+      res.status(500).end();
     }
   });
 
@@ -7187,7 +7381,18 @@ async function startServer() {
           const correoCliente = renderCitaEmail({ company, patient: paciente!, cita: nuevaCita, tipoNotif: "CONFIRMACION" });
           const correoEspecialista = renderCitaEmailProfesional({ company, professional: user, patient: paciente!, cita: nuevaCita });
 
-          await sendMail(smtpConfig, { to: paciente!.correoElectronico, subject: correoCliente.subject, html: correoCliente.html, text: correoCliente.text });
+          const adjuntosCliente: AdjuntoEmail[] = [];
+          try {
+            adjuntosCliente.push(adjuntoIcsParaPaciente(nuevaCita, {
+              nombreClinica: company.nombreComercial,
+              servicio: await nombreServicioDeCita(idServicio, idCompania),
+              cancelar: false
+            }));
+          } catch (err) {
+            console.error("No se pudo generar el .ics de la cita:", err);
+          }
+
+          await sendMail(smtpConfig, { to: paciente!.correoElectronico, subject: correoCliente.subject, html: correoCliente.html, text: correoCliente.text, attachments: adjuntosCliente });
           await sendMail(smtpConfig, { to: user.correo, subject: correoEspecialista.subject, html: correoEspecialista.html, text: correoEspecialista.text });
 
           const enviadoEn = new Date().toISOString();

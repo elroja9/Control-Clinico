@@ -133,15 +133,21 @@ export function renderCitaEmail(params: {
       ? "Le informamos que su cita ha sido CANCELADA:"
       : "Le informamos que su cita ha sido modificada. Estos son los nuevos detalles:";
 
+  const lineaCalendario =
+    tipoNotif === "CANCELACION"
+      ? "Adjuntamos la cancelación para retirarla de su calendario."
+      : "Adjuntamos la cita para agregarla a su calendario.";
+
   const bodyHtml = `
     <p>Estimado(a) ${escapeHtml(patient.nombreCompleto)},</p>
     <p>${intro}</p>
     ${detailsHtml}
-    <p style="margin-top:16px;">Gracias por su confianza. Ante cualquier consulta, contáctenos con anticipación.</p>
+    <p style="margin-top:16px;">${lineaCalendario}</p>
+    <p>Gracias por su confianza. Ante cualquier consulta, contáctenos con anticipación.</p>
     <p style="margin-top:16px;font-weight:bold;">${escapeHtml(company.nombreComercial)}</p>
   `;
 
-  const text = `${title}\n\nEstimado(a) ${patient.nombreCompleto},\n${intro}\nFecha: ${fecha}\nHora: ${hora || ""}\nDuración: ${cita.duracionMinutos} minutos\nEstado: ${cita.estadoCita}\n${cita.notas ? `Notas: ${cita.notas}\n` : ""}\n${company.nombreComercial}`;
+  const text = `${title}\n\nEstimado(a) ${patient.nombreCompleto},\n${intro}\nFecha: ${fecha}\nHora: ${hora || ""}\nDuración: ${cita.duracionMinutos} minutos\nEstado: ${cita.estadoCita}\n${cita.notas ? `Notas: ${cita.notas}\n` : ""}\n${lineaCalendario}\n\n${company.nombreComercial}`;
 
   return { subject, html: emailShell(company, title, bodyHtml), text };
 }
