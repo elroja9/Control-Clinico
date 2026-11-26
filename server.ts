@@ -20,6 +20,7 @@ import {
   type SessionPayload
 } from "./server/auth";
 import { crearCacheUsuarios, decidirAccesoContador, sesionDesdeUsuario, type UsuarioVigente } from "./server/accesoContador";
+import { politicaDesdeParametros, validarNuevaContrasena, crearLimiteIntentos } from "./server/contrasena";
 import { obtenerCertificadoHttps } from "./server/httpsCert";
 import { verificarLlaveP12, firmarXadesEpes } from "./server/haciendaSigner";
 import {
@@ -1211,12 +1212,12 @@ async function startServer() {
     if (enCache !== undefined) return enCache;
     let vigente: UsuarioVigente | null = null;
     if (dbConnected && pool) {
-      const [rows] = await pool.query("SELECT id_usuario, rol, idCompania, activo FROM usuarios WHERE id_usuario = ?", [id]);
+      const [rows] = await pool.query("SELECT id_usuario, rol, idCompania, activo, sesionVersion FROM usuarios WHERE id_usuario = ?", [id]);
       const r = (rows as any[])[0];
-      if (r) vigente = { id: r.id_usuario, rol: r.rol, idCompania: r.idCompania, activo: !!r.activo };
+      if (r) vigente = { id: r.id_usuario, rol: r.rol, idCompania: r.idCompania, activo: !!r.activo, sesionVersion: Number(r.sesionVersion) || 0 };
     } else {
       const u = localUsers.find(x => x.id === id);
-      if (u) vigente = { id: u.id, rol: u.rol as UsuarioVigente["rol"], idCompania: u.idCompania, activo: u.activo !== false };
+      if (u) vigente = { id: u.id, rol: u.rol as UsuarioVigente["rol"], idCompania: u.idCompania, activo: u.activo !== false, sesionVersion: Number((u as any).sesionVersion) || 0 };
     }
     cacheUsuariosVigentes.set(id, vigente);
     return vigente;
@@ -1232,9 +1233,10 @@ async function startServer() {
     if (!payload) return next();
     try {
       const vigente = await cargarUsuarioVigente(payload.userId);
-      const sesion = sesionDesdeUsuario(vigente);
+      const sesion = sesionDesdeUsuario(vigente, payload.sv);
       if (!sesion) {
-        // Usuario inexistente o desactivado: se limpia la cookie, igual que el logout.
+        // Usuario inexistente, desactivado o con la contraseña cambiada después de emitir este
+        // token (otra versión de sesión): se limpia la cookie, igual que el logout.
         (req as any).sesionRevocada = true;
         return next();
       }
@@ -1369,7 +1371,7 @@ async function startServer() {
         user.contrasena = upgraded;
       }
 
-      const token = createSessionToken({ userId: user.id, idCompania: user.idCompania, rol: user.rol });
+      const token = createSessionToken({ userId: user.id, idCompania: user.idCompania, rol: user.rol, sv: Number(user.sesionVersion) || 0 });
       res.setHeader("Set-Cookie", serializeSessionCookie(token, SESSION_MAX_AGE_SECONDS));
 
       res.json({ user: sanitizeUser(user), company });
@@ -1517,11 +1519,14 @@ async function startServer() {
         return res.json(respuestaGenerica);
       }
 
+      // Restablecer también sube la versión de sesión: cualquier sesión abierta con la clave
+      // anterior (p. ej. en un equipo perdido) deja de valer.
       if (dbConnected && pool) {
-        await pool.query("UPDATE usuarios SET contrasena = ? WHERE id_usuario = ?", [hash, user.id]);
+        await pool.query("UPDATE usuarios SET contrasena = ?, sesionVersion = sesionVersion + 1 WHERE id_usuario = ?", [hash, user.id]);
       } else {
-        localUsers = localUsers.map(u => u.id === user.id ? { ...u, contrasena: hash } : u);
+        localUsers = localUsers.map(u => u.id === user.id ? { ...u, contrasena: hash, sesionVersion: (Number((u as any).sesionVersion) || 0) + 1 } as any : u);
       }
+      cacheUsuariosVigentes.invalidate(user.id);
 
       console.log(`[ForgotPassword] Contraseña temporal enviada: usuario id=${user.id}, destinatario=${enmascararCorreo(user.correo)}, messageId=${envio.messageId}, accepted=${JSON.stringify(envio.accepted.map(enmascararCorreo))}, rejected=${JSON.stringify(envio.rejected.map(enmascararCorreo))}`);
 
@@ -1541,6 +1546,84 @@ async function startServer() {
     const company = await fetchCompanyById(session.idCompania);
 
     res.json({ user: sanitizeUser(user), company });
+  });
+
+  // --- Parámetros del sistema (tabla parametros_sistema; caché de 60 s) ---
+  let cacheParametros: { filas: Array<{ clave: string; valor: string }>; expira: number } | null = null;
+  async function leerParametrosSistema(): Promise<Array<{ clave: string; valor: string }>> {
+    if (cacheParametros && cacheParametros.expira > Date.now()) return cacheParametros.filas;
+    let filas: Array<{ clave: string; valor: string }> = [];
+    if (dbConnected && pool) {
+      try {
+        const [rows] = await pool.query("SELECT clave, valor FROM parametros_sistema");
+        filas = (rows as any[]).map(r => ({ clave: String(r.clave), valor: String(r.valor) }));
+      } catch (err: any) {
+        // Tabla ausente (migración sin aplicar): la política usa su respaldo seguro.
+        console.warn("[Parametros] No se pudieron leer parametros_sistema:", err?.code || err?.message);
+      }
+    }
+    cacheParametros = { filas, expira: Date.now() + 60_000 };
+    return filas;
+  }
+
+  const limiteIntentosContrasena = crearLimiteIntentos();
+
+  // Política vigente, para que la pantalla muestre los requisitos reales (vienen de la BD).
+  app.get("/api/me/politica-contrasena", requireAuth, async (_req, res) => {
+    const p = politicaDesdeParametros(await leerParametrosSistema());
+    res.json({ minLongitud: p.minLongitud, requiereLetrasYNumeros: p.requiereLetrasYNumeros });
+  });
+
+  // Cambio de contraseña por el propio usuario: exige la actual, valida la nueva con la política de
+  // la BD y sube la versión de sesión (cierra las demás sesiones). La sesión actual se renueva.
+  app.post("/api/me/contrasena", requireAuth, async (req, res) => {
+    try {
+      const session = sessionOf(req);
+      const actual = String(req.body?.actual ?? "");
+      const nueva = String(req.body?.nueva ?? "");
+      const politica = politicaDesdeParametros(await leerParametrosSistema());
+
+      if (limiteIntentosContrasena.bloqueado(session.userId, politica)) {
+        return res.status(429).json({ error: `Demasiados intentos fallidos. Espere ${politica.ventanaMin} minutos e intente de nuevo.` });
+      }
+      if (!actual) return res.status(400).json({ error: "Indique su contraseña actual." });
+
+      const user = await fetchUserById(session.userId);
+      if (!user || user.activo === false) return res.status(401).json({ error: "No autenticado." });
+      if (!passwordMatches(user.contrasena, actual)) {
+        limiteIntentosContrasena.registrarFallo(session.userId);
+        console.warn(`[CambioContrasena] Contraseña actual incorrecta (usuario id=${session.userId}).`);
+        return res.status(400).json({ error: "La contraseña actual no es correcta." });
+      }
+
+      const motivo = validarNuevaContrasena(nueva, politica);
+      if (motivo) return res.status(400).json({ error: motivo });
+      if (passwordMatches(user.contrasena, nueva)) {
+        return res.status(400).json({ error: "La contraseña nueva debe ser distinta de la actual." });
+      }
+
+      const hash = hashPassword(nueva);
+      let nuevaVersion: number;
+      if (dbConnected && pool) {
+        await pool.query("UPDATE usuarios SET contrasena = ?, sesionVersion = sesionVersion + 1 WHERE id_usuario = ?", [hash, session.userId]);
+        const [rows] = await pool.query("SELECT sesionVersion FROM usuarios WHERE id_usuario = ?", [session.userId]);
+        nuevaVersion = Number((rows as any[])[0]?.sesionVersion) || 0;
+      } else {
+        nuevaVersion = (Number((user as any).sesionVersion) || 0) + 1;
+        localUsers = localUsers.map(u => u.id === session.userId ? { ...u, contrasena: hash, sesionVersion: nuevaVersion } as any : u);
+      }
+      cacheUsuariosVigentes.invalidate(session.userId);
+      limiteIntentosContrasena.limpiar(session.userId);
+
+      // Token nuevo con la versión vigente: este dispositivo sigue conectado, los demás no.
+      const token = createSessionToken({ userId: session.userId, idCompania: session.idCompania, rol: session.rol, sv: nuevaVersion });
+      res.setHeader("Set-Cookie", serializeSessionCookie(token, SESSION_MAX_AGE_SECONDS));
+      console.log(`[CambioContrasena] Contraseña actualizada (usuario id=${session.userId}); otras sesiones cerradas.`);
+      res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[CambioContrasena] Error:", err);
+      res.status(500).json({ error: "No se pudo cambiar la contraseña. Intente de nuevo." });
+    }
   });
 
   // DB Connection Status Endpoint
@@ -1933,6 +2016,17 @@ async function startServer() {
         }
       }
 
+      // La contraseña PROPIA solo se cambia con POST /api/me/contrasena, que exige la actual. Antes
+      // esta ruta aceptaba una nueva sin verificar nada: con una sesión abierta (equipo ajeno o
+      // robado) cualquiera podía cambiarla y adueñarse de la cuenta.
+      const esAutoEdicion = !!u.id && !!sessionUsuarios && Number(u.id) === sessionUsuarios.userId;
+      if (esAutoEdicion && u.contrasena && String(u.contrasena).trim()) {
+        return res.status(400).json({ error: "Para cambiar su contraseña use Mi perfil → Cambiar contraseña." });
+      }
+      // Si un administrador asigna la contraseña de OTRO usuario, se cierran las sesiones abiertas
+      // de ese usuario (sube su versión de sesión).
+      const cambiaContrasenaAjena = !esAutoEdicion && !!u.id && !!(u.contrasena && String(u.contrasena).trim());
+
       if (dbConnected && pool) {
         if (u.id) {
           // Scoped by idCompania too — an id that only collides by coincidence (never a real
@@ -1959,8 +2053,8 @@ async function startServer() {
               ? hashPassword(String(u.contrasena).trim())
               : existingRow.contrasena;
             await pool.query(
-              "UPDATE usuarios SET idCompania = ?, nombre = ?, usuario = ?, correo = ?, contrasena = ?, rol = ?, activo = ?, ubicacionDireccion = ?, ubicacionLat = ?, ubicacionLng = ?, maxTiempoTrasladoMinutos = ? WHERE id_usuario = ?",
-              [idCompaniaFinal, u.nombre, usuarioFinal, u.correo, contrasenaFinal, rolFinal, activoFinal, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45, u.id]
+              "UPDATE usuarios SET idCompania = ?, nombre = ?, usuario = ?, correo = ?, contrasena = ?, rol = ?, activo = ?, ubicacionDireccion = ?, ubicacionLat = ?, ubicacionLng = ?, maxTiempoTrasladoMinutos = ?, sesionVersion = sesionVersion + ? WHERE id_usuario = ?",
+              [idCompaniaFinal, u.nombre, usuarioFinal, u.correo, contrasenaFinal, rolFinal, activoFinal, u.ubicacionDireccion || null, u.ubicacionLat != null ? parseFloat(u.ubicacionLat) : null, u.ubicacionLng != null ? parseFloat(u.ubicacionLng) : null, u.maxTiempoTrasladoMinutos || 45, cambiaContrasenaAjena ? 1 : 0, u.id]
             );
             const { contrasena, ...safeUser } = u;
             return res.json({ ...safeUser, idCompania: idCompaniaFinal, rol: rolFinal, activo: !!activoFinal, usuario: usuarioFinal });

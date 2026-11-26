@@ -37,6 +37,14 @@ describe('caché de usuario vigente', () => {
   it('usuario desactivado o inexistente no tiene sesión (401)', () => {
     expect(sesionDesdeUsuario({ id: 1, rol: 'Profesional', idCompania: 2, activo: false })).toBeNull();
     expect(sesionDesdeUsuario(null)).toBeNull();
-    expect(sesionDesdeUsuario({ id: 1, rol: 'Profesional', idCompania: 3, activo: true })).toEqual({ userId: 1, idCompania: 3, rol: 'Profesional' });
+    expect(sesionDesdeUsuario({ id: 1, rol: 'Profesional', idCompania: 3, activo: true })).toEqual({ userId: 1, idCompania: 3, rol: 'Profesional', sv: 0 });
+  });
+
+  it('un token con versión de sesión anterior (contraseña cambiada) no tiene sesión', () => {
+    const u = { id: 1, rol: 'Profesional' as const, idCompania: 3, activo: true, sesionVersion: 2 };
+    expect(sesionDesdeUsuario(u, 1)).toBeNull();
+    expect(sesionDesdeUsuario(u, 2)).toEqual({ userId: 1, idCompania: 3, rol: 'Profesional', sv: 2 });
+    // Tokens antiguos sin versión cuentan como 0: valen solo si el usuario nunca cambió la clave.
+    expect(sesionDesdeUsuario({ ...u, sesionVersion: 0 }, 0)).not.toBeNull();
   });
 });

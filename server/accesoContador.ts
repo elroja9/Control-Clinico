@@ -7,6 +7,9 @@ export const RUTAS_CONTADOR: Array<{ metodo: string; patron: RegExp }> = [
   { metodo: "GET", patron: /^\/api\/hacienda-config\/\d+$/ },
   { metodo: "GET", patron: /^\/api\/facturas-correo\/\d+\/xml$/ },
   { metodo: "POST", patron: /^\/api\/(logout|users)$/ },
+  // Todo usuario (también el Contador) puede cambiar su propia contraseña.
+  { metodo: "GET", patron: /^\/api\/me\/politica-contrasena$/ },
+  { metodo: "POST", patron: /^\/api\/me\/contrasena$/ },
   { metodo: "POST", patron: /^\/api\/facturas\/\d+\/reenviar-correo$/ },
   { metodo: "ANY", patron: /^\/api\/(login|forgot-password|public\/.*)$/ },
 ];
@@ -44,6 +47,8 @@ export interface UsuarioVigente {
   rol: "Administrador" | "Profesional" | "Contador";
   idCompania: number;
   activo: boolean;
+  /** usuarios.sesionVersion: sube al cambiar o restablecer la contraseña. */
+  sesionVersion?: number;
 }
 
 /** Caché en memoria con TTL. `now` es inyectable para pruebas. */
@@ -61,8 +66,16 @@ export function crearCacheUsuarios(ttlMs = 60_000, now: () => number = Date.now)
   };
 }
 
-/** Un usuario inexistente o inactivo no tiene sesión válida. */
-export function sesionDesdeUsuario(u: UsuarioVigente | null | undefined): { userId: number; idCompania: number; rol: UsuarioVigente["rol"] } | null {
+/**
+ * Un usuario inexistente o inactivo no tiene sesión válida; tampoco un token emitido con una
+ * versión de sesión distinta a la vigente (la contraseña cambió después de iniciar sesión).
+ */
+export function sesionDesdeUsuario(
+  u: UsuarioVigente | null | undefined,
+  versionToken?: number
+): { userId: number; idCompania: number; rol: UsuarioVigente["rol"]; sv: number } | null {
   if (!u || !u.activo) return null;
-  return { userId: u.id, idCompania: u.idCompania, rol: u.rol };
+  const vigente = u.sesionVersion ?? 0;
+  if (versionToken !== undefined && versionToken !== vigente) return null;
+  return { userId: u.id, idCompania: u.idCompania, rol: u.rol, sv: vigente };
 }

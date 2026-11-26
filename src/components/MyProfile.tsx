@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../data/mockData';
-import { MapPin, Clock, Save, Check, Copy, RefreshCw, CalendarSync } from 'lucide-react';
+import { MapPin, Clock, Save, Check, Copy, RefreshCw, CalendarSync, KeyRound, Eye, EyeOff } from 'lucide-react';
 import { loadGoogleMapsScript } from '../utils/loadGoogleMaps';
 import { Badge, Button, Card, CardBody, CardFooter, CardHeader, Field, Input, cx } from './ui';
 import { buttonSizes, buttonVariants } from './ui/Button';
@@ -96,7 +96,117 @@ export default function MyProfile({ currentUser, onSaveUser }: MyProfileProps) {
         </Card>
       </form>
       {currentUser.rol !== 'Contador' && <SincronizarCalendario />}
+      <CambiarContrasena />
     </div>
+  );
+}
+
+/**
+ * Cambio de contraseña del propio usuario. La política (longitud, letras y números) la define la
+ * base de datos y se pide al servidor para mostrar los requisitos reales; el servidor la vuelve a
+ * validar. Al cambiarla se cierran las sesiones abiertas en otros dispositivos.
+ */
+function CambiarContrasena() {
+  const [actual, setActual] = useState('');
+  const [nueva, setNueva] = useState('');
+  const [confirmacion, setConfirmacion] = useState('');
+  const [mostrar, setMostrar] = useState(false);
+  const [politica, setPolitica] = useState<{ minLongitud: number; requiereLetrasYNumeros: boolean } | null>(null);
+  const [error, setError] = useState('');
+  const [enviando, setEnviando] = useState(false);
+  const [listo, setListo] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/me/politica-contrasena')
+      .then(r => (r.ok ? r.json() : null))
+      .then(p => { if (p) setPolitica(p); })
+      .catch(() => {});
+  }, []);
+
+  const cumpleLongitud = politica ? nueva.length >= politica.minLongitud : nueva.length > 0;
+  const cumpleMezcla = !politica?.requiereLetrasYNumeros || (/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/.test(nueva) && /\d/.test(nueva));
+  const coincide = confirmacion.length > 0 && nueva === confirmacion;
+  const puedeEnviar = !!actual && cumpleLongitud && cumpleMezcla && coincide && !enviando;
+
+  const handleSubmit = async (e: any) => {
+    e.preventDefault();
+    setError('');
+    if (!coincide) { setError('La confirmación no coincide con la contraseña nueva.'); return; }
+    setEnviando(true);
+    try {
+      const resp = await fetch('/api/me/contrasena', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actual, nueva })
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) { setError(data.error || 'No se pudo cambiar la contraseña.'); return; }
+      setActual(''); setNueva(''); setConfirmacion('');
+      setListo(true);
+      setTimeout(() => setListo(false), 6000);
+    } catch {
+      setError('No se pudo conectar con el servidor. Intente de nuevo.');
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  const ojo = (
+    <button
+      type="button"
+      onClick={() => setMostrar(m => !m)}
+      className="w-11 h-11 inline-flex items-center justify-center text-fg-subtle hover:text-fg rounded-control"
+      aria-label={mostrar ? 'Ocultar contraseñas' : 'Mostrar contraseñas'}
+      aria-pressed={mostrar}
+    >
+      {mostrar ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
+    </button>
+  );
+
+  const requisito = (ok: boolean, texto: string) => (
+    <li className={cx('flex items-center gap-1.5', ok ? 'text-success' : 'text-fg-muted')}>
+      {ok ? <Check className="w-3.5 h-3.5" aria-hidden="true" /> : <span className="w-3.5 h-3.5 inline-block rounded-full border border-current" aria-hidden="true" />}
+      {texto}
+    </li>
+  );
+
+  return (
+    <form onSubmit={handleSubmit} noValidate>
+      <Card>
+        <CardHeader
+          title={
+            <span className="inline-flex items-center gap-2">
+              <KeyRound className="w-5 h-5 text-brand-ink" aria-hidden="true" />
+              Cambiar contraseña
+            </span>
+          }
+          description="Por seguridad se pide su contraseña actual. Al cambiarla se cerrará la sesión en sus otros dispositivos."
+        />
+        <CardBody className="space-y-4">
+          <Field label="Contraseña actual" required>
+            <Input type={mostrar ? 'text' : 'password'} autoComplete="current-password" value={actual} onChange={(e: any) => setActual(e.target.value)} trailing={ojo} />
+          </Field>
+          <Field label="Contraseña nueva" required>
+            <Input type={mostrar ? 'text' : 'password'} autoComplete="new-password" value={nueva} onChange={(e: any) => setNueva(e.target.value)} />
+          </Field>
+          <Field label="Confirmar contraseña nueva" required error={confirmacion && !coincide ? 'No coincide con la contraseña nueva.' : undefined}>
+            <Input type={mostrar ? 'text' : 'password'} autoComplete="new-password" value={confirmacion} onChange={(e: any) => setConfirmacion(e.target.value)} invalid={!!confirmacion && !coincide} />
+          </Field>
+          <ul className="text-xs space-y-1" aria-label="Requisitos de la contraseña">
+            {requisito(cumpleLongitud, politica ? `Al menos ${politica.minLongitud} caracteres` : 'Longitud mínima')}
+            {politica?.requiereLetrasYNumeros && requisito(cumpleMezcla, 'Incluye letras y números')}
+            {requisito(coincide, 'La confirmación coincide')}
+          </ul>
+          {error && <p className="text-sm font-medium text-danger bg-danger-soft rounded-control px-3 py-2" role="alert">{error}</p>}
+          {listo && <p className="text-sm font-medium text-success bg-success-soft rounded-control px-3 py-2" role="status">Contraseña actualizada. Las sesiones en otros dispositivos se cerraron.</p>}
+        </CardBody>
+        <CardFooter>
+          <Button type="submit" loading={enviando} disabled={!puedeEnviar} icon={<KeyRound className="w-4 h-4" aria-hidden="true" />}>
+            Cambiar contraseña
+          </Button>
+        </CardFooter>
+      </Card>
+    </form>
   );
 }
 

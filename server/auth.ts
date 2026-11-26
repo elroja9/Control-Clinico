@@ -21,6 +21,9 @@ export interface SessionPayload {
   userId: number;
   idCompania: number;
   rol: "Administrador" | "Profesional" | "Contador";
+  /** Versión de sesión del usuario al emitir el token (usuarios.sesionVersion). Si la versión
+   * en la base cambió (cambio/restablecimiento de contraseña), el token deja de valer. */
+  sv?: number;
 }
 
 export function createSessionToken(payload: SessionPayload): string {
@@ -45,7 +48,8 @@ export function verifySessionToken(token: string): SessionPayload | null {
     const body = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
     if (typeof body.exp !== "number" || Date.now() > body.exp) return null;
     if (typeof body.userId !== "number" || typeof body.idCompania !== "number") return null;
-    return { userId: body.userId, idCompania: body.idCompania, rol: body.rol };
+    // Tokens emitidos antes de existir la versión se tratan como versión 0.
+    return { userId: body.userId, idCompania: body.idCompania, rol: body.rol, sv: typeof body.sv === "number" ? body.sv : 0 };
   } catch {
     return null;
   }
