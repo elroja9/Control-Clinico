@@ -8,46 +8,60 @@
 
 export type AmbienteHacienda = "SANDBOX" | "PRODUCCION" | "PRUEBAS_LOCAL";
 
-// PRUEBAS_LOCAL nunca llega a usar estas URLs — server.ts salta por completo la llamada a
-// Hacienda para ese ambiente (ver POST /api/facturas). Las entradas existen solo para que
-// estos Record<AmbienteHacienda, string> compilen con el tipo ampliado.
-const IDP_TOKEN_URL: Record<AmbienteHacienda, string> = {
-  SANDBOX: "https://idp.comprobanteselectronicos.go.cr/auth/realms/rut-stag/protocol/openid-connect/token",
-  PRODUCCION: "https://idp.comprobanteselectronicos.go.cr/auth/realms/rut/protocol/openid-connect/token",
-  PRUEBAS_LOCAL: ""
-};
-
-const CLIENT_ID: Record<AmbienteHacienda, string> = {
-  SANDBOX: "api-stag",
-  PRODUCCION: "api-prod",
-  PRUEBAS_LOCAL: ""
-};
-
-// Sandbox: subdominio "api-sandbox" con la misma ruta /recepcion/v1 que producción, confirmado en el
-// portal ATV ("Mi perfil" > ambiente de pruebas). Aquí estaba "api.../recepcion-sandbox/v1", una
-// URL inferida de una fuente comunitaria que el POS ya había corregido.
-const RECEPCION_BASE_URL: Record<AmbienteHacienda, string> = {
-  SANDBOX: "https://api-sandbox.comprobanteselectronicos.go.cr/recepcion/v1",
-  PRODUCCION: "https://api.comprobanteselectronicos.go.cr/recepcion/v1",
-  PRUEBAS_LOCAL: ""
-};
-
 // Sin límite, un IdP o API de recepción que acepta la conexión y nunca responde deja colgada la
 // solicitud de facturar indefinidamente. Mismo valor que usa el POS. Exportado para que todo fetch
-// a Hacienda (también el buscador CABYS de server.ts) use el mismo.
+// a Hacienda (también las consultas públicas de server/haciendaPublica.ts) use el mismo.
 export const HACIENDA_FETCH_TIMEOUT_MS = 20000;
 
 export class HaciendaApiError extends Error {}
 
-export async function obtenerTokenHacienda(ambiente: AmbienteHacienda, usuarioAtv: string, passwordAtv: string): Promise<string> {
+/**
+ * URLs y client_id de Hacienda para UN ambiente, ya resueltos desde parametros_sistema (regla del
+ * proyecto: nada de valores de negocio quemados). Quien llama los resuelve con
+ * `resolverEndpointsHacienda` y se los pasa a cada función, así las pruebas inyectan los suyos.
+ */
+export interface EndpointsHacienda {
+  /** URL del token OAuth2 del IdP (hacienda_idp_url_<ambiente>). */
+  idpTokenUrl: string;
+  /** client_id del IdP (hacienda_client_id_<ambiente>). */
+  clientId: string;
+  /** Base del API de Recepción, sin barra final (hacienda_recepcion_url_<ambiente>). */
+  recepcionUrl: string;
+}
+
+/** Lector de un parámetro del sistema: devuelve el valor o undefined si no existe. */
+export type LectorParametro = (clave: string) => string | undefined;
+
+/**
+ * Resuelve los endpoints de un ambiente leyendo `hacienda_idp_url_*`, `hacienda_client_id_*` y
+ * `hacienda_recepcion_url_*`. PRUEBAS_LOCAL nunca llama a Hacienda (server.ts salta la llamada),
+ * así que devuelve endpoints vacíos, igual que las constantes de antes. Falta un parámetro → lanza
+ * HaciendaApiError antes de que salga nada de este servidor.
+ */
+export function resolverEndpointsHacienda(ambiente: AmbienteHacienda, leer: LectorParametro): EndpointsHacienda {
+  if (ambiente === "PRUEBAS_LOCAL") return { idpTokenUrl: "", clientId: "", recepcionUrl: "" };
+  const sufijo = ambiente === "PRODUCCION" ? "produccion" : "sandbox";
+  const requerido = (clave: string): string => {
+    const valor = (leer(clave) ?? "").trim();
+    if (!valor) throw new HaciendaApiError(`Falta configurar el parámetro del sistema «${clave}».`);
+    return valor;
+  };
+  return {
+    idpTokenUrl: requerido(`hacienda_idp_url_${sufijo}`),
+    clientId: requerido(`hacienda_client_id_${sufijo}`),
+    recepcionUrl: requerido(`hacienda_recepcion_url_${sufijo}`).replace(/\/+$/, "")
+  };
+}
+
+export async function obtenerTokenHacienda(endpoints: EndpointsHacienda, usuarioAtv: string, passwordAtv: string): Promise<string> {
   const body = new URLSearchParams({
     grant_type: "password",
-    client_id: CLIENT_ID[ambiente],
+    client_id: endpoints.clientId,
     username: usuarioAtv,
     password: passwordAtv
   });
 
-  const res = await fetch(IDP_TOKEN_URL[ambiente], {
+  const res = await fetch(endpoints.idpTokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -76,7 +90,7 @@ export interface EnvioHaciendaResultado {
  * Hacienda lo espera en base64 dentro de `comprobanteXml` según el API de Recepción.
  */
 export async function enviarFacturaHacienda(params: {
-  ambiente: AmbienteHacienda;
+  endpoints: EndpointsHacienda;
   token: string;
   clave: string;
   fechaEmisionIso: string;
@@ -86,7 +100,7 @@ export async function enviarFacturaHacienda(params: {
   cedulaReceptor?: string;
   xmlFirmado: string;
 }): Promise<EnvioHaciendaResultado> {
-  const { ambiente, token, clave, fechaEmisionIso, tipoIdentificacionEmisor, cedulaEmisor, tipoIdentificacionReceptor, cedulaReceptor, xmlFirmado } = params;
+  const { endpoints, token, clave, fechaEmisionIso, tipoIdentificacionEmisor, cedulaEmisor, tipoIdentificacionReceptor, cedulaReceptor, xmlFirmado } = params;
 
   const body: any = {
     clave,
@@ -98,7 +112,7 @@ export async function enviarFacturaHacienda(params: {
     body.receptor = { tipoIdentificacion: tipoIdentificacionReceptor, numeroIdentificacion: cedulaReceptor };
   }
 
-  const res = await fetch(`${RECEPCION_BASE_URL[ambiente]}/recepcion`, {
+  const res = await fetch(`${endpoints.recepcionUrl}/recepcion`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -144,10 +158,10 @@ export function extraerDetalleMensajeHacienda(respuestaXmlBase64: string | null)
     .trim() || null;
 }
 
-export async function consultarEstadoHacienda(ambiente: AmbienteHacienda, token: string, clave: string, timeoutMs = HACIENDA_FETCH_TIMEOUT_MS): Promise<EstadoHaciendaResultado> {
+export async function consultarEstadoHacienda(endpoints: EndpointsHacienda, token: string, clave: string, timeoutMs = HACIENDA_FETCH_TIMEOUT_MS): Promise<EstadoHaciendaResultado> {
   let res: Response;
   try {
-    res = await fetch(`${RECEPCION_BASE_URL[ambiente]}/recepcion/${clave}`, {
+    res = await fetch(`${endpoints.recepcionUrl}/recepcion/${clave}`, {
       headers: { "Authorization": `Bearer ${token}` },
       signal: AbortSignal.timeout(timeoutMs)
     });
@@ -188,16 +202,148 @@ export async function consultarEstadoHacienda(ambiente: AmbienteHacienda, token:
  * (POST /api/facturas/:id/estado), nunca reenviarlo: Hacienda rechaza el reenvío de una clave que ya
  * tiene, y el POS llegó a reintentar así una factura durante 7 horas que Hacienda ya había aceptado.
  */
-export async function esperarResolucionHacienda(ambiente: AmbienteHacienda, token: string, clave: string, intentos = 4, esperaMs = 2000, plazoMs = 12000): Promise<EstadoHaciendaResultado> {
+export async function esperarResolucionHacienda(endpoints: EndpointsHacienda, token: string, clave: string, intentos = 4, esperaMs = 2000, plazoMs = 12000): Promise<EstadoHaciendaResultado> {
   const limite = Date.now() + plazoMs;
   let ultimo: EstadoHaciendaResultado = { estado: "recibido", respuestaXmlBase64: null, detalleMensaje: null };
   for (let i = 0; i < intentos; i++) {
     await new Promise(r => setTimeout(r, esperaMs));
     const restante = limite - Date.now();
     if (restante <= 0) break;
-    const consulta = await consultarEstadoHacienda(ambiente, token, clave, Math.min(5000, restante));
+    const consulta = await consultarEstadoHacienda(endpoints, token, clave, Math.min(5000, restante));
     if (consulta.estado === "aceptado" || consulta.estado === "rechazado") return consulta;
     ultimo = consulta;
   }
   return ultimo;
+}
+
+/**
+ * Emisor en el formato que pide GET /comprobantes: tipo de identificación (2 dígitos) más la
+ * identificación rellenada con ceros a 12 (p. ej. "02" + "3101123456" → "02003101123456").
+ * Devuelve null si los datos de la empresa no permiten armarlo.
+ */
+export function formatoEmisorHacienda(tipoIdentificacion: string | null | undefined, identificacion: string | null | undefined): string | null {
+  const tipo = String(tipoIdentificacion ?? "").trim();
+  const numero = String(identificacion ?? "").replace(/[\s-]/g, "");
+  if (!/^\d{2}$/.test(tipo) || !/^\d{9,12}$/.test(numero)) return null;
+  return tipo + numero.padStart(12, "0");
+}
+
+export interface ComprobanteEmitidoHacienda {
+  clave: string;
+  fecha: string | null;
+  emisor: string | null;
+  receptor: string | null;
+  estado: string | null;
+}
+
+export interface ListaComprobantesHacienda {
+  items: ComprobanteEmitidoHacienda[];
+  total?: number;
+  /** Presente solo si la consulta falló: motivo legible, con el X-Error-Cause de Hacienda si vino. */
+  errorCausa?: string;
+}
+
+// Hacienda puede mandar el emisor/receptor como texto o como objeto {nombre, numeroIdentificacion…}.
+function textoParte(valor: unknown): string | null {
+  if (valor == null) return null;
+  if (typeof valor === "string" || typeof valor === "number") return String(valor) || null;
+  if (typeof valor === "object") {
+    const o = valor as Record<string, unknown>;
+    const nombre = o.nombre ?? o.name;
+    const numero = o.numeroIdentificacion ?? o.identificacion;
+    const partes = [nombre, numero].filter(p => typeof p === "string" || typeof p === "number").map(String);
+    return partes.length ? partes.join(" — ") : null;
+  }
+  return null;
+}
+
+function textoOpcional(valor: unknown): string | null {
+  return typeof valor === "string" || typeof valor === "number" ? String(valor) : null;
+}
+
+/** La forma con token no está verificada: se acepta un arreglo o un objeto que contenga uno. */
+function extraerArregloComprobantes(data: unknown): unknown[] {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") {
+    const o = data as Record<string, unknown>;
+    for (const k of ["comprobantes", "items", "data", "content", "resultados"]) {
+      if (Array.isArray(o[k])) return o[k] as unknown[];
+    }
+    const primero = Object.values(o).find(Array.isArray);
+    if (primero) return primero as unknown[];
+  }
+  return [];
+}
+
+/** Total de la paginación: X-Total-Count, o el número tras "/" en Content-Range ("items 0-19/245"). */
+function totalDesdeCabeceras(headers: Headers): number | undefined {
+  const xTotal = parseInt(headers.get("x-total-count") || "", 10);
+  if (Number.isFinite(xTotal) && xTotal >= 0) return xTotal;
+  const rango = headers.get("content-range")?.match(/\/\s*(\d+)\s*$/);
+  if (rango) return parseInt(rango[1], 10);
+  return undefined;
+}
+
+/**
+ * Lista los comprobantes emitidos por `emisor` en Hacienda (GET {recepcion}/comprobantes). Nunca
+ * lanza: cualquier falla vuelve como `errorCausa` (con el X-Error-Cause de Hacienda) e `items` vacío.
+ * PRUEBAS_LOCAL no llama a Hacienda.
+ */
+export async function listarComprobantesEmitidos(params: {
+  token: string;
+  ambiente: AmbienteHacienda;
+  emisor: string;
+  offset: number;
+  limit: number;
+  endpoints: EndpointsHacienda;
+}): Promise<ListaComprobantesHacienda> {
+  const { token, ambiente, emisor, offset, limit, endpoints } = params;
+  if (ambiente === "PRUEBAS_LOCAL") {
+    return { items: [], errorCausa: "La empresa está en ambiente de pruebas locales: sus comprobantes nunca se envían a Hacienda." };
+  }
+  if (!/^\d{14}$/.test(emisor)) {
+    return { items: [], errorCausa: "El emisor debe tener 14 dígitos (tipo de identificación y número rellenado a 12)." };
+  }
+  if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1) {
+    return { items: [], errorCausa: "Paginación no válida." };
+  }
+
+  const url = `${endpoints.recepcionUrl}/comprobantes?offset=${offset}&limit=${limit}&emisor=${encodeURIComponent(emisor)}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { "Authorization": `Bearer ${token}`, "Accept": "application/json" },
+      signal: AbortSignal.timeout(HACIENDA_FETCH_TIMEOUT_MS)
+    });
+  } catch (err: any) {
+    return { items: [], errorCausa: `No se pudo comunicar con Hacienda (${err?.name === "TimeoutError" ? "tiempo de espera agotado" : err?.message || err}).` };
+  }
+
+  if (!res.ok) {
+    const causa = res.headers.get("x-error-cause");
+    const texto = causa ? "" : (await res.text().catch(() => "")).slice(0, 300);
+    const detalle = causa || texto;
+    return { items: [], errorCausa: `Hacienda respondió ${res.status}${detalle ? `: ${detalle}` : "."}` };
+  }
+
+  const data: unknown = await res.json().catch(() => null);
+  if (data === null) {
+    return { items: [], errorCausa: "Hacienda devolvió una respuesta que no se pudo interpretar." };
+  }
+  const items: ComprobanteEmitidoHacienda[] = [];
+  for (const el of extraerArregloComprobantes(data)) {
+    if (!el || typeof el !== "object") continue;
+    const o = el as Record<string, unknown>;
+    const clave = textoOpcional(o.clave);
+    if (!clave) continue;
+    items.push({
+      clave,
+      fecha: textoOpcional(o.fecha ?? o.fechaEmision),
+      emisor: textoParte(o.emisor),
+      receptor: textoParte(o.receptor),
+      estado: textoOpcional(o.estado ?? o["ind-estado"])
+    });
+  }
+  const total = totalDesdeCabeceras(res.headers);
+  return total === undefined ? { items } : { items, total };
 }

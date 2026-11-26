@@ -6,6 +6,10 @@ export const RUTAS_CONTADOR: Array<{ metodo: string; patron: RegExp }> = [
   { metodo: "GET", patron: /^\/api\/reportes\/(clientes-sesiones|d104|d101|cierres)$/ },
   { metodo: "GET", patron: /^\/api\/hacienda-config\/\d+$/ },
   { metodo: "GET", patron: /^\/api\/facturas-correo\/\d+\/xml$/ },
+  // Consultas fiscales a Hacienda (CABYS, contribuyentes, tipo de cambio, exoneraciones y
+  // comprobantes emitidos): solo lectura, sin datos clínicos.
+  { metodo: "GET", patron: /^\/api\/hacienda\/(cabys|cabys\/sugeridos|tipo-cambio|comprobantes)$/ },
+  { metodo: "GET", patron: /^\/api\/hacienda\/(contribuyente|exoneracion|comprobantes)\/[^/]+$/ },
   { metodo: "POST", patron: /^\/api\/(logout|users)$/ },
   // Todo usuario (también el Contador) puede cambiar su propia contraseña.
   { metodo: "GET", patron: /^\/api\/me\/politica-contrasena$/ },

@@ -17,6 +17,22 @@ describe('decidirAccesoContador', () => {
   it('marca como inválida una codificación rota', () => {
     expect(decidirAccesoContador('GET', '/api/%E0%A4%A')).toBe('invalida');
   });
+  it('permite las consultas GET a Hacienda', () => {
+    for (const ruta of [
+      '/api/hacienda/cabys', '/api/hacienda/cabys/sugeridos', '/api/hacienda/tipo-cambio',
+      '/api/hacienda/contribuyente/3101123456', '/api/hacienda/exoneracion/AL-00020402-24',
+      '/api/hacienda/comprobantes', '/api/hacienda/comprobantes/' + '5'.repeat(50), '/API/Hacienda/Tipo-Cambio/'
+    ]) {
+      expect(decidirAccesoContador('GET', ruta)).toBe('permitido');
+    }
+  });
+  it('bloquea métodos de escritura y rutas no listadas bajo /api/hacienda', () => {
+    expect(decidirAccesoContador('POST', '/api/hacienda/comprobantes')).toBe('prohibido');
+    expect(decidirAccesoContador('DELETE', '/api/hacienda/cabys')).toBe('prohibido');
+    expect(decidirAccesoContador('GET', '/api/hacienda/otra')).toBe('prohibido');
+    expect(decidirAccesoContador('GET', '/api/hacienda/contribuyente/1/extra')).toBe('prohibido');
+    expect(decidirAccesoContador('POST', '/api/hacienda-config/3')).toBe('prohibido');
+  });
   it('rutas fuera de /api no se filtran', () => {
     expect(decidirAccesoContador('GET', '/assets/x.js')).toBe('no-api');
   });

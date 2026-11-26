@@ -25,6 +25,7 @@ import {
   Loader2,
   FolderOpen,
   BookOpen,
+  FileSearch,
   type LucideIcon
 } from 'lucide-react';
 import { notify, confirmar } from './components/ui/Feedback';
@@ -100,6 +101,7 @@ import ReporteriaClinica from './components/ReporteriaClinica';
 import CasosLegalesManager from './components/CasosLegalesManager';
 import ManualUsuario from './components/ManualUsuario';
 import ParametrosRentaManager from './components/ParametrosRentaManager';
+import ConsultasHacienda from './components/hacienda/ConsultasHacienda';
 
 // Recharts pinta con atributos SVG, que no resuelven var(--token): estos hex replican los tokens
 // de src/index.css (border, border-strong, fg-subtle, fg, surface-muted, success, warning, danger).
@@ -114,12 +116,12 @@ const CHART_COLORS = {
   danger: '#be123c'
 } as const;
 
-type TabId = 'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales' | 'reporteria' | 'casos' | 'manual';
+type TabId = 'dashboard' | 'patients' | 'consultations' | 'agenda' | 'branding' | 'saas-admin' | 'mi-perfil' | 'reservas-online' | 'facturacion' | 'cxp' | 'reportes-fiscales' | 'consultas-hacienda' | 'reporteria' | 'casos' | 'manual';
 
-const TAB_IDS: TabId[] = ['dashboard', 'patients', 'consultations', 'agenda', 'branding', 'saas-admin', 'mi-perfil', 'reservas-online', 'facturacion', 'cxp', 'reportes-fiscales', 'reporteria', 'casos', 'manual'];
+const TAB_IDS: TabId[] = ['dashboard', 'patients', 'consultations', 'agenda', 'branding', 'saas-admin', 'mi-perfil', 'reservas-online', 'facturacion', 'cxp', 'reportes-fiscales', 'consultas-hacienda', 'reporteria', 'casos', 'manual'];
 
 // Pestañas permitidas al rol Contador (finanzas + perfil + manual).
-const TABS_CONTADOR: TabId[] = ['facturacion', 'cxp', 'reportes-fiscales', 'mi-perfil', 'manual'];
+const TABS_CONTADOR: TabId[] = ['facturacion', 'cxp', 'reportes-fiscales', 'consultas-hacienda', 'mi-perfil', 'manual'];
 
 // La pestaña activa vive en el hash (#/agenda): refrescar la página no la pierde, se puede
 // enlazar directo a una sección y el botón "Atrás" del navegador vuelve a la anterior.
@@ -1280,6 +1282,7 @@ export default function App() {
         { id: 'facturacion', label: 'Facturación', icon: Receipt, badge: facturas.filter(f => f.idCompania === selectedCompanyId).length },
         { id: 'cxp', label: 'Cuentas por Pagar', icon: Landmark, badge: cxp.filter(c => c.idCompania === selectedCompanyId && c.estado === 'PENDIENTE').length },
         { id: 'reportes-fiscales', label: 'Reportes Fiscales', icon: FileSpreadsheet },
+        { id: 'consultas-hacienda', label: 'Consultas Hacienda', icon: FileSearch },
         // Reportería cuenta pacientes y sesiones clínicas
         ...(esLegal ? [] : [{ id: 'reporteria' as TabId, label: 'Reportería', icon: BarChart3 }])
       ]
@@ -2142,6 +2145,11 @@ export default function App() {
             {/* ================= REPORTES FISCALES D-104 / D-101 ================= */}
             {activeTab === 'reportes-fiscales' && (
               <ReportesFiscales company={activeCompany} soloLectura={esContador} />
+            )}
+
+            {/* ================= CONSULTAS HACIENDA (CABYS, contribuyentes, comprobantes) ================= */}
+            {activeTab === 'consultas-hacienda' && (
+              <ConsultasHacienda rol={currentUser.rol} />
             )}
 
             {/* ================= REPORTERÍA DE CLIENTES Y SESIONES ================= */}

@@ -36,8 +36,9 @@ import {
   construirXmlNotaDebito,
   RAZON_MAX
 } from "./server/haciendaFactura";
-import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda, esperarResolucionHacienda, HACIENDA_FETCH_TIMEOUT_MS } from "./server/haciendaApi";
-import type { AmbienteHacienda, EstadoHaciendaResultado } from "./server/haciendaApi";
+import { obtenerTokenHacienda, enviarFacturaHacienda, consultarEstadoHacienda, esperarResolucionHacienda, resolverEndpointsHacienda, listarComprobantesEmitidos, formatoEmisorHacienda } from "./server/haciendaApi";
+import type { AmbienteHacienda, EstadoHaciendaResultado, EndpointsHacienda } from "./server/haciendaApi";
+import { cabys as buscarCabysHacienda, contribuyente as consultarContribuyente, tipoCambio as consultarTipoCambio, exoneracion as consultarExoneracion, HaciendaPublicaError, type TipoCambio } from "./server/haciendaPublica";
 import { fechaCR, fechaHoraCR, sumarDiasCR } from "./src/utils/fechaCR";
 import { errorIdentificacion } from "./src/utils/identificacion";
 import { ivaEfectivo, precioConIva } from "./src/utils/precios";
@@ -1283,7 +1284,9 @@ async function startServer() {
   //        /api/servicios, /api/facturas, /api/cxc, /api/cxp, /api/proveedores,
   //        /api/reportes/{clientes-sesiones,d104,d101,cierres}, /api/parametros-renta,
   //        /api/hacienda-config/:idCompania (solo banderas, nunca llave ni PIN),
-  //        /api/facturas-correo y /api/facturas-correo/:id/xml
+  //        /api/facturas-correo y /api/facturas-correo/:id/xml,
+  //        /api/hacienda/{cabys,cabys/sugeridos,tipo-cambio,comprobantes} y
+  //        /api/hacienda/{contribuyente,exoneracion,comprobantes}/:valor (consultas fiscales)
   //   POST /api/logout, /api/facturas/:id/reenviar-correo,
   //        /api/users (solo para Mi perfil: el handler limita a no administradores a editarse a
   //        sí mismos sin cambiar rol/empresa/estado, y nunca pueden crear usuarios)
@@ -1558,12 +1561,42 @@ async function startServer() {
         const [rows] = await pool.query("SELECT clave, valor FROM parametros_sistema");
         filas = (rows as any[]).map(r => ({ clave: String(r.clave), valor: String(r.valor) }));
       } catch (err: any) {
-        // Tabla ausente (migración sin aplicar): la política usa su respaldo seguro.
+        // Fallo transitorio o tabla ausente: NO se guarda en caché (si se guardara la lista vacía,
+        // la facturación quedaría sin URLs de Hacienda durante 60 s). Se usa la última lectura
+        // buena si existe; si no, la lista vacía solo para esta petición.
         console.warn("[Parametros] No se pudieron leer parametros_sistema:", err?.code || err?.message);
+        return cacheParametros?.filas ?? [];
       }
     }
     cacheParametros = { filas, expira: Date.now() + 60_000 };
     return filas;
+  }
+
+  /** Valor de un parámetro del sistema (undefined si no existe), con la misma caché de 60 s. */
+  async function parametro(clave: string): Promise<string | undefined> {
+    return (await leerParametrosSistema()).find(p => p.clave === clave)?.valor;
+  }
+
+  class ParametroFaltanteError extends Error {}
+
+  /** Entero positivo obligatorio de parametros_sistema; si falta o no es válido, ParametroFaltanteError. */
+  async function parametroEntero(clave: string): Promise<number> {
+    const n = parseInt((await parametro(clave)) ?? "", 10);
+    if (!Number.isInteger(n) || n < 1) throw new ParametroFaltanteError(`Falta configurar el parámetro del sistema «${clave}».`);
+    return n;
+  }
+
+  /** Texto obligatorio de parametros_sistema; si falta, ParametroFaltanteError. */
+  async function parametroRequerido(clave: string): Promise<string> {
+    const v = ((await parametro(clave)) ?? "").trim();
+    if (!v) throw new ParametroFaltanteError(`Falta configurar el parámetro del sistema «${clave}».`);
+    return v;
+  }
+
+  /** URLs del IdP y de recepción y client_id del ambiente, leídos de parametros_sistema. */
+  async function endpointsHaciendaPara(ambiente: AmbienteHacienda): Promise<EndpointsHacienda> {
+    const filas = await leerParametrosSistema();
+    return resolverEndpointsHacienda(ambiente, clave => filas.find(p => p.clave === clave)?.valor);
   }
 
   const limiteIntentosContrasena = crearLimiteIntentos();
@@ -3652,11 +3685,13 @@ async function startServer() {
       // recibir y el respaldo ante Hacienda.
       // Hasta aquí (firma, token) nada salió de este servidor: una falla es un ERROR seguro de reintentar.
       resultado.xmlFirmado = await firmarXadesEpes(xmlSinFirmar, cert.p12Base64, cert.pin);
-      const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
+      // URLs y client_id del ambiente desde parametros_sistema; si falta uno, ERROR antes de salir a la red.
+      const endpoints = await endpointsHaciendaPara(credenciales.ambiente);
+      const token = await obtenerTokenHacienda(endpoints, credenciales.usuarioAtv, credenciales.passwordAtv);
       let envio;
       try {
         envio = await enviarFacturaHacienda({
-          ambiente: credenciales.ambiente,
+          endpoints,
           token,
           clave,
           fechaEmisionIso: fechaEmision,
@@ -3670,7 +3705,7 @@ async function startServer() {
         // Se cortó la comunicación DURANTE el envío (timeout, red): Hacienda pudo haberlo recibido o
         // no. Antes se daba por no recibido, y reintentar emitía un segundo comprobante con otra
         // clave. Se le pregunta por esta clave antes de decidir.
-        const consulta = await esperarResolucionHacienda(credenciales.ambiente, token, clave);
+        const consulta = await esperarResolucionHacienda(endpoints, token, clave);
         if (consulta.estado === "no_encontrado") {
           resultado.mensajeError = `${err.message || err} — Hacienda confirmó que no lo recibió.`;
           return resultado;
@@ -3694,7 +3729,7 @@ async function startServer() {
         return resultado;
       }
       resultado.estado = "ENVIADA";
-      const consulta = await esperarResolucionHacienda(credenciales.ambiente, token, clave);
+      const consulta = await esperarResolucionHacienda(endpoints, token, clave);
       resultado.respuestaHacienda = consulta.respuestaXmlBase64;
       if (consulta.estado === "aceptado") {
         resultado.estado = "ACEPTADA";
@@ -3709,21 +3744,212 @@ async function startServer() {
     return resultado;
   }
 
-  // Proxy al catálogo oficial CABYS de Hacienda (evita CORS desde el navegador).
+  // --- Consultas a Hacienda (API pública y comprobantes emitidos) ---
+  // Todo acotado a la empresa de la sesión; las URLs y límites salen de parametros_sistema.
+
+  /** Responde un error de las consultas a Hacienda con el código adecuado y un mensaje legible. */
+  function responderErrorHacienda(res: express.Response, err: any, contexto: string) {
+    if (err instanceof HaciendaPublicaError) return res.status(err.status).json({ error: err.message });
+    if (err instanceof ParametroFaltanteError) return res.status(503).json({ error: err.message });
+    console.error(`[Hacienda] ${contexto}:`, err?.message || err);
+    return res.status(500).json({ error: `No se pudo completar la consulta (${err?.message || err}).` });
+  }
+
+  async function buscarCabysNormalizado(q: string) {
+    const [base, max] = await Promise.all([parametroRequerido("hacienda_api_publica_url"), parametroEntero("hacienda_cabys_resultados_max")]);
+    return buscarCabysHacienda(base, q, max);
+  }
+
+  // Proxy al catálogo oficial CABYS de Hacienda (evita CORS desde el navegador). Lo consume el
+  // formulario de servicios de CompanySettings: devuelve un ARREGLO [{codigo, descripcion, impuesto}]
+  // (ese archivo acepta un arreglo) y, como antes, [] ante términos cortos o fallas de Hacienda.
   app.get("/api/cabys", requireAuth, async (req, res) => {
     try {
-      const q = (req.query.q as string) || "";
-      if (!q.trim()) return res.json([]);
-      const url = /^\d{13}$/.test(q.trim())
-        ? `https://api.hacienda.go.cr/fe/cabys?codigo=${encodeURIComponent(q.trim())}`
-        : `https://api.hacienda.go.cr/fe/cabys?q=${encodeURIComponent(q.trim())}`;
-      // Con límite: sin él, una API de Hacienda que no responde dejaba colgado el buscador.
-      const resp = await fetch(url, { signal: AbortSignal.timeout(HACIENDA_FETCH_TIMEOUT_MS) });
-      if (!resp.ok) return res.json([]);
-      const data = await resp.json();
-      res.json(data);
+      const q = String(req.query.q ?? "").trim();
+      if (!q) return res.json([]);
+      res.json((await buscarCabysNormalizado(q)).items);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err instanceof HaciendaPublicaError) return res.json([]);
+      responderErrorHacienda(res, err, "Búsqueda CABYS");
+    }
+  });
+
+  // Igual que /api/cabys pero con los errores visibles: { total, items: [{codigo, descripcion, impuesto}] }.
+  app.get("/api/hacienda/cabys", requireAuth, async (req, res) => {
+    try {
+      res.json(await buscarCabysNormalizado(String(req.query.q ?? "")));
+    } catch (err: any) {
+      responderErrorHacienda(res, err, "Búsqueda CABYS");
+    }
+  });
+
+  // CABYS sugeridos según el perfil de la empresa de la sesión, más los generales.
+  app.get("/api/hacienda/cabys/sugeridos", requireAuth, async (req, res) => {
+    try {
+      if (!dbConnected || !pool) return res.json([]);
+      const company = await fetchCompanyById(sessionOf(req).idCompania);
+      const perfil = company?.perfilCompania;
+      // 'Ambas' ve los dos perfiles; Spa o Legal solo los generales.
+      const perfiles: string[] = perfil === "Ambas" ? ["Fisioterapia", "Nutrición"] : perfil === "Fisioterapia" || perfil === "Nutrición" ? [perfil] : [];
+      perfiles.push("General");
+      const [rows] = await pool.query(
+        `SELECT codigo, descripcion, impuesto, perfil FROM cabys_sugeridos WHERE activo = 1 AND perfil IN (?) ORDER BY perfil = 'General', perfil, orden, id`,
+        [perfiles]
+      );
+      res.json((rows as any[]).map(r => ({
+        codigo: String(r.codigo),
+        descripcion: String(r.descripcion),
+        impuesto: r.impuesto == null ? null : Number(r.impuesto),
+        perfil: String(r.perfil)
+      })));
+    } catch (err: any) {
+      responderErrorHacienda(res, err, "CABYS sugeridos");
+    }
+  });
+
+  app.get("/api/hacienda/contribuyente/:identificacion", requireAuth, async (req, res) => {
+    try {
+      res.json(await consultarContribuyente(await parametroRequerido("hacienda_api_publica_url"), req.params.identificacion));
+    } catch (err: any) {
+      responderErrorHacienda(res, err, "Consulta de contribuyente");
+    }
+  });
+
+  // El tipo de cambio es el mismo para todas las empresas y cambia una vez al día: caché de 30 min.
+  const TIPO_CAMBIO_CACHE_MS = 30 * 60_000;
+  let cacheTipoCambio: { datos: TipoCambio; consultadoEn: string; expira: number } | null = null;
+  app.get("/api/hacienda/tipo-cambio", requireAuth, async (_req, res) => {
+    try {
+      if (!cacheTipoCambio || cacheTipoCambio.expira <= Date.now()) {
+        const datos = await consultarTipoCambio(await parametroRequerido("hacienda_api_publica_url"));
+        cacheTipoCambio = { datos, consultadoEn: new Date().toISOString(), expira: Date.now() + TIPO_CAMBIO_CACHE_MS };
+      }
+      res.json({ ...cacheTipoCambio.datos, consultadoEn: cacheTipoCambio.consultadoEn });
+    } catch (err: any) {
+      responderErrorHacienda(res, err, "Tipo de cambio");
+    }
+  });
+
+  app.get("/api/hacienda/exoneracion/:autorizacion", requireAuth, async (req, res) => {
+    try {
+      res.json(await consultarExoneracion(await parametroRequerido("hacienda_api_publica_url"), req.params.autorizacion));
+    } catch (err: any) {
+      responderErrorHacienda(res, err, "Consulta de exoneración");
+    }
+  });
+
+  /**
+   * Credenciales y endpoints de Hacienda de la empresa de la sesión para consultar comprobantes.
+   * Solo Administrador o Contador de la empresa. Responde y devuelve null si no se puede seguir.
+   */
+  async function prepararConsultaComprobantes(req: express.Request, res: express.Response): Promise<{ credenciales: CredencialesAtv; endpoints: EndpointsHacienda; idCompania: number } | null> {
+    const session = sessionOf(req);
+    if (session.rol !== "Administrador" && session.rol !== "Contador") {
+      res.status(403).json({ error: "Solo un Administrador o un Contador de la empresa puede consultar los comprobantes en Hacienda." });
+      return null;
+    }
+    const idCompania = session.idCompania;
+    const credenciales = await cargarCredencialesAtv(idCompania);
+    if (!credenciales) {
+      res.status(400).json({ error: "La empresa no tiene configurado el usuario y la contraseña ATV de Hacienda (Personalizar Clínica → Hacienda)." });
+      return null;
+    }
+    if (credenciales.ambiente === "PRUEBAS_LOCAL") {
+      res.status(400).json({ error: "La empresa está en ambiente de pruebas locales: sus comprobantes nunca se envían a Hacienda, así que no hay nada que consultar.", ambiente: credenciales.ambiente });
+      return null;
+    }
+    try {
+      return { credenciales, endpoints: await endpointsHaciendaPara(credenciales.ambiente), idCompania };
+    } catch (err: any) {
+      res.status(503).json({ error: err.message, ambiente: credenciales.ambiente });
+      return null;
+    }
+  }
+
+  // Comprobantes emitidos por la empresa según Hacienda, cruzados con las facturas locales.
+  app.get("/api/hacienda/comprobantes", requireAuth, async (req, res) => {
+    try {
+      const prep = await prepararConsultaComprobantes(req, res);
+      if (!prep) return;
+      const { credenciales, endpoints, idCompania } = prep;
+      const ambiente = credenciales.ambiente;
+
+      const offsetCrudo = parseInt(String(req.query.offset ?? "0"), 10);
+      const offset = Number.isInteger(offsetCrudo) && offsetCrudo >= 0 ? offsetCrudo : 0;
+      const limit = await parametroEntero("hacienda_comprobantes_limite");
+
+      const company = await fetchCompanyById(idCompania);
+      const emisor = formatoEmisorHacienda(company?.tipoIdentificacion, company?.identificacion);
+      if (!emisor) {
+        return res.status(400).json({ error: "La identificación de la empresa no es válida para consultar en Hacienda (revise el tipo y el número de identificación).", ambiente });
+      }
+
+      let token: string;
+      try {
+        token = await obtenerTokenHacienda(endpoints, credenciales.usuarioAtv, credenciales.passwordAtv);
+      } catch (err: any) {
+        return res.status(502).json({ error: `No se pudo iniciar sesión en Hacienda con el usuario ATV de la empresa (${err.message}).`, ambiente });
+      }
+
+      const lista = await listarComprobantesEmitidos({ token, ambiente, emisor, offset, limit, endpoints });
+      if (lista.errorCausa) {
+        return res.status(502).json({ error: lista.errorCausa, ambiente });
+      }
+
+      // Cruce con las facturas locales de la MISMA empresa por clave.
+      const claves = lista.items.map(i => i.clave);
+      const locales = new Map<string, { id: number; consecutivo: string; total: number; estado: string; receptorNombre: string | null }>();
+      if (claves.length > 0) {
+        if (dbConnected && pool) {
+          const [rows] = await pool.query(
+            "SELECT f.id_factura, f.clave, f.consecutivo, f.total, f.estado, p.nombreCompleto AS receptorNombre FROM facturas f LEFT JOIN pacientes p ON p.id_paciente = f.idPaciente AND p.idCompania = f.idCompania WHERE f.idCompania = ? AND f.clave IN (?)",
+            [idCompania, claves]
+          );
+          for (const r of rows as any[]) {
+            locales.set(String(r.clave), { id: r.id_factura, consecutivo: String(r.consecutivo), total: Number(r.total), estado: String(r.estado), receptorNombre: r.receptorNombre ?? null });
+          }
+        } else {
+          for (const f of localFacturas.filter(f => f.idCompania === idCompania && claves.includes(f.clave))) {
+            const pac = localPatients.find(p => p.id === f.idPaciente && p.idCompania === idCompania);
+            locales.set(f.clave, { id: f.id, consecutivo: f.consecutivo, total: Number(f.total), estado: f.estado, receptorNombre: pac?.nombreCompleto ?? null });
+          }
+        }
+      }
+
+      res.json({
+        ambiente,
+        offset,
+        limit,
+        total: lista.total ?? null,
+        items: lista.items.map(i => ({ ...i, local: locales.get(i.clave) ?? null }))
+      });
+    } catch (err: any) {
+      responderErrorHacienda(res, err, "Comprobantes emitidos");
+    }
+  });
+
+  // Estado de un comprobante en Hacienda (solo consulta: no cambia nada en el sistema).
+  app.get("/api/hacienda/comprobantes/:clave", requireAuth, async (req, res) => {
+    try {
+      const clave = String(req.params.clave || "");
+      if (!/^\d{50}$/.test(clave)) return res.status(400).json({ error: "La clave del comprobante debe tener 50 dígitos." });
+      const prep = await prepararConsultaComprobantes(req, res);
+      if (!prep) return;
+      const { credenciales, endpoints } = prep;
+
+      let consulta: EstadoHaciendaResultado;
+      try {
+        const token = await obtenerTokenHacienda(endpoints, credenciales.usuarioAtv, credenciales.passwordAtv);
+        consulta = await consultarEstadoHacienda(endpoints, token, clave);
+      } catch (err: any) {
+        return res.status(502).json({ error: `No se pudo consultar a Hacienda en este momento (${err.message}). Intente de nuevo en unos minutos.`, ambiente: credenciales.ambiente });
+      }
+      if (consulta.estado === "error") {
+        return res.status(502).json({ error: `No se pudo consultar a Hacienda en este momento${consulta.detalleMensaje ? ` (${consulta.detalleMensaje})` : ""}. Intente de nuevo en unos minutos.`, ambiente: credenciales.ambiente });
+      }
+      res.json({ clave, ambiente: credenciales.ambiente, estado: consulta.estado, detalleMensaje: consulta.detalleMensaje });
+    } catch (err: any) {
+      responderErrorHacienda(res, err, "Estado de comprobante");
     }
   });
 
@@ -4319,8 +4545,9 @@ async function startServer() {
       if (factura.estado === "ERROR" && credenciales && credenciales.ambiente === factura.ambiente) {
         let consulta;
         try {
-          const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
-          consulta = await consultarEstadoHacienda(credenciales.ambiente, token, factura.clave);
+          const endpoints = await endpointsHaciendaPara(credenciales.ambiente);
+          const token = await obtenerTokenHacienda(endpoints, credenciales.usuarioAtv, credenciales.passwordAtv);
+          consulta = await consultarEstadoHacienda(endpoints, token, factura.clave);
         } catch (err: any) {
           return res.status(503).json({ error: `No se pudo confirmar con Hacienda si recibió esta factura (${err.message}). Intente de nuevo en unos minutos.` });
         }
@@ -4891,8 +5118,9 @@ async function startServer() {
       // una consulta caída: 502, sin tocar el estado (antes salía como 500).
       let consulta: EstadoHaciendaResultado;
       try {
-        const token = await obtenerTokenHacienda(credenciales.ambiente, credenciales.usuarioAtv, credenciales.passwordAtv);
-        consulta = await consultarEstadoHacienda(credenciales.ambiente, token, factura.clave);
+        const endpoints = await endpointsHaciendaPara(credenciales.ambiente);
+        const token = await obtenerTokenHacienda(endpoints, credenciales.usuarioAtv, credenciales.passwordAtv);
+        consulta = await consultarEstadoHacienda(endpoints, token, factura.clave);
       } catch (err: any) {
         return res.status(502).json({ error: `No se pudo consultar a Hacienda en este momento (${err.message}). Intente de nuevo en unos minutos.` });
       }
