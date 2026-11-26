@@ -2,6 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { decidirAccesoContador, crearCacheUsuarios, sesionDesdeUsuario } from './accesoContador';
 
 describe('decidirAccesoContador', () => {
+  it('nunca permite las rutas de administración SaaS ni la integración con el ERP', () => {
+    for (const [metodo, ruta] of [
+      ['GET', '/api/saas/integracion-erp'], ['PUT', '/api/saas/integracion-erp'], ['POST', '/api/saas/integracion-erp/probar'],
+      ['PUT', '/api/saas/companias/5/suscripcion'], ['POST', '/api/saas/companias/5/sincronizar'],
+      ['GET', '/api/saas/companias/5/estado-cuenta'], ['POST', '/api/saas/companias/5/facturar-adelantado'],
+      ['GET', '/API/Saas/Companias/5/Estado-Cuenta/']
+    ]) {
+      expect(decidirAccesoContador(metodo, ruta)).toBe('prohibido');
+    }
+  });
   it('permite rutas financieras en minúsculas', () => {
     expect(decidirAccesoContador('GET', '/api/facturas')).toBe('permitido');
   });

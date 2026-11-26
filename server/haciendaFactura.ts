@@ -654,3 +654,39 @@ export function construirXmlComprobante(tipoDocumento: string, datos: DatosFactu
   if (tipoDocumento === "02") return construirXmlNotaDebito(datos as DatosNotaDebitoXml);
   throw new Error(`Tipo de documento no soportado: ${tipoDocumento}`);
 }
+
+function desescaparXml(valor: string): string {
+  return valor.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+}
+
+/**
+ * Receptor tal como quedó en un comprobante YA FIRMADO (para Notas sobre comprobantes anteriores a
+ * la copia del receptor: la Nota debe ir al mismo receptor que el original, aunque los datos del
+ * paciente hayan cambiado). `encontrado` = el XML se pudo leer; `receptor` = null si no llevaba
+ * bloque <Receptor> (un tiquete sin identificación).
+ */
+export function receptorDesdeXml(xml: string | null | undefined): { encontrado: boolean; receptor: ReceptorFactura | null } {
+  const texto = String(xml ?? "");
+  if (!/<(?:\w+:)?NumeroConsecutivo>/.test(texto)) return { encontrado: false, receptor: null };
+  const bloque = texto.match(/<(?:\w+:)?Receptor>([\s\S]*?)<\/(?:\w+:)?Receptor>/);
+  if (!bloque) return { encontrado: true, receptor: null };
+  const campo = (fuente: string, etiqueta: string) => {
+    const m = fuente.match(new RegExp(`<(?:\\w+:)?${etiqueta}>([\\s\\S]*?)</(?:\\w+:)?${etiqueta}>`));
+    return m ? desescaparXml(m[1].trim()) : "";
+  };
+  const identificacion = (bloque[1].match(/<(?:\w+:)?Identificacion>([\s\S]*?)<\/(?:\w+:)?Identificacion>/) || [])[1] || "";
+  const tipo = campo(identificacion, "Tipo");
+  const numero = campo(identificacion, "Numero");
+  if (!tipo || !numero) return { encontrado: true, receptor: null };
+  const actividad = campo(texto, "CodigoActividadReceptor");
+  return {
+    encontrado: true,
+    receptor: {
+      nombre: campo(bloque[1], "Nombre"),
+      tipoIdentificacion: tipo,
+      identificacion: numero,
+      correoElectronico: campo(bloque[1], "CorreoElectronico") || undefined,
+      codigoActividad: /^\d{6}$/.test(actividad) ? actividad : undefined
+    }
+  };
+}

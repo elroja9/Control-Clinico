@@ -123,3 +123,29 @@ Devuelve `{ "ok": true, "origen": "...", "empresa": "nombre" }`. Sirve para el b
 - Las claves de integración nunca aparecen en logs ni en respuestas, salvo al crearlas.
 - El ERP valida que el `idExterno` pertenezca al `origen` de la clave, así una app no puede tocar los suscriptores de otra.
 - Los montos y el CABYS los calcula el ERP. La app SaaS solo envía cuota, moneda y meses.
+
+## Puesta en marcha en Control Clínico
+
+1. Aplicar `docs/sql/2026-11-27-integracion-erp.sql`. Crea `integracion_erp_config`, `erp_facturas_adelantadas`, las columnas `companias.monedaSuscripcion`, `companias.diaFacturacion` y `companias.erp*`, y los parámetros `erp_*`.
+2. En el ERP: Administración SaaS → Integraciones.
+   - Elegir el producto de servicio para el origen `control-clinico`.
+   - Crear una clave para ese origen y copiarla: se muestra una sola vez.
+3. En Control Clínico: Administración SaaS → **Integración con ERP**.
+   - Llenar la URL del ERP y la clave, que se guarda cifrada.
+   - Si el ERP usa un certificado propio, agregar su CA en formato PEM.
+   - Guardar y **Probar conexión**.
+4. En cada clínica, botón **Suscripción**: moneda, cuota mensual y día de facturación. Sin día de facturación la clínica no se envía al ERP.
+5. Activar la sincronización automática (`erp_sync_activo`) desde la tarjeta.
+6. Suspensión por mora (opcional): `erp_mora_dias_suspension` > 0. Primero se envía un aviso por correo `erp_mora_dias_aviso` días antes. Nunca se aplica a la empresa de plataforma.
+
+| Parámetro | Valor inicial | Uso |
+|---|---|---|
+| `erp_url` / `erp_ruta_api` | '' / `/api/integraciones/v1` | Dirección del ERP. |
+| `erp_sync_activo` | 0 | Activa el job de sincronización. |
+| `erp_sync_intervalo_min` | 30 | Minutos entre vueltas del job. |
+| `erp_timeout_ms` | 15000 | Tiempo máximo por petición. |
+| `erp_mora_dias_suspension` / `erp_mora_dias_aviso` | 0 / 5 | Suspensión por mora. |
+| `erp_adelantado_meses_max` / `erp_adelantado_ventana_seg` | 12 / 120 | Facturación por adelantado. Un segundo clic dentro de la ventana reutiliza la misma referencia. |
+| `erp_respuesta_max_bytes` | 2097152 | Tamaño máximo de respuesta. |
+
+**Pendiente conocido (2026-11-27):** el ERP devuelve `id` y `clientId` como texto (sus ids son VARCHAR). El contrato y Control Clínico esperan números, así que hay que alinearlos antes de activar la sincronización. Ver la revisión de la integración.

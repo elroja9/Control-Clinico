@@ -7,6 +7,9 @@ import { Field } from './ui/Field';
 import { Input } from './ui/Input';
 import { Select } from './ui/Select';
 import { SegmentedControl } from './ui/SegmentedControl';
+import { TIPOS_IDENTIFICACION, errorIdentificacion, soloDigitosIdentificacion, type TipoIdentificacion } from '../utils/identificacion';
+import { errorDatosFiscalesAlta } from '../utils/datosFiscales';
+import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 
 /** Banderas que el servidor calcula para la sesión (login y GET /api/me). */
 export interface BanderasSesion {
@@ -66,7 +69,13 @@ export default function LoginView({
   // Register Company states
   const [compName, setCompName] = useState('');
   const [compRazon, setCompRazon] = useState('');
+  const [compTipoId, setCompTipoId] = useState<TipoIdentificacion>('02');
   const [compIdent, setCompIdent] = useState('');
+  const [compIdentTocada, setCompIdentTocada] = useState(false);
+  const [compProvincia, setCompProvincia] = useState('');
+  const [compCanton, setCompCanton] = useState('');
+  const [compDistrito, setCompDistrito] = useState('');
+  const [compOtrasSenas, setCompOtrasSenas] = useState('');
   const [compCorreo, setCompCorreo] = useState('');
   const [compPerfil, setCompPerfil] = useState<PerfilCompania>('Ambas');
   const [compColor, setCompColor] = useState('#0f766e');
@@ -132,6 +141,16 @@ export default function LoginView({
       setRegisterError('Por favor complete todos los campos obligatorios.');
       return;
     }
+    // Mismas reglas que el servidor: con estos datos se factura la suscripción.
+    const problemaFiscal = errorDatosFiscalesAlta({
+      tipoIdentificacion: compTipoId, identificacion: compIdent, razonSocial: compRazon, correoEmisor: compCorreo,
+      provincia: compProvincia, canton: compCanton, distrito: compDistrito
+    });
+    if (problemaFiscal) {
+      setCompIdentTocada(true);
+      setRegisterError(problemaFiscal);
+      return;
+    }
 
     setRegisterSubmitting(true);
     try {
@@ -141,10 +160,10 @@ export default function LoginView({
       const newCompany: Company = {
         id: 0,
         nombreComercial: compName,
-        razonSocial: compRazon,
-        tipoIdentificacion: '02',
-        identificacion: compIdent,
-        correoEmisor: compCorreo,
+        razonSocial: compRazon.trim(),
+        tipoIdentificacion: compTipoId,
+        identificacion: soloDigitosIdentificacion(compIdent),
+        correoEmisor: compCorreo.trim(),
         ivaPorDefecto: 4.0,
         colorPrimario: compColor,
         colorSidebar: compColor === '#0f766e' ? '#115e59' : compColor,
@@ -164,10 +183,10 @@ export default function LoginView({
         horarioAtencion: DEFAULT_HORARIO_ATENCION,
         requiereConfirmacionCitas: compPerfil === 'Spa',
         regimenSimplificado: false,
-        provincia: '',
-        canton: '',
-        distrito: '',
-        otrasSenas: ''
+        provincia: compProvincia,
+        canton: compCanton,
+        distrito: compDistrito,
+        otrasSenas: compOtrasSenas.trim()
       };
 
       const newAdminUser: User = {
@@ -440,17 +459,62 @@ export default function LoginView({
                           <Field label="Nombre comercial" required>
                             {(p) => <Input {...p} type="text" required autoComplete="organization" value={compName} onChange={(e) => setCompName(e.target.value)} placeholder="ej: Clínica FisioMas" />}
                           </Field>
-                          <Field label="Razón social" required>
+                          <Field label={compTipoId === '01' ? 'Nombre completo (como en la cédula)' : 'Razón social'} required>
                             {(p) => <Input {...p} type="text" required value={compRazon} onChange={(e) => setCompRazon(e.target.value)} placeholder="ej: Rehab S.A." />}
                           </Field>
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <Field label="Cédula física o jurídica" required>
-                            {(p) => <Input {...p} type="text" required inputMode="numeric" value={compIdent} onChange={(e) => setCompIdent(e.target.value)} placeholder="ej: 3-102-345678" />}
+                          <Field label="Tipo de identificación" required>
+                            {(p) => (
+                              <Select {...p} value={compTipoId} onChange={(e) => setCompTipoId(e.target.value as TipoIdentificacion)}>
+                                {TIPOS_IDENTIFICACION.map(t => <option key={t.codigo} value={t.codigo}>{t.etiqueta}</option>)}
+                              </Select>
+                            )}
                           </Field>
+                          <Field
+                            label="Número de identificación"
+                            required
+                            hint={TIPOS_IDENTIFICACION.find(t => t.codigo === compTipoId)?.ayuda}
+                            error={compIdentTocada && compIdent ? errorIdentificacion(compTipoId, compIdent) ?? undefined : undefined}
+                          >
+                            {(p) => <Input {...p} type="text" required inputMode="numeric" value={compIdent} onChange={(e) => setCompIdent(e.target.value)} onBlur={() => setCompIdentTocada(true)} placeholder={compTipoId === '02' ? 'ej: 3-101-345678' : 'solo números'} />}
+                          </Field>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                          <Field label="Provincia" required>
+                            {(p) => (
+                              <Select {...p} value={compProvincia} onChange={(e) => { setCompProvincia(e.target.value); setCompCanton(''); setCompDistrito(''); }}>
+                                <option value="">Seleccione…</option>
+                                {COSTA_RICA_PROVINCIAS.map(pr => <option key={pr.codigo} value={pr.codigo}>{pr.nombre}</option>)}
+                              </Select>
+                            )}
+                          </Field>
+                          <Field label="Cantón" required>
+                            {(p) => (
+                              <Select {...p} value={compCanton} disabled={!compProvincia} onChange={(e) => { setCompCanton(e.target.value); setCompDistrito(''); }}>
+                                <option value="">Seleccione…</option>
+                                {(COSTA_RICA_PROVINCIAS.find(pr => pr.codigo === compProvincia)?.cantones ?? []).map(c => <option key={c.codigo} value={c.codigo}>{c.nombre}</option>)}
+                              </Select>
+                            )}
+                          </Field>
+                          <Field label="Distrito" required>
+                            {(p) => (
+                              <Select {...p} value={compDistrito} disabled={!compCanton} onChange={(e) => setCompDistrito(e.target.value)}>
+                                <option value="">Seleccione…</option>
+                                {(COSTA_RICA_PROVINCIAS.find(pr => pr.codigo === compProvincia)?.cantones.find(c => c.codigo === compCanton)?.distritos ?? []).map(d => <option key={d.codigo} value={d.codigo}>{d.nombre}</option>)}
+                              </Select>
+                            )}
+                          </Field>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <Field label="Correo emisor de facturas" required>
                             {(p) => <Input {...p} type="email" required autoComplete="email" value={compCorreo} onChange={(e) => setCompCorreo(e.target.value)} placeholder="ej: facturacion@clinica.com" />}
+                          </Field>
+                          <Field label="Otras señas" hint="Opcional">
+                            {(p) => <Input {...p} type="text" maxLength={250} autoComplete="street-address" value={compOtrasSenas} onChange={(e) => setCompOtrasSenas(e.target.value)} placeholder="ej: 200 m norte del parque central" />}
                           </Field>
                         </div>
 

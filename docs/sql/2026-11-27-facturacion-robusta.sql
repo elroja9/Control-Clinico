@@ -11,12 +11,16 @@
 -- que las columnas e índices se agregan con procedimientos que revisan information_schema; las
 -- tablas usan CREATE TABLE IF NOT EXISTS y los datos INSERT IGNORE (no pisan lo ya configurado).
 -- Requiere parametros_sistema (2026-11-26-cambio-contrasena-parametros.sql).
--- Aplicar con el cliente mysql (usa DELIMITER).
+--
+-- Se aplica TAL CUAL por mysql2 con multipleStatements: true (sin el comando DELIMITER, que es solo
+-- del cliente mysql): el servidor interpreta cada CREATE PROCEDURE ... BEGIN ... END; como una sola
+-- sentencia compuesta. (En el cliente mysql de consola habría que agregar DELIMITER a mano.)
+
+SET NAMES utf8mb4;
 
 DROP PROCEDURE IF EXISTS cc_agregar_columna;
 DROP PROCEDURE IF EXISTS cc_agregar_indice;
 
-DELIMITER $$
 CREATE PROCEDURE cc_agregar_columna(IN p_tabla VARCHAR(64), IN p_columna VARCHAR(64), IN p_definicion VARCHAR(500))
 BEGIN
   IF NOT EXISTS (
@@ -28,7 +32,7 @@ BEGIN
     EXECUTE cc_st;
     DEALLOCATE PREPARE cc_st;
   END IF;
-END$$
+END;
 
 CREATE PROCEDURE cc_agregar_indice(IN p_tabla VARCHAR(64), IN p_indice VARCHAR(64), IN p_columnas VARCHAR(500))
 BEGIN
@@ -41,8 +45,7 @@ BEGIN
     EXECUTE cc_st;
     DEALLOCATE PREPARE cc_st;
   END IF;
-END$$
-DELIMITER ;
+END;
 
 -- ---------------------------------------------------------------------------------------------
 -- 1) Configuración de Hacienda por empresa
@@ -75,8 +78,10 @@ CALL cc_agregar_columna('compania_hacienda_config', 'config_verificada_en', 'DAT
 -- Copia del receptor al emitir (el paciente o un tercero). Las Notas y la anulación usan siempre
 -- la copia del comprobante original. NULL en comprobantes anteriores (se usa el paciente).
 CALL cc_agregar_columna('facturas', 'receptor_tipo_id', 'VARCHAR(3) NULL');
-CALL cc_agregar_columna('facturas', 'receptor_numero', 'VARCHAR(20) NULL');
-CALL cc_agregar_columna('facturas', 'receptor_nombre', 'VARCHAR(100) NULL');
+-- Tamaños >= los de pacientes (identificación hasta 50, nombre hasta 150): la copia del paciente
+-- siempre cabe. El servidor valida estos largos antes de guardar (errorLongitudReceptor).
+CALL cc_agregar_columna('facturas', 'receptor_numero', 'VARCHAR(50) NULL');
+CALL cc_agregar_columna('facturas', 'receptor_nombre', 'VARCHAR(150) NULL');
 CALL cc_agregar_columna('facturas', 'receptor_correo', 'VARCHAR(160) NULL');
 CALL cc_agregar_columna('facturas', 'receptor_actividad', 'CHAR(6) NULL');
 CALL cc_agregar_columna('facturas', 'receptor_es_tercero', 'TINYINT(1) NOT NULL DEFAULT 0');
@@ -94,19 +99,34 @@ CALL cc_agregar_columna('facturas', 'hacienda_proximo_intento', 'DATETIME(3) NUL
 CALL cc_agregar_columna('facturas', 'hacienda_ultimo_intento', 'DATETIME(3) NULL');
 CALL cc_agregar_columna('facturas', 'hacienda_error_detalle', 'VARCHAR(1000) NULL');
 CALL cc_agregar_columna('facturas', 'hacienda_procesando_hasta', 'DATETIME(3) NULL');
+-- Consultas de algo que Hacienda pudo haber recibido: contador aparte de los intentos de envío
+-- (las consultas nunca se agotan; tras muchas solo se avisa en pantalla).
+CALL cc_agregar_columna('facturas', 'hacienda_consultas', 'INT NOT NULL DEFAULT 0');
+-- Momento del último POST: si hubo uno, un 4xx posterior se verifica consultando la clave.
+CALL cc_agregar_columna('facturas', 'hacienda_ultimo_post', 'DATETIME(3) NULL');
+-- 1 = comprobante anterior a la cola automática (DEFAULT 1 marca todas las filas existentes al
+-- agregar la columna; el código inserta 0). La cola solo los CONSULTA: si Hacienda no los tiene,
+-- quedan en ERROR para revisión manual (nunca se reenvían solos) y no disparan correos automáticos.
+CALL cc_agregar_columna('facturas', 'hacienda_origen_legado', 'TINYINT(1) NOT NULL DEFAULT 1');
 -- Notas: qué efecto local tienen (ANULACION / CREDITO / DEBITO) y si ya se aplicó. Se aplica una
 -- sola vez, cuando Hacienda recibe la nota. DEFAULT 1: las notas anteriores ya tuvieron su trato.
 CALL cc_agregar_columna('facturas', 'nota_efecto', 'VARCHAR(12) NULL');
 CALL cc_agregar_columna('facturas', 'efectos_aplicados', 'TINYINT(1) NOT NULL DEFAULT 1');
--- Correo automático al quedar ACEPTADO (0 = no, 1 = enviado, 2 = en curso).
+-- Correo automático al quedar ACEPTADO (0 = no, 1 = enviado, 2 = en curso desde correo_reclamado_en;
+-- un reclamo más viejo que hacienda_correo_bloqueo_seg lo recupera la cola).
 CALL cc_agregar_columna('facturas', 'correo_enviado', 'TINYINT(1) NOT NULL DEFAULT 0');
+CALL cc_agregar_columna('facturas', 'correo_reclamado_en', 'DATETIME(3) NULL');
 CALL cc_agregar_columna('facturas', 'correo_enviado_en', 'DATETIME NULL');
 CALL cc_agregar_columna('facturas', 'correo_error', 'VARCHAR(500) NULL');
 CALL cc_agregar_indice('facturas', 'idx_facturas_cola_hacienda', 'estado, hacienda_proximo_intento');
+-- Si la migración ya se había aplicado con las columnas más angostas, se ensanchan (idempotente).
+ALTER TABLE facturas MODIFY COLUMN receptor_numero VARCHAR(50) NULL, MODIFY COLUMN receptor_nombre VARCHAR(150) NULL;
 
--- Los comprobantes que ya estaban en ERROR con envío incierto pasan a la cola, que solo los consulta.
+-- Los comprobantes anteriores (legado) que estaban ENVIADA o en ERROR con envío incierto pasan a la
+-- cola SOLO para consultarlos (hacienda_post_realizado = 1 → nunca se reenvían).
 UPDATE facturas SET hacienda_post_realizado = 1
- WHERE hacienda_post_realizado = 0 AND (estado = 'ENVIADA' OR (estado = 'ERROR' AND mensajeError LIKE 'Envío incierto:%'));
+ WHERE hacienda_origen_legado = 1 AND hacienda_post_realizado = 0
+   AND (estado = 'ENVIADA' OR (estado = 'ERROR' AND mensajeError LIKE 'Envío incierto:%'));
 
 -- Descuento por línea.
 CALL cc_agregar_columna('factura_lineas', 'monto_descuento', 'DECIMAL(14,5) NOT NULL DEFAULT 0');
@@ -193,9 +213,10 @@ INSERT IGNORE INTO hacienda_catalogos (tipo, codigo, descripcion, orden, activo)
   ('MEDIO_PAGO', '06', 'SINPE Móvil', 60, 1),
   ('MEDIO_PAGO', '07', 'Plataforma digital', 70, 1),
   ('MEDIO_PAGO', '99', 'Otros', 990, 1),
-  ('CODIGO_DESCUENTO', '01', 'Descuento por regalía', 10, 1),
-  ('CODIGO_DESCUENTO', '02', 'Descuento por regalía o bonificaciones IVA cobrado al cliente', 20, 1),
-  ('CODIGO_DESCUENTO', '03', 'Descuento por bonificación', 30, 1),
+  -- 01-03 (regalías y bonificaciones) tienen reglas de IVA propias que la app no calcula: inactivos.
+  ('CODIGO_DESCUENTO', '01', 'Descuento por regalía', 10, 0),
+  ('CODIGO_DESCUENTO', '02', 'Descuento por regalía o bonificaciones IVA cobrado al cliente', 20, 0),
+  ('CODIGO_DESCUENTO', '03', 'Descuento por bonificación', 30, 0),
   ('CODIGO_DESCUENTO', '04', 'Descuento por volumen', 40, 1),
   ('CODIGO_DESCUENTO', '05', 'Descuento por temporada (estacional)', 50, 1),
   ('CODIGO_DESCUENTO', '06', 'Descuento promocional', 60, 1),
@@ -203,6 +224,8 @@ INSERT IGNORE INTO hacienda_catalogos (tipo, codigo, descripcion, orden, activo)
   ('CODIGO_DESCUENTO', '08', 'Descuento por frecuencia', 80, 1),
   ('CODIGO_DESCUENTO', '09', 'Descuento sostenido', 90, 1),
   ('CODIGO_DESCUENTO', '99', 'Otros descuentos', 990, 1);
+-- Si ya se habían sembrado activos, se desactivan (la app no los calcula correctamente).
+UPDATE hacienda_catalogos SET activo = 0 WHERE tipo = 'CODIGO_DESCUENTO' AND codigo IN ('01', '02', '03');
 
 -- ---------------------------------------------------------------------------------------------
 -- 4) Parámetros del sistema (antes constantes en server/haciendaApi.ts, haciendaSigner.ts y server.ts)
@@ -224,7 +247,9 @@ INSERT IGNORE INTO parametros_sistema (clave, valor, descripcion) VALUES
   ('hacienda_cola_bloqueo_seg', '300', 'Segundos que un proceso reserva un comprobante mientras lo transmite'),
   ('hacienda_cola_backoff_base_seg', '60', 'Espera (s) tras el primer intento fallido; se duplica en cada intento'),
   ('hacienda_cola_backoff_max_seg', '3600', 'Espera máxima (s) entre intentos de la cola'),
-  ('hacienda_cola_max_intentos', '12', 'Intentos automáticos antes de dejar el comprobante para acción manual'),
+  ('hacienda_cola_max_intentos', '12', 'Intentos de envío antes de dejarlo para acción manual (y consultas antes de avisar que Hacienda no responde)'),
+  ('hacienda_transaccion_reintentos', '3', 'Reintentos de la transacción de emisión ante un interbloqueo de MySQL'),
+  ('hacienda_correo_bloqueo_seg', '600', 'Segundos tras los cuales un correo automático "en curso" se considera caído y se reintenta'),
   -- Comprobante
   ('hacienda_unidad_medida_servicio', 'Sp', 'Unidad de medida por omisión de un servicio sin unidad configurada'),
   ('hacienda_unidad_medida_mercancia', 'Unid', 'Unidad de medida por omisión de un artículo sin unidad configurada'),

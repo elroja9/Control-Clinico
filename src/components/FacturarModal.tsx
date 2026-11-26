@@ -27,6 +27,7 @@ export interface PayloadCrearFactura {
   modoPrueba: boolean;
   lineas: Array<{ idServicio: number; cantidad: number; descuento?: number }>;
   codigoDescuento?: string;
+  naturalezaDescuento?: string;
   receptor?: ReceptorSolicitud;
   copiaPaciente?: boolean;
 }
@@ -83,6 +84,8 @@ export default function FacturarModal({
   const [cantidades, setCantidades] = useState<Record<number, number>>(cantidadesIniciales || {});
   const [descuentos, setDescuentos] = useState<Record<number, string>>({});
   const [codigoDescuento, setCodigoDescuento] = useState('');
+  // Con el código 99 ("otros") Hacienda exige describir la naturaleza del descuento (máx. 80).
+  const [naturalezaDescuento, setNaturalezaDescuento] = useState('');
   const [condicion, setCondicion] = useState('01');
   const [plazo, setPlazo] = useState(plazoCreditoDefecto != null ? String(plazoCreditoDefecto) : '');
   const [pagos, setPagos] = useState<FilaPago[]>([{ tipo: '01', monto: '' }]);
@@ -199,13 +202,17 @@ export default function FacturarModal({
       if (pagosEfectivos.some(p => !(p.monto > 0))) return 'Cada medio de pago debe tener un monto mayor que cero.';
       if (Math.abs(restante) > (catalogos?.toleranciaMedioPago ?? 0.01)) return restante > 0 ? `Falta asignar ${colones(restante)} a los medios de pago.` : `Los medios de pago superan el total en ${colones(-restante)}.`;
     }
+    if (hayDescuentos && codigoDescuento === '99' && naturalezaDescuento.trim().length < 3) return 'Con el tipo de descuento «Otros» describa la naturaleza del descuento (3 a 80 caracteres).';
     if (saleTiquete && exigeReceptor) return 'Una venta a crédito necesita una Factura con receptor identificado (cédula física, jurídica, DIMEX o NITE).';
     if (modoReceptor === 'TERCERO' && !receptorGuardado) {
       if (tercero.nombre.trim().length < 3) return 'Indique el nombre o razón social del tercero.';
       if (tercero.tipoIdentificacion !== 'EXT') {
         const e = errorIdentificacion(tercero.tipoIdentificacion, tercero.numero);
         if (e) return `Identificación del tercero: ${e}`;
+      } else if (guardarTercero && !tercero.numero.trim()) {
+        return 'Para guardar un tercero extranjero indique su pasaporte (o desmarque «Guardar este tercero»).';
       }
+      if (tercero.telefono.trim() && !/^\+?\d{8,19}$/.test(tercero.telefono.replace(/[\s-]/g, ''))) return 'El teléfono del tercero debe tener entre 8 y 19 dígitos (con + opcional).';
     }
     return null;
   };
@@ -235,7 +242,7 @@ export default function FacturarModal({
         plazoCreditoDias: condicion === '02' && plazo.trim() !== '' ? Number(plazo) : null,
         modoPrueba,
         lineas,
-        ...(hayDescuentos ? { codigoDescuento } : {}),
+        ...(hayDescuentos ? { codigoDescuento, ...(codigoDescuento === '99' ? { naturalezaDescuento: naturalezaDescuento.trim() } : {}) } : {}),
         receptor,
         copiaPaciente: modoReceptor === 'TERCERO' && copiaPaciente
       });
@@ -352,8 +359,8 @@ export default function FacturarModal({
                         </Select>
                       </div>
                       <div>
-                        <label htmlFor="facturarmo-t-numero" className={etiqueta}>{tercero.tipoIdentificacion === 'EXT' ? 'Pasaporte (opcional)' : 'Número'}</label>
-                        <Input id="facturarmo-t-numero" inputMode={tercero.tipoIdentificacion === 'EXT' ? 'text' : 'numeric'} value={tercero.numero}
+                        <label htmlFor="facturarmo-t-numero" className={etiqueta}>{tercero.tipoIdentificacion === 'EXT' ? (guardarTercero ? 'Pasaporte' : 'Pasaporte (opcional)') : 'Número'}</label>
+                        <Input id="facturarmo-t-numero" inputMode={tercero.tipoIdentificacion === 'EXT' ? 'text' : 'numeric'} maxLength={20} value={tercero.numero}
                           onChange={(e: any) => setTercero(prev => ({ ...prev, numero: e.target.value }))}
                           leadingIcon={buscandoContribuyente ? <Loader2 className="animate-spin" /> : <Search />}
                           placeholder={tercero.tipoIdentificacion === '02' ? 'ej: 3-101-123456' : ''} />
@@ -365,11 +372,11 @@ export default function FacturarModal({
                       </div>
                       <div>
                         <label htmlFor="facturarmo-t-correo" className={etiqueta}>Correo (recibe el comprobante)</label>
-                        <Input id="facturarmo-t-correo" type="email" autoCapitalize="none" value={tercero.correo} onChange={(e: any) => setTercero(prev => ({ ...prev, correo: e.target.value }))} />
+                        <Input id="facturarmo-t-correo" type="email" autoCapitalize="none" maxLength={160} value={tercero.correo} onChange={(e: any) => setTercero(prev => ({ ...prev, correo: e.target.value }))} />
                       </div>
                       <div>
                         <label htmlFor="facturarmo-t-tel" className={etiqueta}>Teléfono (opcional)</label>
-                        <Input id="facturarmo-t-tel" type="tel" inputMode="tel" value={tercero.telefono} onChange={(e: any) => setTercero(prev => ({ ...prev, telefono: e.target.value }))} />
+                        <Input id="facturarmo-t-tel" type="tel" inputMode="tel" maxLength={20} value={tercero.telefono} onChange={(e: any) => setTercero(prev => ({ ...prev, telefono: e.target.value }))} />
                       </div>
                       {tercero.tipoIdentificacion !== 'EXT' && (
                         <div className="sm:col-span-2">
@@ -453,6 +460,13 @@ export default function FacturarModal({
                 <Select id="facturarmo-cod-desc" value={codigoDescuento} onChange={(e: any) => setCodigoDescuento(e.target.value)}>
                   {catalogos.codigosDescuento.map(c => <option key={c.codigo} value={c.codigo}>{c.descripcion}</option>)}
                 </Select>
+                {codigoDescuento === '99' && (
+                  <div className="mt-3">
+                    <label htmlFor="facturarmo-naturaleza-desc" className={etiqueta}>Naturaleza del descuento</label>
+                    <Input id="facturarmo-naturaleza-desc" maxLength={80} value={naturalezaDescuento} placeholder="ej: Cortesía por convenio"
+                      onChange={(e: any) => setNaturalezaDescuento(e.target.value)} />
+                  </div>
+                )}
               </div>
             )}
 

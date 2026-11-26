@@ -399,3 +399,95 @@ describe('Cliente HTTP: vigencia del token y códigos HTTP', () => {
     expect(await consultarEstadoHacienda(ENDPOINTS, 't', '5'.repeat(50), 1000)).toMatchObject({ estado: 'error', httpStatus: 401 });
   });
 });
+
+// --- Revisión del líder: orden de decisiones, consultas sin fin, 400 tras POST, legado, correo ---
+import { estadoSinRespuesta, bloqueoMinimoSeg, correoReclamable } from './haciendaCola';
+import { errorLongitudReceptor, LARGOS_RECEPTOR } from './haciendaReglas';
+import { receptorDesdeXml } from './haciendaFactura';
+
+describe('Cola: CONSULTAR antes que AGOTADO y consultas que nunca se agotan', () => {
+  it('si el POST pudo haber llegado se consulta aunque se hayan agotado los intentos de envío', () => {
+    expect(decidirAccionCola({ estado: 'PENDIENTE', postRealizado: true, intentos: 99, tieneXmlFirmado: true }, 5)).toBe('CONSULTAR');
+    expect(decidirAccionCola({ estado: 'ERROR', postRealizado: true, intentos: 99, tieneXmlFirmado: true }, 5)).toBe('CONSULTAR');
+    expect(decidirAccionCola({ estado: 'ENVIADA', postRealizado: true, intentos: 99, tieneXmlFirmado: true }, 5)).toBe('CONSULTAR');
+    expect(decidirAccionCola({ estado: 'PENDIENTE', postRealizado: false, intentos: 5, tieneXmlFirmado: true }, 5)).toBe('AGOTADO');
+  });
+
+  it('un PENDIENTE con POST incierto sin respuesta pasa a ERROR con marca de envío incierto', () => {
+    expect(estadoSinRespuesta('PENDIENTE', 2, 5)).toEqual({ estado: 'PENDIENTE', aviso: null });
+    expect(estadoSinRespuesta('PENDIENTE', 5, 5)).toEqual({ estado: 'ERROR', aviso: 'ENVIO_INCIERTO' });
+    expect(estadoSinRespuesta('ERROR', 50, 5)).toEqual({ estado: 'ERROR', aviso: 'ENVIO_INCIERTO' });
+  });
+
+  it('una ENVIADA nunca deja de consultarse: solo avisa que Hacienda no responde', () => {
+    expect(estadoSinRespuesta('ENVIADA', 4, 5)).toEqual({ estado: 'ENVIADA', aviso: null });
+    expect(estadoSinRespuesta('ENVIADA', 500, 5)).toEqual({ estado: 'ENVIADA', aviso: 'HACIENDA_NO_RESPONDE' });
+    // y sigue a la espera máxima, no se detiene
+    const ahora = new Date('2026-11-27T00:00:00Z');
+    expect(calcularProximoIntento(500, ahora, { backoffBaseSeg: 60, backoffMaxSeg: 3600 }).getTime() - ahora.getTime()).toBe(3_600_000);
+  });
+
+  it('un 4xx después de un POST que pudo haber llegado se verifica consultando la clave', () => {
+    expect(clasificarRespuestaEnvio(400, 'Error de validación', { postPrevio: true })).toBe('CONSULTAR_ANTES_DE_RECHAZAR');
+    expect(clasificarRespuestaEnvio(400, 'Error de validación', { postPrevio: false })).toBe('RECHAZO_RECEPCION');
+    expect(clasificarRespuestaEnvio(400, 'ya fue recibido', { postPrevio: true })).toBe('YA_RECIBIDO');
+    expect(clasificarRespuestaEnvio(401, null, { postPrevio: true })).toBe('TOKEN_INVALIDO');
+    expect(clasificarRespuestaEnvio(503, null, { postPrevio: true })).toBe('INCIERTO');
+  });
+
+  it('un comprobante legado que Hacienda no tiene queda para revisión manual (nunca se reenvía solo)', () => {
+    expect(estadoTrasConsultaCola('no_encontrado', { legado: true })).toEqual({ estado: 'ERROR', postRealizado: false, revisionManual: true });
+    expect(estadoTrasConsultaCola('no_encontrado', { legado: false })).toEqual({ estado: 'PENDIENTE', postRealizado: false });
+    expect(estadoTrasConsultaCola('aceptado', { legado: true }).estado).toBe('ACEPTADA');
+  });
+
+  it('el reclamo dura al menos un ciclo completo de envío', () => {
+    expect(bloqueoMinimoSeg(300, 20000, 12000)).toEqual({ seg: 300, ajustado: false });
+    expect(bloqueoMinimoSeg(30, 20000, 12000)).toEqual({ seg: 72, ajustado: true });
+  });
+});
+
+describe('Correo automático: reclamo con vencimiento', () => {
+  const ahora = new Date('2026-11-27T12:00:00Z');
+  it('exactamente una vez en operación normal; se recupera un reclamo caído', () => {
+    expect(correoReclamable(0, null, ahora, 600)).toBe(true);
+    expect(correoReclamable(1, null, ahora, 600)).toBe(false);
+    expect(correoReclamable(2, new Date(ahora.getTime() - 60_000), ahora, 600)).toBe(false);
+    expect(correoReclamable(2, new Date(ahora.getTime() - 601_000), ahora, 600)).toBe(true);
+    expect(correoReclamable(2, null, ahora, 600)).toBe(true);
+  });
+});
+
+describe('Terceros: teléfono, extranjero guardado y largos del receptor', () => {
+  const base = { tipoIdentificacion: '02', numero: '3101999999', nombre: 'Empresa S.A.' };
+  it('el teléfono cabe en VARCHAR(20) incluso con +', () => {
+    expect(validarTercero({ ...base, telefono: '+5068888777766665555' })).toHaveProperty('tercero'); // + y 19 dígitos = 20
+    expect(validarTercero({ ...base, telefono: '12345678901234567890' })).toHaveProperty('error'); // 20 dígitos
+    expect(validarTercero({ ...base, telefono: '8888-7777' })).toHaveProperty('tercero');
+  });
+
+  it('un extranjero que se guarda necesita su pasaporte', () => {
+    expect(validarTercero({ tipoIdentificacion: 'EXT', numero: '', nombre: 'John Smith' }, { paraGuardar: true })).toHaveProperty('error');
+    expect(validarTercero({ tipoIdentificacion: 'EXT', numero: '', nombre: 'John Smith' })).toHaveProperty('tercero');
+  });
+
+  it('valida los largos de la copia del receptor antes del SQL', () => {
+    expect(errorLongitudReceptor({ nombre: 'x'.repeat(LARGOS_RECEPTOR.nombre), identificacion: '1'.repeat(50), correo: 'a@b.cr' })).toBeNull();
+    expect(errorLongitudReceptor({ nombre: 'x'.repeat(151) })).toMatch(/nombre/);
+    expect(errorLongitudReceptor({ identificacion: 'X'.repeat(51) })).toMatch(/identificación/);
+    expect(errorLongitudReceptor({ correo: `${'a'.repeat(160)}@b.cr` })).toMatch(/correo/);
+  });
+});
+
+describe('Receptor del XML firmado original (notas sobre comprobantes sin copia del receptor)', () => {
+  it('lee Tipo, Número, nombre, correo y actividad del receptor', () => {
+    const xml = construirXmlFactura({ ...datosBase(), receptor: { nombre: 'Juan & Hijos', tipoIdentificacion: '03', identificacion: '123456789012', correoElectronico: 'j@h.cr', codigoActividad: '620100' } });
+    expect(receptorDesdeXml(xml)).toEqual({ encontrado: true, receptor: { nombre: 'Juan & Hijos', tipoIdentificacion: '03', identificacion: '123456789012', correoElectronico: 'j@h.cr', codigoActividad: '620100' } });
+  });
+
+  it('un tiquete sin receptor y un XML ilegible', () => {
+    expect(receptorDesdeXml(construirXmlTiquete({ ...datosBase(), receptor: null }))).toEqual({ encontrado: true, receptor: null });
+    expect(receptorDesdeXml(null)).toEqual({ encontrado: false, receptor: null });
+    expect(receptorDesdeXml('<x/>')).toEqual({ encontrado: false, receptor: null });
+  });
+});

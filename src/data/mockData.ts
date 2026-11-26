@@ -72,6 +72,24 @@ export interface Company {
   canton: string; // código INEC, 2 dígitos
   distrito: string; // código INEC, 2 dígitos
   otrasSenas: string; // dirección exacta, 5-250 caracteres
+  // Suscripción facturada por el ERP ELROTECH (solo la edita el SaaS admin) y resumen de la
+  // integración (columnas erp*, las escribe el servidor; ver server/erpServicio.ts).
+  monedaSuscripcion?: 'CRC' | 'USD';
+  diaFacturacion?: number | null; // 1-28
+  erpPendienteSync?: number | boolean;
+  erpSincronizadoEn?: string | null;
+  erpError?: string | null;
+  erpSaldoPendiente?: number | null;
+  erpSaldoVencido?: number | null;
+  erpDiasMora?: number | null;
+  erpMonedaSaldo?: string | null;
+  erpProximaFacturacion?: string | null;
+  erpUltimaFacturaConsecutivo?: string | null;
+  erpUltimaFacturaEstado?: string | null;
+  erpUltimaFacturaFecha?: string | null;
+  erpEstadoCuentaEn?: string | null;
+  erpAvisoMoraEnviadoEn?: string | null;
+  erpSuspendidaPorMoraEn?: string | null;
 }
 
 export interface User {
@@ -945,7 +963,8 @@ export interface Factura {
   mediosPago?: MedioPagoFactura[] | null; // null en comprobantes anteriores (usar medioPago)
   totalDescuentos?: number;
   // Cola de transmisión a Hacienda
-  haciendaIntentos?: number;
+  haciendaIntentos?: number; // intentos de envío
+  haciendaConsultas?: number; // consultas de algo que Hacienda pudo haber recibido (nunca se agotan)
   haciendaProximoIntento?: string | null;
   haciendaUltimoIntento?: string | null;
   haciendaErrorDetalle?: string | null;

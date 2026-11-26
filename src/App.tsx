@@ -2255,6 +2255,7 @@ export default function App() {
                 onUpdateMaxUsuarios={handleUpdateMaxUsuarios}
                 onLoadPayments={handleLoadPayments}
                 onAddPayment={handleAddPayment}
+                onCompanyUpdated={(updated) => setCompanies(prev => prev.map(c => c.id === updated.id ? { ...c, ...updated } : c))}
               />
             )}
             {activeTab === 'saas-admin' && esSaasAdmin && <ParametrosRentaManager />}

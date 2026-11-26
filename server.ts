@@ -38,6 +38,7 @@ import {
   validarMediosPago,
   cuadrarMediosPago,
   recortarDetalle,
+  receptorDesdeXml,
   RAZON_MAX,
   type EmisorFactura,
   type ReceptorFactura,
@@ -47,11 +48,12 @@ import {
 } from "./server/haciendaFactura";
 import { obtenerTokenHaciendaConVigencia, enviarFacturaHacienda, consultarEstadoHacienda, esperarResolucionHacienda, resolverEndpointsHacienda, listarComprobantesEmitidos, formatoEmisorHacienda, crearCacheTokensHacienda, claveCacheToken } from "./server/haciendaApi";
 import type { AmbienteHacienda, EstadoHaciendaResultado, EndpointsHacienda, ParametrosSondeo } from "./server/haciendaApi";
-import { identificacionReceptorValida, decidirTipoComprobante, tipoDocReferencia, codigoEnCatalogo, codigosDe, CATALOGOS_SIN_BD, problemasEmisor, problemasTransmision, errorDetalle, validarTercero, type EntradaCatalogo, type TipoCatalogo } from "./server/haciendaReglas";
-import { calcularProximoIntento, decidirAccionCola, clasificarRespuestaEnvio, estadoTrasConsultaCola, type ParametrosCola } from "./server/haciendaCola";
+import { identificacionReceptorValida, decidirTipoComprobante, tipoDocReferencia, codigoEnCatalogo, codigosDe, CATALOGOS_SIN_BD, problemasEmisor, problemasTransmision, errorDetalle, validarTercero, errorLongitudReceptor, LARGOS_RECEPTOR, type EntradaCatalogo, type TipoCatalogo } from "./server/haciendaReglas";
+import { calcularProximoIntento, decidirAccionCola, clasificarRespuestaEnvio, estadoTrasConsultaCola, estadoSinRespuesta, bloqueoMinimoSeg, correoReclamable, type ParametrosCola } from "./server/haciendaCola";
 import { cabys as buscarCabysHacienda, contribuyente as consultarContribuyente, tipoCambio as consultarTipoCambio, exoneracion as consultarExoneracion, HaciendaPublicaError, type TipoCambio } from "./server/haciendaPublica";
 import { fechaCR, fechaHoraCR, sumarDiasCR } from "./src/utils/fechaCR";
-import { errorIdentificacion } from "./src/utils/identificacion";
+import { errorIdentificacion, soloDigitosIdentificacion } from "./src/utils/identificacion";
+import { errorDatosFiscalesAlta } from "./src/utils/datosFiscales";
 import { ivaEfectivo, precioConIva } from "./src/utils/precios";
 import { normalizarWhatsapp, normalizarMensajeWhatsapp, WhatsappInvalidoError } from "./src/utils/whatsapp";
 import { normalizarModalidad, servicioCompatible } from "./src/utils/modalidad";
@@ -63,7 +65,9 @@ import type { AdjuntoEmail } from "./server/mailer";
 import { adjuntoIcsParaPaciente, eventoDesdeCita, generarCalendarioIcs } from "./server/ics";
 import { generarPdfDesdeHtml } from "./server/pdf";
 import { renderFacturaPdf, renderConsultaPacientePdf } from "./server/pdfTemplates";
-import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderFacturaEmail, renderAccountStatusEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail, renderRecordatorioDocumentosEmail, renderSmtpTestEmail } from "./server/emailTemplates";
+import { renderCitaEmail, renderCitaEmailProfesional, renderConsultaEmail, renderFacturaEmail, renderAccountStatusEmail, renderAvisoSuspensionMoraEmail, renderNuevaEmpresaEmail, renderPasswordResetEmail, renderRecordatorioDocumentosEmail, renderSmtpTestEmail } from "./server/emailTemplates";
+import { crearServicioErp, registrarRutasErp } from "./server/erpServicio";
+import { cambiaronDatosSuscriptor } from "./server/erpIntegracion";
 import { calcularTiempoTrasladoMinutos, TrasladoNoCalculableError } from "./server/googleMaps";
 import { tocaRecordatorio } from "./server/recordatoriosCasos";
 import { slotLibre, haySolapeConCitas, minutosDesdeMedianoche, validarTransicionEstado, esFechaHoraValida, fechaHoraEsPasada, esEstadoActivo, ESTADOS_CITA } from "./server/citasReglas";
@@ -1637,6 +1641,11 @@ async function startServer() {
     establecerIdCompaniaPlataforma(id);
   }
 
+  /** Descarta la caché de parametros_sistema (tras guardar parámetros desde un panel). */
+  function invalidarCacheParametros() {
+    cacheParametros = null;
+  }
+
   // Carga inicial en cuanto la BD está lista (antes de eso pudo quedar en caché la lista vacía
   // del modo sin conexión, por eso se descarta la caché).
   baseDeDatosLista.then(() => {
@@ -1775,6 +1784,16 @@ async function startServer() {
         }
       }
 
+      // Alta (autorregistro): datos fiscales completos y válidos desde el inicio, porque son los que
+      // usa el ERP para facturar la suscripción. La identificación se guarda solo con dígitos.
+      if (!c.id) {
+        const problemaAlta = errorDatosFiscalesAlta(c);
+        if (problemaAlta) return res.status(400).json({ error: problemaAlta });
+        c.identificacion = soloDigitosIdentificacion(c.identificacion);
+        c.razonSocial = String(c.razonSocial).trim();
+        c.correoEmisor = String(c.correoEmisor).trim();
+      }
+
       // Campos comerciales del SaaS (estado, límite de usuarios, cuota y vencimiento): solo los fija el
       // SaaS admin. En el autorregistro público la empresa nace PENDIENTE con el límite configurado, y el
       // Administrador de una clínica no puede cambiar los suyos (se conservan los guardados).
@@ -1844,6 +1863,14 @@ async function startServer() {
             );
             await guardarHorarioAtencionCompania(pool, c.id, c.horarioAtencion);
             if (horarioDomicilioNormalizado !== undefined) await guardarHorarioDomicilioCompania(c.id, horarioDomicilioNormalizado);
+            // Integración con el ERP: si cambió un dato que el ERP conoce del suscriptor, se le envía
+            // (en segundo plano; nunca hace fallar el guardado).
+            const antes = (exists as any[])[0];
+            const idEditada = Number(c.id);
+            if (!esCompaniaPlataforma(idEditada)) {
+              if (antes.estadoSaas !== c.estadoSaas) erpServicio.alCambiarEstadoSaas(idEditada, c.estadoSaas).catch(() => {});
+              else if (cambiaronDatosSuscriptor(antes, c)) erpServicio.solicitarSincronizacion(idEditada);
+            }
             return res.json(c);
           }
         }
@@ -1931,6 +1958,79 @@ async function startServer() {
     }
   });
 
+  /** Datos para los correos de la plataforma a una empresa: empresa y SMTP de la plataforma y el
+   * primer Administrador de la empresa destino. */
+  async function correoPlataformaPara(companyId: number): Promise<{ platformCompany?: Company; platformSmtp?: CompaniaSmtpConfig; adminUser?: any }> {
+    const idPlataforma = idCompaniaPlataforma();
+    if (dbConnected && pool) {
+      const [platRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idPlataforma]);
+      const platformCompany = (platRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
+      const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [idPlataforma]);
+      const smtpRow = (smtpRows as any[])[0];
+      const platformSmtp = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
+      const [userRows] = await pool.query("SELECT * FROM usuarios WHERE idCompania = ? AND rol = 'Administrador' LIMIT 1", [companyId]);
+      const adminUser = (userRows as any[]).map(row => normalizeRow(row, 'id_usuario'))[0];
+      return { platformCompany, platformSmtp, adminUser };
+    }
+    return {
+      platformCompany: localCompanies.find(c => c.id === idPlataforma),
+      platformSmtp: localSmtpConfigs.find(s => s.idCompania === idPlataforma),
+      adminUser: localUsers.find(u => u.idCompania === companyId && u.rol === "Administrador")
+    };
+  }
+
+  class EmpresaNoEncontradaError extends Error {}
+
+  /**
+   * Cambia el estado SaaS de una empresa y avisa por correo al aprobar/suspender/reactivar. Lo usan
+   * POST /api/companies/:id/estado-saas y la suspensión automática por mora (integración ERP).
+   * Después pide sincronizar la empresa con el ERP (en segundo plano, nunca hace fallar el cambio).
+   */
+  async function cambiarEstadoSaas(companyId: number, nuevoEstado: Company["estadoSaas"]): Promise<Company> {
+    let company: Company | undefined;
+    let estadoAnterior: Company["estadoSaas"] | undefined;
+
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [companyId]);
+      company = (rows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
+      if (!company) throw new EmpresaNoEncontradaError("Empresa no encontrada.");
+      estadoAnterior = company.estadoSaas;
+      await pool.query("UPDATE companias SET estadoSaas = ? WHERE id_compania = ?", [nuevoEstado, companyId]);
+      company.estadoSaas = nuevoEstado;
+    } else {
+      company = localCompanies.find(c => c.id === companyId);
+      if (!company) throw new EmpresaNoEncontradaError("Empresa no encontrada.");
+      estadoAnterior = company.estadoSaas;
+      company.estadoSaas = nuevoEstado;
+      localCompanies = localCompanies.map(c => c.id === companyId ? company! : c);
+    }
+
+    if (nuevoEstado === "ACTIVA" || nuevoEstado === "SUSPENDIDA") {
+      try {
+        const { platformCompany, platformSmtp, adminUser } = await correoPlataformaPara(companyId);
+        if (platformCompany && platformSmtp && platformSmtp.activo && adminUser && adminUser.correo) {
+          const rendered = renderAccountStatusEmail({
+            platformCompany,
+            tenantCompany: company,
+            nuevoEstado,
+            estadoAnterior: estadoAnterior || "PENDIENTE"
+          });
+          await sendMail(platformSmtp, { to: adminUser.correo, subject: rendered.subject, html: rendered.html, text: rendered.text });
+        } else {
+          console.log("[SaaS] Notificación de estado omitida (sin SMTP de plataforma activo o sin usuario administrador destinatario).");
+        }
+      } catch (mailErr: any) {
+        console.error("[SaaS] Error enviando correo de notificación de estado:", mailErr.message || mailErr);
+      }
+    }
+
+    // Integración con el ERP: activo = (estado ACTIVA). Reactivar abre un periodo de mora nuevo.
+    if (!esCompaniaPlataforma(companyId)) {
+      await erpServicio.alCambiarEstadoSaas(companyId, nuevoEstado).catch(err => console.error("[ERP] Tras cambiar el estado SaaS:", err?.message || err));
+    }
+    return company;
+  }
+
   app.post("/api/companies/:id/estado-saas", requireAuth, requireSaasAdmin, async (req, res) => {
     try {
       const companyId = parseInt(req.params.id);
@@ -1938,67 +2038,40 @@ async function startServer() {
       if (nuevoEstado !== "ACTIVA" && nuevoEstado !== "SUSPENDIDA" && nuevoEstado !== "PENDIENTE") {
         return res.status(400).json({ error: "estadoSaas inválido." });
       }
-
-      let company: Company | undefined;
-      let estadoAnterior: Company["estadoSaas"] | undefined;
-
-      if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [companyId]);
-        company = (rows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
-        if (!company) return res.status(404).json({ error: "Empresa no encontrada." });
-        estadoAnterior = company.estadoSaas;
-        await pool.query("UPDATE companias SET estadoSaas = ? WHERE id_compania = ?", [nuevoEstado, companyId]);
-        company.estadoSaas = nuevoEstado;
-      } else {
-        company = localCompanies.find(c => c.id === companyId);
-        if (!company) return res.status(404).json({ error: "Empresa no encontrada." });
-        estadoAnterior = company.estadoSaas;
-        company.estadoSaas = nuevoEstado;
-        localCompanies = localCompanies.map(c => c.id === companyId ? company! : c);
+      // La empresa de plataforma nunca se suspende (dejaría sin acceso a la administración SaaS).
+      if (esCompaniaPlataforma(companyId) && nuevoEstado !== "ACTIVA") {
+        return res.status(400).json({ error: "La empresa de plataforma no se puede suspender ni dejar pendiente." });
       }
-
-      if (nuevoEstado === "ACTIVA" || nuevoEstado === "SUSPENDIDA") {
-        try {
-          let platformCompany: Company | undefined;
-          let platformSmtp: CompaniaSmtpConfig | undefined;
-          let adminUser: any;
-
-          const idPlataforma = idCompaniaPlataforma();
-          if (dbConnected && pool) {
-            const [platRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idPlataforma]);
-            platformCompany = (platRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
-            const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [idPlataforma]);
-            const smtpRow = (smtpRows as any[])[0];
-            platformSmtp = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
-            const [userRows] = await pool.query("SELECT * FROM usuarios WHERE idCompania = ? AND rol = 'Administrador' LIMIT 1", [companyId]);
-            adminUser = (userRows as any[]).map(row => normalizeRow(row, 'id_usuario'))[0];
-          } else {
-            platformCompany = localCompanies.find(c => c.id === idPlataforma);
-            platformSmtp = localSmtpConfigs.find(s => s.idCompania === idPlataforma);
-            adminUser = localUsers.find(u => u.idCompania === companyId && u.rol === "Administrador");
-          }
-
-          if (platformCompany && platformSmtp && platformSmtp.activo && adminUser && adminUser.correo) {
-            const rendered = renderAccountStatusEmail({
-              platformCompany,
-              tenantCompany: company,
-              nuevoEstado,
-              estadoAnterior: estadoAnterior || "PENDIENTE"
-            });
-            await sendMail(platformSmtp, { to: adminUser.correo, subject: rendered.subject, html: rendered.html, text: rendered.text });
-          } else {
-            console.log("[SaaS] Notificación de estado omitida (sin SMTP de plataforma activo o sin usuario administrador destinatario).");
-          }
-        } catch (mailErr: any) {
-          console.error("[SaaS] Error enviando correo de notificación de estado:", mailErr.message || mailErr);
-        }
-      }
-
-      res.json(company);
+      res.json(await cambiarEstadoSaas(companyId, nuevoEstado));
     } catch (err: any) {
+      if (err instanceof EmpresaNoEncontradaError) return res.status(404).json({ error: err.message });
       res.status(500).json({ error: err.message });
     }
   });
+
+  // --- Integración con el ERP ELROTECH (facturación de las suscripciones) ---
+  // Reglas y cliente HTTPS en server/erpIntegracion.ts; BD, job y rutas en server/erpServicio.ts.
+  const erpServicio = crearServicioErp({
+    pool: () => (dbConnected && pool ? pool : null),
+    leerParametros: leerParametrosSistema,
+    invalidarParametros: invalidarCacheParametros,
+    esCompaniaPlataforma: id => esCompaniaPlataforma(id),
+    idCompaniaPlataforma,
+    cifrar: encryptSecret,
+    descifrar: decryptSecret,
+    cambiarEstadoSaas: (id, estado) => cambiarEstadoSaas(id, estado),
+    enviarAvisoMora: async (idCompania, info) => {
+      if (!dbConnected || !pool) return "sin-destino";
+      const [rows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idCompania]);
+      const tenantCompany: Company | undefined = (rows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
+      const { platformCompany, platformSmtp, adminUser } = await correoPlataformaPara(idCompania);
+      if (!tenantCompany || !platformCompany || !platformSmtp || !platformSmtp.activo || !adminUser?.correo) return "sin-destino";
+      const rendered = renderAvisoSuspensionMoraEmail({ platformCompany, tenantCompany, ...info });
+      await sendMail(platformSmtp, { to: adminUser.correo, subject: rendered.subject, html: rendered.html, text: rendered.text });
+      return "enviado";
+    }
+  });
+  registrarRutasErp(app, erpServicio, { requireAuth, requireSaasAdmin, idUsuario: req => sessionOf(req).userId });
 
   app.get("/api/companies/:id/pagos", requireAuth, requireSaasAdmin, async (req, res) => {
     try {
@@ -2032,6 +2105,8 @@ async function startServer() {
             "UPDATE companias SET montoMensual = COALESCE(?, montoMensual), proximoVencimiento = COALESCE(?, proximoVencimiento) WHERE id_compania = ?",
             [p.montoMensual != null ? parseFloat(p.montoMensual) : null, p.proximoVencimiento || null, companyId]
           );
+          // La cuota la factura el ERP: si cambió, se le envía (en segundo plano).
+          if (p.montoMensual != null) erpServicio.solicitarSincronizacion(companyId);
         }
       } else {
         p.id = Math.max(0, ...localCompanyPayments.map(item => item.id)) + 1;
@@ -3843,6 +3918,10 @@ async function startServer() {
     detalleMin: number;
     detalleMax: number;
     condicionesExigenReceptor: string[];
+    /** Reintentos de una transacción de emisión ante un interbloqueo de MySQL (ER_LOCK_DEADLOCK). */
+    transaccionReintentos: number;
+    /** Segundos tras los cuales un envío automático de correo "en curso" se considera caído. */
+    correoBloqueoSeg: number;
   }
 
   // Modo SIN base de datos (demostración en memoria): no existe parametros_sistema y nada se
@@ -3862,9 +3941,12 @@ async function startServer() {
     mediosPagoMax: 4,
     detalleMin: 3,
     detalleMax: 200,
-    condicionesExigenReceptor: ["02"]
+    condicionesExigenReceptor: ["02"],
+    transaccionReintentos: 3,
+    correoBloqueoSeg: 600
   };
   let margenTokenSeg = PARAMETROS_FACTURACION_SIN_BD.tokenMargenSeg;
+  let avisoBloqueoCorto = false;
 
   /** Número (puede ser decimal y 0) obligatorio de parametros_sistema. */
   async function parametroDecimal(clave: string): Promise<number> {
@@ -3875,8 +3957,9 @@ async function startServer() {
 
   async function parametrosFacturacion(): Promise<ParametrosFacturacion> {
     if (!dbConnected || !pool) return PARAMETROS_FACTURACION_SIN_BD;
-    const [intentos, esperaMs, plazoMs, consultaTimeoutMs, fetchTimeoutMs, url, hash, intervaloSeg, lote, bloqueoSeg, backoffBaseSeg, backoffMaxSeg, maxIntentos,
-      tokenMargenSeg, unidadServicio, unidadMercancia, codigoDescuentoDefecto, toleranciaMedioPago, mediosPagoMax, detalleMin, detalleMax, condiciones] = await Promise.all([
+    const [intentos, esperaMs, plazoMs, consultaTimeoutMs, fetchTimeoutMs, url, hash, intervaloSeg, lote, bloqueoConfigurado, backoffBaseSeg, backoffMaxSeg, maxIntentos,
+      tokenMargenSeg, unidadServicio, unidadMercancia, codigoDescuentoDefecto, toleranciaMedioPago, mediosPagoMax, detalleMin, detalleMax, condiciones,
+      transaccionReintentos, correoBloqueoSeg] = await Promise.all([
       parametroEntero("hacienda_sondeo_intentos"), parametroEntero("hacienda_sondeo_espera_ms"), parametroEntero("hacienda_sondeo_plazo_ms"),
       parametroEntero("hacienda_consulta_timeout_ms"), parametroEntero("hacienda_fetch_timeout_ms"),
       parametroRequerido("hacienda_politica_firma_url"), parametroRequerido("hacienda_politica_firma_hash"),
@@ -3884,17 +3967,80 @@ async function startServer() {
       parametroEntero("hacienda_cola_backoff_base_seg"), parametroEntero("hacienda_cola_backoff_max_seg"), parametroEntero("hacienda_cola_max_intentos"),
       parametroEntero("hacienda_token_margen_seg"), parametroRequerido("hacienda_unidad_medida_servicio"), parametroRequerido("hacienda_unidad_medida_mercancia"),
       parametroRequerido("hacienda_codigo_descuento_defecto"), parametroDecimal("hacienda_medio_pago_tolerancia"), parametroEntero("hacienda_medios_pago_max"),
-      parametroEntero("hacienda_detalle_min"), parametroEntero("hacienda_detalle_max"), parametroRequerido("hacienda_condiciones_exigen_receptor")
+      parametroEntero("hacienda_detalle_min"), parametroEntero("hacienda_detalle_max"), parametroRequerido("hacienda_condiciones_exigen_receptor"),
+      parametroEntero("hacienda_transaccion_reintentos"), parametroEntero("hacienda_correo_bloqueo_seg")
     ]);
     margenTokenSeg = tokenMargenSeg;
+    // El reclamo de un comprobante debe durar más que un ciclo completo (token + envío + sondeo +
+    // consulta): si no, otro proceso podría tomarlo a mitad del envío. Se usa el mayor y se avisa.
+    const bloqueo = bloqueoMinimoSeg(bloqueoConfigurado, fetchTimeoutMs, plazoMs);
+    if (bloqueo.ajustado && !avisoBloqueoCorto) {
+      console.warn(`[Hacienda] hacienda_cola_bloqueo_seg (${bloqueoConfigurado}) es menor que un ciclo de envío; se usa ${bloqueo.seg}.`);
+      avisoBloqueoCorto = true;
+    }
+    const bloqueoSeg = bloqueo.seg;
     return {
       sondeo: { intentos, esperaMs, plazoMs, consultaTimeoutMs },
       fetchTimeoutMs,
       politicaFirma: { url, hashSha256: hash },
       cola: { intervaloSeg, lote, bloqueoSeg, backoffBaseSeg, backoffMaxSeg, maxIntentos },
       tokenMargenSeg, unidadServicio, unidadMercancia, codigoDescuentoDefecto, toleranciaMedioPago, mediosPagoMax, detalleMin, detalleMax,
-      condicionesExigenReceptor: condiciones.split(",").map(c => c.trim()).filter(Boolean)
+      condicionesExigenReceptor: condiciones.split(",").map(c => c.trim()).filter(Boolean),
+      transaccionReintentos, correoBloqueoSeg
     };
+  }
+
+  /**
+   * Transacción de emisión con reintento acotado ante un interbloqueo de MySQL (1213): la función
+   * se vuelve a ejecutar completa (reserva de consecutivo, firma, INSERT), porque el rollback deshizo
+   * todo y todavía nada salió hacia Hacienda.
+   */
+  async function enTransaccion<T>(fn: (connection: any) => Promise<T>): Promise<T> {
+    const intentosMax = (await parametrosFacturacion()).transaccionReintentos;
+    for (let intento = 1; ; intento++) {
+      const connection = await pool!.getConnection();
+      try {
+        await connection.beginTransaction();
+        const resultado = await fn(connection);
+        await connection.commit();
+        return resultado;
+      } catch (err: any) {
+        await connection.rollback().catch(() => {});
+        const interbloqueo = err?.errno === 1213 || err?.code === "ER_LOCK_DEADLOCK";
+        if (!interbloqueo || intento >= intentosMax) throw err;
+        console.warn(`[Hacienda] Interbloqueo en la transacción de emisión; reintento ${intento + 1} de ${intentosMax}.`);
+      } finally {
+        connection.release();
+      }
+    }
+  }
+
+  /** Lease (reclamo) en segundos enteros: calza igual en DATETIME y DATETIME(3). */
+  const nuevaLease = (bloqueoSeg: number) => new Date(Math.ceil((Date.now() + bloqueoSeg * 1000) / 1000) * 1000);
+
+  /**
+   * Reclama un comprobante para trabajarlo (cola, «Consultar estado», anular): UPDATE condicional
+   * que solo gana si nadie lo tiene reclamado y (si se indica) sigue en el estado leído. Devuelve la
+   * lease o null si otro proceso lo tiene.
+   */
+  async function reclamarDocumento(id: number, estadoLeido?: string): Promise<Date | null> {
+    const p = await parametrosFacturacion();
+    const lease = nuevaLease(p.cola.bloqueoSeg);
+    const ahora = new Date();
+    if (dbConnected && pool) {
+      const [r] = await pool.query(
+        `UPDATE facturas SET hacienda_procesando_hasta = ? WHERE id_factura = ? AND (hacienda_procesando_hasta IS NULL OR hacienda_procesando_hasta < ?)${estadoLeido ? " AND estado = ?" : ""}`,
+        estadoLeido ? [lease, id, ahora, estadoLeido] : [lease, id, ahora]
+      );
+      return (r as any).affectedRows === 1 ? lease : null;
+    }
+    const local: any = localFacturas.find(f => f.id === id);
+    if (!local) return null;
+    const actual = local.haciendaProcesandoHasta ? new Date(local.haciendaProcesandoHasta) : null;
+    if (actual && actual.getTime() >= ahora.getTime()) return null;
+    if (estadoLeido && local.estado !== estadoLeido) return null;
+    local.haciendaProcesandoHasta = lease;
+    return lease;
   }
 
   // Catálogos de Hacienda (condición de venta, medios de pago, códigos de descuento) en la tabla
@@ -4011,8 +4157,15 @@ async function startServer() {
   async function reservarConsecutivo(connection: any | null, idCompania: number, tipoDocumento: TipoNumeracion): Promise<string> {
     const n = NUMERACION_POR_TIPO[tipoDocumento];
     if (connection) {
-      await connection.query("INSERT IGNORE INTO compania_hacienda_config (id_compania) VALUES (?)", [idCompania]);
-      const [rows] = await connection.query(`SELECT ${n.ultimo} AS ultimo, ${n.minimo} AS minimo, sucursal, terminal FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE`, [idCompania]);
+      // Primero el SELECT ... FOR UPDATE; la fila solo se crea si falta (antes: INSERT IGNORE y luego
+      // FOR UPDATE, que con dos emisiones simultáneas podía interbloquearse). Un interbloqueo que
+      // igual ocurra se reintenta completo (enTransaccion).
+      const consulta = `SELECT ${n.ultimo} AS ultimo, ${n.minimo} AS minimo, sucursal, terminal FROM compania_hacienda_config WHERE id_compania = ? FOR UPDATE`;
+      let [rows] = await connection.query(consulta, [idCompania]);
+      if ((rows as any[]).length === 0) {
+        await connection.query("INSERT INTO compania_hacienda_config (id_compania) VALUES (?) ON DUPLICATE KEY UPDATE id_compania = id_compania", [idCompania]);
+        [rows] = await connection.query(consulta, [idCompania]);
+      }
       const row = (rows as any[])[0];
       const siguiente = Math.max(Number(row?.ultimo) || 0, Number(row?.minimo) || 0) + 1;
       await connection.query(`UPDATE compania_hacienda_config SET ${n.ultimo} = ? WHERE id_compania = ?`, [siguiente, idCompania]);
@@ -4066,11 +4219,11 @@ async function startServer() {
         `INSERT INTO facturas (idCompania, idCita, id_consulta, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn,
           condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido, plazoCredito, xml_firmado, respuesta_hacienda,
           receptor_tipo_id, receptor_numero, receptor_nombre, receptor_correo, receptor_actividad, receptor_es_tercero, correo_copia_paciente,
-          medios_pago, total_descuentos, hacienda_intentos, hacienda_post_realizado, hacienda_procesando_hasta, nota_efecto, efectos_aplicados)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+          medios_pago, total_descuentos, hacienda_intentos, hacienda_post_realizado, hacienda_procesando_hasta, nota_efecto, efectos_aplicados, hacienda_origen_legado)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 0)`,
         [d.idCompania, d.idCita, d.idConsulta, d.idPaciente, d.clave, d.consecutivo, d.fechaEmision, d.ambiente, d.resumen.totalVentaNeta, d.resumen.totalImpuesto, d.resumen.totalComprobante,
           d.estado, d.mensajeError, creadaEn, d.condicionVenta, d.tipoDocumento, d.idFacturaReferencia, d.motivoAnulacion, medioPrincipal, d.montoRecibido, d.plazoCredito, d.xmlFirmado,
-          d.receptor.tipoIdentificacion, d.receptor.identificacion, recortarDetalle(d.receptor.nombre, 100), d.receptor.correo, d.receptor.codigoActividad, d.receptor.esTercero ? 1 : 0, d.correoCopiaPaciente ? 1 : 0,
+          d.receptor.tipoIdentificacion, d.receptor.identificacion, recortarDetalle(d.receptor.nombre, LARGOS_RECEPTOR.nombre), d.receptor.correo, d.receptor.codigoActividad, d.receptor.esTercero ? 1 : 0, d.correoCopiaPaciente ? 1 : 0,
           JSON.stringify(d.mediosPago), d.resumen.totalDescuentos, d.procesandoHasta, d.notaEfecto, d.notaEfecto ? 0 : 1]
       );
       const id = (result as any).insertId;
@@ -4098,6 +4251,7 @@ async function startServer() {
     mensajeError?: string | null;
     respuestaHacienda?: string | null;
     intentos?: number;
+    consultas?: number;
     proximoIntento?: Date | null;
     ultimoIntento?: Date | null;
     errorDetalle?: string | null;
@@ -4105,8 +4259,12 @@ async function startServer() {
     liberar?: boolean;
   }
 
-  /** Persiste el resultado de un intento de transmisión. undefined = no tocar ese campo. */
-  async function guardarCambiosEnvio(id: number, c: CambiosEnvio): Promise<void> {
+  /**
+   * Persiste el resultado de un intento de transmisión. undefined = no tocar ese campo.
+   * Con `lease` la escritura solo se aplica si este proceso SIGUE teniendo el reclamo (si venció y
+   * otro lo tomó, no pisa lo que el otro escribió). Devuelve si se aplicó.
+   */
+  async function guardarCambiosEnvio(id: number, c: CambiosEnvio, lease?: Date | null): Promise<boolean> {
     const errorDetalle = c.errorDetalle == null ? c.errorDetalle : String(c.errorDetalle).slice(0, 1000);
     if (dbConnected && pool) {
       const sets: string[] = [];
@@ -4116,18 +4274,22 @@ async function startServer() {
       if (c.mensajeError !== undefined) poner("mensajeError", c.mensajeError);
       if (c.respuestaHacienda) poner("respuesta_hacienda", c.respuestaHacienda);
       if (c.intentos !== undefined) poner("hacienda_intentos", c.intentos);
+      if (c.consultas !== undefined) poner("hacienda_consultas", c.consultas);
       if (c.proximoIntento !== undefined) poner("hacienda_proximo_intento", c.proximoIntento);
       if (c.ultimoIntento !== undefined) poner("hacienda_ultimo_intento", c.ultimoIntento);
       if (errorDetalle !== undefined) poner("hacienda_error_detalle", errorDetalle);
       if (c.postRealizado !== undefined) poner("hacienda_post_realizado", c.postRealizado ? 1 : 0);
       if (c.liberar) sets.push("hacienda_procesando_hasta = NULL");
-      if (sets.length === 0) return;
+      if (sets.length === 0) return true;
       valores.push(id);
-      await pool.query(`UPDATE facturas SET ${sets.join(", ")} WHERE id_factura = ?`, valores);
-      return;
+      if (lease) valores.push(lease);
+      const [r] = await pool.query(`UPDATE facturas SET ${sets.join(", ")} WHERE id_factura = ?${lease ? " AND hacienda_procesando_hasta = ?" : ""}`, valores);
+      return (r as any).affectedRows === 1;
     }
     const local: any = localFacturas.find(f => f.id === id);
-    if (!local) return;
+    if (!local) return false;
+    if (lease && !(local.haciendaProcesandoHasta && new Date(local.haciendaProcesandoHasta).getTime() === lease.getTime())) return false;
+    if (c.consultas !== undefined) local.haciendaConsultas = c.consultas;
     if (c.estado !== undefined) local.estado = c.estado;
     if (c.mensajeError !== undefined) local.mensajeError = c.mensajeError;
     if (c.respuestaHacienda) local.respuestaHacienda = c.respuestaHacienda;
@@ -4137,6 +4299,7 @@ async function startServer() {
     if (errorDetalle !== undefined) local.haciendaErrorDetalle = errorDetalle;
     if (c.postRealizado !== undefined) local.haciendaPostRealizado = c.postRealizado;
     if (c.liberar) local.haciendaProcesandoHasta = null;
+    return true;
   }
 
   /** Forma que recibe el navegador: sin XML ni MensajeHacienda (pesan KB) y con nombres camelCase. */
@@ -4163,6 +4326,7 @@ async function startServer() {
       mediosPago: Array.isArray(mediosPago) ? mediosPago : null,
       totalDescuentos: Number(leerCampo(doc, "total_descuentos", "totalDescuentos") ?? 0),
       haciendaIntentos: Number(leerCampo(doc, "hacienda_intentos", "haciendaIntentos") ?? 0),
+      haciendaConsultas: Number(leerCampo(doc, "hacienda_consultas", "haciendaConsultas") ?? 0),
       haciendaProximoIntento: fecha(leerCampo(doc, "hacienda_proximo_intento", "haciendaProximoIntento")),
       haciendaUltimoIntento: fecha(leerCampo(doc, "hacienda_ultimo_intento", "haciendaUltimoIntento")),
       haciendaErrorDetalle: leerCampo(doc, "hacienda_error_detalle", "haciendaErrorDetalle") ?? null,
@@ -4177,106 +4341,154 @@ async function startServer() {
     return firmarXadesEpes(xml, cert.p12Base64, cert.pin, p.politicaFirma);
   }
 
+  /** Prefijo del aviso de un comprobante que Hacienda recibió y todavía no resuelve tras muchas consultas. */
+  const AVISO_HACIENDA_NO_RESPONDE = "Hacienda aún no responde sobre este comprobante";
+
   /**
    * Un ciclo de transmisión de un comprobante ya guardado (lo usan el intento sincrónico y la cola).
+   * Quien llama ya tiene el reclamo (`lease`); toda escritura es condicional a seguir teniéndolo.
    * Nunca firma: transmite el XML firmado guardado. Nunca reenvía lo que pudo haber llegado:
-   * consulta por la clave y solo reenvía si Hacienda dice que no lo tiene. Nunca lanza.
+   * consulta por la clave y solo reenvía si Hacienda dice que no lo tiene (y nunca solo en un
+   * comprobante anterior a la cola). El POST va precedido de una marca compare-and-set: dos
+   * procesos nunca envían la misma clave, aunque un reclamo venza. Nunca lanza.
    */
-  async function ejecutarCicloEnvio(id: number): Promise<void> {
+  async function ejecutarCicloEnvio(id: number, lease: Date): Promise<void> {
     let estadoAnterior = "";
     let estadoNuevo = "";
+    let p: ParametrosFacturacion | null = null;
+    let intentos = 0;
+    let consultas = 0;
+    let accion: ReturnType<typeof decidirAccionCola> = "NINGUNA";
     try {
       const doc = await cargarFacturaPorId(id);
       if (!doc) return;
       estadoAnterior = String(doc.estado);
       estadoNuevo = estadoAnterior;
-      const p = await parametrosFacturacion();
+      p = await parametrosFacturacion();
+      const pp = p;
       const ahora = new Date();
-      const intentos = Number(leerCampo(doc, "hacienda_intentos", "haciendaIntentos")) || 0;
+      intentos = Number(leerCampo(doc, "hacienda_intentos", "haciendaIntentos")) || 0;
+      consultas = Number(leerCampo(doc, "hacienda_consultas", "haciendaConsultas")) || 0;
       const postRealizado = !!Number(leerCampo(doc, "hacienda_post_realizado", "haciendaPostRealizado") ?? 0);
+      const legado = !!Number(leerCampo(doc, "hacienda_origen_legado", "haciendaOrigenLegado") ?? 0);
+      // ¿Pudo haber llegado un POST anterior de esta clave? (un comprobante legado no lleva registro)
+      const postPrevio = legado || !!leerCampo(doc, "hacienda_ultimo_post", "haciendaUltimoPost");
       const xmlFirmado: string | null = leerCampo(doc, "xml_firmado", "xmlFirmado") ?? null;
-      const accion = decidirAccionCola({ estado: estadoAnterior, postRealizado, intentos, tieneXmlFirmado: !!xmlFirmado }, p.cola.maxIntentos);
+      accion = decidirAccionCola({ estado: estadoAnterior, postRealizado, intentos, tieneXmlFirmado: !!xmlFirmado }, pp.cola.maxIntentos);
       const enCola = estadoAnterior === "PENDIENTE";
 
-      const guardar = async (c: CambiosEnvio) => {
-        await guardarCambiosEnvio(id, { ...c, liberar: true });
-        if (c.estado) estadoNuevo = c.estado;
+      const guardar = async (c: CambiosEnvio): Promise<boolean> => {
+        const ok = await guardarCambiosEnvio(id, { ...c, liberar: true }, lease);
+        if (ok && c.estado) estadoNuevo = c.estado;
+        return ok;
       };
-      // Falla sin cambio de estado: se reintenta con espera creciente. En un PENDIENTE el mensaje
-      // explica que sigue en cola; en uno que Hacienda ya tiene (ENVIADA) no se toca el mensaje.
-      const fallo = (mensaje: string, detalle: string, extra: CambiosEnvio = {}) => guardar({
-        intentos: intentos + 1, ultimoIntento: ahora, proximoIntento: calcularProximoIntento(intentos + 1, ahora, p.cola),
+      // Falla de ENVÍO (nada llegó a Hacienda): cuenta como intento de envío, con espera creciente.
+      const falloEnvio = (mensaje: string, detalle: string, extra: CambiosEnvio = {}) => guardar({
+        intentos: intentos + 1, ultimoIntento: ahora, proximoIntento: calcularProximoIntento(intentos + 1, ahora, pp.cola),
         errorDetalle: detalle, ...(enCola || extra.estado ? { mensajeError: mensaje } : {}), ...extra
       });
+      // Consulta sin respuesta útil: NUNCA se agota. Tras maxIntentos consultas se avisa en pantalla
+      // (y un PENDIENTE cuyo POST pudo llegar pasa a ERROR con la marca de envío incierto).
+      const sinRespuesta = (detalle: string, mensajeEnCola?: string) => {
+        const n = consultas + 1;
+        const r = estadoSinRespuesta(estadoAnterior, n, pp.cola.maxIntentos);
+        const mensaje = r.aviso === "ENVIO_INCIERTO"
+          ? `${MARCA_ENVIO_INCIERTO} no se pudo confirmar si Hacienda recibió este comprobante (${detalle}). El sistema lo seguirá consultando; no lo vuelva a emitir.`
+          : r.aviso === "HACIENDA_NO_RESPONDE"
+          ? `${AVISO_HACIENDA_NO_RESPONDE} (${n} consultas). El sistema lo seguirá consultando.`
+          : enCola ? mensajeEnCola : undefined;
+        return guardar({
+          consultas: n, ultimoIntento: ahora, proximoIntento: calcularProximoIntento(n, ahora, pp.cola), errorDetalle: detalle,
+          ...(r.estado !== estadoAnterior ? { estado: r.estado } : {}), ...(mensaje ? { mensajeError: mensaje } : {})
+        });
+      };
+      const falloPrevio = (mensaje: string, detalle: string) => accion === "CONSULTAR" ? sinRespuesta(detalle, mensaje) : falloEnvio(mensaje, detalle);
 
-      if (accion === "NINGUNA") return guardar({});
+      if (accion === "NINGUNA") { await guardar({}); return; }
       if (accion === "AGOTADO") {
-        if (enCola) {
-          return guardar({ estado: "ERROR", proximoIntento: null, mensajeError: `No se pudo transmitir a Hacienda después de ${intentos} intentos${doc.hacienda_error_detalle || doc.haciendaErrorDetalle ? ` (${doc.hacienda_error_detalle || doc.haciendaErrorDetalle})` : ""}. Corrija la configuración y use «Reintentar envío».` });
-        }
-        return guardar({ proximoIntento: null });
+        const ultimo = leerCampo(doc, "hacienda_error_detalle", "haciendaErrorDetalle");
+        await guardar({ estado: "ERROR", proximoIntento: null, mensajeError: `No se pudo transmitir a Hacienda después de ${intentos} intentos${ultimo ? ` (${ultimo})` : ""}. Corrija la configuración y use «Reintentar envío».` });
+        return;
       }
       // La empresa de plataforma nunca transmite (también desde la cola).
       if (esCompaniaPlataforma(doc.idCompania)) {
-        return guardar({ ...(enCola ? { estado: "ERROR" } : {}), mensajeError: MENSAJE_PLATAFORMA_SIN_COMPROBANTES, proximoIntento: null });
+        await guardar({ ...(enCola ? { estado: "ERROR" } : {}), mensajeError: MENSAJE_PLATAFORMA_SIN_COMPROBANTES, proximoIntento: null });
+        return;
       }
       const company = await fetchCompanyById(doc.idCompania);
-      if (!company) return fallo("En cola: no se encontró la empresa.", "Empresa no encontrada");
+      if (!company) { await falloPrevio("En cola: no se encontró la empresa.", "Empresa no encontrada"); return; }
       const credenciales = await cargarCredencialesAtv(doc.idCompania);
-      if (!credenciales) return fallo("En cola: la empresa no tiene credenciales ATV configuradas. Se reintentará automáticamente.", "Sin credenciales ATV");
+      if (!credenciales) { await falloPrevio("En cola: la empresa no tiene credenciales ATV configuradas. Se reintentará automáticamente.", "Sin credenciales ATV"); return; }
       if (credenciales.ambiente !== doc.ambiente) {
-        return fallo(`En cola: el comprobante es de ${doc.ambiente} y la empresa está configurada en ${credenciales.ambiente}. Vuelva a ese ambiente para transmitirlo.`, "Ambiente distinto");
+        await falloPrevio(`En cola: el comprobante es de ${doc.ambiente} y la empresa está configurada en ${credenciales.ambiente}. Vuelva a ese ambiente para transmitirlo.`, "Ambiente distinto");
+        return;
       }
       let endpoints: EndpointsHacienda;
       let token: string;
       try {
         endpoints = await endpointsHaciendaPara(credenciales.ambiente);
-        token = await tokenHacienda(doc.idCompania, credenciales, endpoints, p.fetchTimeoutMs);
+        token = await tokenHacienda(doc.idCompania, credenciales, endpoints, pp.fetchTimeoutMs);
       } catch (err: any) {
         const detalle = err?.name === "TimeoutError" ? "tiempo de espera agotado" : (err?.message || String(err));
-        return fallo(`En cola: no se pudo iniciar sesión en Hacienda (${detalle}). Se reintentará automáticamente.`, detalle);
+        await falloPrevio(`En cola: no se pudo iniciar sesión en Hacienda (${detalle}). Se reintentará automáticamente.`, detalle);
+        return;
       }
 
-      const tipoDoc = String(doc.tipoDocumento);
-      const esNota = tipoDoc === "02" || tipoDoc === "03";
-      const efectosAplicados = !!Number(leerCampo(doc, "efectos_aplicados", "efectosAplicados") ?? 1);
-      // Estado final según lo que dijo Hacienda en una consulta.
-      const aplicarConsulta = async (consulta: EstadoHaciendaResultado) => {
-        const r = estadoTrasConsultaCola(consulta.estado);
-        const base: CambiosEnvio = { intentos: intentos + 1, ultimoIntento: ahora, respuestaHacienda: consulta.respuestaXmlBase64 };
+      // Estado y mensaje según lo que dijo Hacienda en una consulta. El mensaje sigue las MISMAS
+      // reglas que «Consultar estado» (estadoTrasConsulta): aviso de notas viejas cuyos efectos no se
+      // aplicaron, efectos a revertir si se rechaza una nota ya aplicada, saldo a favor.
+      const aplicarConsulta = async (consulta: EstadoHaciendaResultado, docBase: any = doc) => {
+        const r = estadoTrasConsultaCola(consulta.estado, { legado });
         if (r.estado === null) {
           if (consulta.httpStatus === 401 || consulta.httpStatus === 403) invalidarTokenHacienda(doc.idCompania, credenciales);
-          return fallo("En cola: no se pudo consultar a Hacienda. Se reintentará automáticamente.", consulta.detalleMensaje || "Consulta sin respuesta", {});
+          return sinRespuesta(consulta.detalleMensaje || "Consulta sin respuesta", "En cola: no se pudo consultar a Hacienda. Se reintentará automáticamente.");
+        }
+        const base: CambiosEnvio = { consultas: consultas + 1, ultimoIntento: ahora, respuestaHacienda: consulta.respuestaXmlBase64 };
+        if (r.revisionManual) {
+          return guardar({ ...base, estado: "ERROR", postRealizado: false, proximoIntento: null, errorDetalle: "Hacienda no tiene esta clave",
+            mensajeError: "Comprobante anterior a la cola automática: Hacienda no tiene registro de esta clave. No se reenvía solo: revíselo y anúlelo (no requiere Nota de Crédito) o use «Reintentar envío»." });
         }
         if (r.estado === "PENDIENTE") {
           // Hacienda no lo tiene: el MISMO XML firmado se reenvía en el siguiente ciclo.
           return guardar({ ...base, estado: "PENDIENTE", postRealizado: false, proximoIntento: ahora, errorDetalle: "Hacienda no tiene esta clave",
             mensajeError: "En cola: Hacienda no tiene registro de este comprobante; se reenviará el mismo comprobante firmado." });
         }
+        let mensaje = estadoTrasConsulta(docBase, consulta).mensajeError;
         if (r.estado === "ENVIADA") {
-          return guardar({ ...base, estado: "ENVIADA", postRealizado: true, proximoIntento: calcularProximoIntento(intentos + 1, ahora, p.cola), errorDetalle: null,
-            mensajeError: String(doc.mensajeError || "").startsWith(MARCA_SALDO_A_FAVOR) ? doc.mensajeError : null });
+          const n = consultas + 1;
+          if (mensaje && (mensaje.startsWith("En cola") || mensaje.startsWith(MARCA_ENVIO_INCIERTO) || mensaje.startsWith(AVISO_HACIENDA_NO_RESPONDE))) mensaje = null;
+          const aviso = estadoSinRespuesta("ENVIADA", n, pp.cola.maxIntentos).aviso === "HACIENDA_NO_RESPONDE";
+          return guardar({ ...base, estado: "ENVIADA", postRealizado: true, proximoIntento: calcularProximoIntento(n, ahora, pp.cola), errorDetalle: null,
+            mensajeError: aviso && !mensaje ? `${AVISO_HACIENDA_NO_RESPONDE} (${n} consultas). El sistema lo seguirá consultando.` : mensaje });
         }
-        if (r.estado === "ACEPTADA") {
-          const conservar = String(doc.mensajeError || "").startsWith(MARCA_SALDO_A_FAVOR) || (doc.mensajeError === AVISO_EFECTOS_NO_APLICADOS && efectosAplicados);
-          return guardar({ ...base, estado: "ACEPTADA", postRealizado: true, proximoIntento: null, errorDetalle: null, mensajeError: conservar ? doc.mensajeError : null });
-        }
-        // RECHAZADA
-        let mensaje = consulta.detalleMensaje || "Hacienda rechazó el comprobante.";
-        if (esNota && efectosAplicados && (estadoAnterior === "ENVIADA" || estadoAnterior === "ERROR") && leerCampo(doc, "nota_efecto", "notaEfecto")) {
-          mensaje = `${mensaje} — Al recibirla ya se habían aplicado sus efectos (inventario, cuenta por cobrar${tipoDoc === "03" ? " y, si era de anulación, la anulación de la factura" : ""}): reviértalos a mano.`;
-        }
-        return guardar({ ...base, estado: "RECHAZADA", postRealizado: true, proximoIntento: null, errorDetalle: null, mensajeError: mensaje });
+        return guardar({ ...base, estado: r.estado, postRealizado: true, proximoIntento: null, errorDetalle: null, mensajeError: mensaje });
       };
 
       if (accion === "CONSULTAR") {
-        const consulta = await consultarEstadoHacienda(endpoints, token, doc.clave, p.fetchTimeoutMs);
-        return aplicarConsulta(consulta);
+        await aplicarConsulta(await consultarEstadoHacienda(endpoints, token, doc.clave, pp.fetchTimeoutMs));
+        return;
       }
 
-      // ENVIAR. Se marca ANTES del POST: si el proceso muere a mitad, el siguiente ciclo consulta la
-      // clave en vez de reenviar a ciegas.
-      await guardarCambiosEnvio(id, { postRealizado: true });
+      // ENVIAR. Marca compare-and-set ANTES del POST: solo envía el proceso que la gana (estado
+      // PENDIENTE, sin POST previo, con el reclamo vigente). Si el proceso muere a mitad, el
+      // siguiente ciclo consulta la clave en vez de reenviar a ciegas.
+      let marcado = false;
+      if (dbConnected && pool) {
+        const [r] = await pool.query(
+          "UPDATE facturas SET hacienda_post_realizado = 1, hacienda_ultimo_post = ? WHERE id_factura = ? AND estado = 'PENDIENTE' AND hacienda_post_realizado = 0 AND hacienda_procesando_hasta = ?",
+          [ahora, id, lease]
+        );
+        marcado = (r as any).affectedRows === 1;
+      } else {
+        const local: any = localFacturas.find(f => f.id === id);
+        if (local && local.estado === "PENDIENTE" && !local.haciendaPostRealizado && local.haciendaProcesandoHasta && new Date(local.haciendaProcesandoHasta).getTime() === lease.getTime()) {
+          local.haciendaPostRealizado = true;
+          local.haciendaUltimoPost = ahora;
+          marcado = true;
+        }
+      }
+      if (!marcado) return; // otro proceso lo tomó o cambió: no se envía ni se toca nada
+
       const receptorXml = receptorParaXml(receptorGuardado(doc));
       let envio: Awaited<ReturnType<typeof enviarFacturaHacienda>> | null = null;
       let errorRed: any = null;
@@ -4285,43 +4497,66 @@ async function startServer() {
           endpoints, token, clave: doc.clave, fechaEmisionIso: doc.fechaEmision,
           tipoIdentificacionEmisor: company.tipoIdentificacion, cedulaEmisor: limpiarIdentificacion(company.identificacion),
           tipoIdentificacionReceptor: receptorXml?.tipoIdentificacion, cedulaReceptor: receptorXml?.identificacion,
-          xmlFirmado: xmlFirmado as string, timeoutMs: p.fetchTimeoutMs
+          xmlFirmado: xmlFirmado as string, timeoutMs: pp.fetchTimeoutMs
         });
       } catch (err: any) {
         errorRed = err;
       }
-      const clase = envio ? clasificarRespuestaEnvio(envio.status ?? null, envio.causa ?? null) : "INCIERTO";
+      const clase = envio ? clasificarRespuestaEnvio(envio.status ?? null, envio.causa ?? null, { postPrevio }) : "INCIERTO";
+      // Rechazo de la recepción (un 4xx sobre el contenido): reenviar el mismo XML no puede
+      // funcionar, así que queda como RECHAZADA y se ofrece «Reintentar con clave nueva».
+      const rechazoRecepcion = (detalle: string) => guardar({
+        estado: "RECHAZADA", postRealizado: false, intentos: intentos + 1, ultimoIntento: ahora, proximoIntento: null, errorDetalle: detalle,
+        mensajeError: `Hacienda rechazó la recepción del comprobante: ${detalle}. Corrija la causa y use «Reintentar con clave nueva».`
+      });
       if (clase === "TOKEN_INVALIDO") {
         invalidarTokenHacienda(doc.idCompania, credenciales);
-        return fallo(`En cola: Hacienda no aceptó la sesión (${envio?.mensaje}). Se reintentará automáticamente.`, envio?.mensaje || "401", { postRealizado: false });
+        await falloEnvio(`En cola: Hacienda no aceptó la sesión (${envio?.mensaje}). Se reintentará automáticamente.`, envio?.mensaje || "401", { postRealizado: false });
+        return;
       }
-      if (clase === "RECHAZO_RECEPCION") {
-        // Hacienda no lo recibió por un problema del comprobante: no se reintenta solo.
-        return guardar({ estado: "ERROR", postRealizado: false, intentos: intentos + 1, ultimoIntento: ahora, proximoIntento: null, errorDetalle: envio?.mensaje || null, mensajeError: envio?.mensaje || "Hacienda rechazó la recepción." });
-      }
-      if (clase === "INCIERTO") {
+      if (clase === "RECHAZO_RECEPCION") { await rechazoRecepcion(envio?.mensaje || "sin detalle"); return; }
+      if (clase === "INCIERTO" || clase === "CONSULTAR_ANTES_DE_RECHAZAR") {
         const detalleCorte = errorRed ? (errorRed?.name === "TimeoutError" ? "tiempo de espera agotado" : errorRed?.message || String(errorRed)) : (envio?.mensaje || "sin respuesta");
-        const consulta = await esperarResolucionHacienda(endpoints, token, doc.clave, p.sondeo);
+        const consulta = await esperarResolucionHacienda(endpoints, token, doc.clave, pp.sondeo);
         if (consulta.estado === "no_encontrado") {
-          return fallo(`En cola: el envío falló (${detalleCorte}) y Hacienda confirmó que no lo recibió. Se reintentará con el mismo comprobante firmado.`, detalleCorte, { postRealizado: false });
+          // Un 4xx y Hacienda confirma que no lo tiene: rechazo real de la recepción.
+          if (clase === "CONSULTAR_ANTES_DE_RECHAZAR") { await rechazoRecepcion(detalleCorte); return; }
+          await falloEnvio(`En cola: el envío falló (${detalleCorte}) y Hacienda confirmó que no lo recibió. Se reintentará con el mismo comprobante firmado.`, detalleCorte, { postRealizado: false });
+          return;
         }
         if (consulta.estado === "error") {
-          return fallo(`${MARCA_ENVIO_INCIERTO} se cortó la comunicación al enviarlo (${detalleCorte}) y no se pudo confirmar si Hacienda lo recibió. El sistema lo seguirá consultando; no lo vuelva a emitir.`, detalleCorte, { estado: "ERROR", postRealizado: true });
+          await falloEnvio(`${MARCA_ENVIO_INCIERTO} se cortó la comunicación al enviarlo (${detalleCorte}) y no se pudo confirmar si Hacienda lo recibió. El sistema lo seguirá consultando; no lo vuelva a emitir.`, detalleCorte, { estado: "ERROR", postRealizado: true });
+          return;
         }
-        return aplicarConsulta(consulta);
+        await aplicarConsulta(consulta);
+        return;
       }
-      // RECIBIDO o YA_RECIBIDO (clave repetida: ya lo tiene) → sondeo corto por la clave.
-      await guardarCambiosEnvio(id, { estado: "ENVIADA" });
+      // RECIBIDO o YA_RECIBIDO (clave repetida: ya lo tiene). Se escribe ENVIADA y, si es una Nota,
+      // se aplican sus efectos de inmediato (no al final del sondeo).
+      const okEnviada = await guardarCambiosEnvio(id, { estado: "ENVIADA", intentos: intentos + 1, consultas: 0, ultimoIntento: ahora, errorDetalle: null, mensajeError: null }, lease);
+      if (!okEnviada) return;
       estadoNuevo = "ENVIADA";
-      const consulta = await esperarResolucionHacienda(endpoints, token, doc.clave, p.sondeo);
+      await aplicarEfectosNota(id);
+      const docEnviada = (await cargarFacturaPorId(id)) ?? { ...doc, estado: "ENVIADA" };
+      const consulta = await esperarResolucionHacienda(endpoints, token, doc.clave, pp.sondeo);
       if (consulta.estado === "no_encontrado" || consulta.estado === "error") {
         // Recién recibido: todavía no aparece o no se pudo consultar. Sigue ENVIADA; la cola consulta.
-        return guardar({ estado: "ENVIADA", postRealizado: true, intentos: intentos + 1, ultimoIntento: ahora, proximoIntento: calcularProximoIntento(intentos + 1, ahora, p.cola), errorDetalle: null, mensajeError: null });
+        await guardar({ postRealizado: true, consultas: 0, proximoIntento: calcularProximoIntento(1, ahora, pp.cola) });
+        return;
       }
-      return aplicarConsulta(consulta);
+      consultas = 0;
+      await aplicarConsulta(consulta, docEnviada);
     } catch (err: any) {
-      console.error(`[Hacienda] Error en el ciclo de envío del comprobante ${id}:`, err?.message || err);
-      await guardarCambiosEnvio(id, { liberar: true, errorDetalle: err?.message || String(err) }).catch(() => {});
+      // Una excepción determinística no debe repetirse en cada vuelta: cuenta como intento (de envío
+      // o de consulta, según lo que tocaba) y espera según el backoff.
+      const detalle = err?.message || String(err);
+      console.error(`[Hacienda] Error en el ciclo de envío del comprobante ${id}:`, detalle);
+      const ahora = new Date();
+      const n = (accion === "CONSULTAR" ? consultas : intentos) + 1;
+      await guardarCambiosEnvio(id, {
+        ...(accion === "CONSULTAR" ? { consultas: n } : { intentos: n }), ultimoIntento: ahora,
+        ...(p ? { proximoIntento: calcularProximoIntento(n, ahora, p.cola) } : {}), errorDetalle: detalle, liberar: true
+      }, lease).catch(() => {});
     } finally {
       if (estadoNuevo && estadoNuevo !== estadoAnterior) await trasCambioDeEstado(id, estadoAnterior, estadoNuevo);
     }
@@ -4348,12 +4583,12 @@ async function startServer() {
   /**
    * Efectos locales de una Nota recibida por Hacienda (ENVIADA/ACEPTADA), aplicados UNA vez: la
    * bandera efectos_aplicados pasa de 0 a 1 con un UPDATE condicional dentro de la misma transacción.
-   * Antes estos efectos solo se aplicaban en la solicitud que emitía la Nota; con la cola, una Nota
-   * puede quedar recibida minutos después.
+   * Si el proceso se cae antes, la cola barre las notas recibidas con efectos pendientes.
    */
   async function aplicarEfectosNota(idNota: number): Promise<void> {
     const nota: any = await cargarFacturaPorId(idNota);
     if (!nota || (nota.tipoDocumento !== "02" && nota.tipoDocumento !== "03")) return;
+    if (nota.estado !== "ENVIADA" && nota.estado !== "ACEPTADA") return;
     const efecto = leerCampo(nota, "nota_efecto", "notaEfecto");
     const aplicados = leerCampo(nota, "efectos_aplicados", "efectosAplicados");
     if (!efecto || aplicados === undefined || !!Number(aplicados) || aplicados === true) return;
@@ -4379,7 +4614,7 @@ async function startServer() {
         const connection = await pool.getConnection();
         try {
           await connection.beginTransaction();
-          const [r] = await connection.query("UPDATE facturas SET efectos_aplicados = 1 WHERE id_factura = ? AND efectos_aplicados = 0", [idNota]);
+          const [r] = await connection.query("UPDATE facturas SET efectos_aplicados = 1 WHERE id_factura = ? AND efectos_aplicados = 0 AND estado IN ('ENVIADA', 'ACEPTADA')", [idNota]);
           if ((r as any).affectedRows !== 1) {
             await connection.rollback();
             return;
@@ -4408,9 +4643,9 @@ async function startServer() {
     }
   }
 
-  /** Intento sincrónico después de guardar: devuelve el comprobante ya actualizado. */
-  async function transmitirYRecargar(id: number): Promise<any> {
-    await ejecutarCicloEnvio(id);
+  /** Intento sincrónico después de guardar (con el reclamo `lease`): devuelve el comprobante actualizado. */
+  async function transmitirYRecargar(id: number, lease: Date): Promise<any> {
+    await ejecutarCicloEnvio(id, lease);
     const doc = await cargarFacturaPorId(id);
     return documentoParaCliente(doc, doc ? await lineasDeFactura(doc) : []);
   }
@@ -4421,7 +4656,9 @@ async function startServer() {
   /**
    * Toma un lote de comprobantes por transmitir o consultar y procesa cada uno. Cada fila se
    * RECLAMA con un UPDATE condicional (affectedRows === 1): dos procesos nunca trabajan la misma.
-   * Se saltan las empresas que no están ACTIVA y la empresa de plataforma. Solo con BD.
+   * Se saltan las empresas que no están ACTIVA y la empresa de plataforma. Solo con BD. Además
+   * barre las Notas recibidas cuyos efectos quedaron sin aplicar y los correos automáticos que un
+   * proceso caído dejó "en curso".
    */
   async function procesarColaHacienda(): Promise<void> {
     if (colaEnCurso || !dbConnected || !pool) return;
@@ -4433,24 +4670,41 @@ async function startServer() {
         `SELECT f.id_factura FROM facturas f JOIN companias c ON c.id_compania = f.idCompania
           WHERE (f.estado IN ('PENDIENTE', 'ENVIADA') OR (f.estado = 'ERROR' AND f.hacienda_post_realizado = 1))
             AND f.ambiente IN ('SANDBOX', 'PRODUCCION') AND f.xml_firmado IS NOT NULL
-            AND (f.hacienda_intentos < ? OR f.estado = 'PENDIENTE')
             AND (f.hacienda_proximo_intento IS NULL OR f.hacienda_proximo_intento <= ?)
             AND (f.hacienda_procesando_hasta IS NULL OR f.hacienda_procesando_hasta < ?)
             AND c.estadoSaas = 'ACTIVA' AND f.idCompania <> ?
           ORDER BY f.hacienda_proximo_intento IS NOT NULL, f.hacienda_proximo_intento, f.id_factura
           LIMIT ?`,
-        [p.cola.maxIntentos, ahora, ahora, idCompaniaPlataforma(), p.cola.lote]
+        [ahora, ahora, idCompaniaPlataforma(), p.cola.lote]
       );
       for (const r of rows as any[]) {
-        const ahoraFila = new Date();
+        const lease = nuevaLease(p.cola.bloqueoSeg);
         const [reclamo] = await pool.query(
           `UPDATE facturas SET hacienda_procesando_hasta = ? WHERE id_factura = ?
             AND (hacienda_procesando_hasta IS NULL OR hacienda_procesando_hasta < ?)
             AND estado IN ('PENDIENTE', 'ENVIADA', 'ERROR')`,
-          [new Date(ahoraFila.getTime() + p.cola.bloqueoSeg * 1000), r.id_factura, ahoraFila]
+          [lease, r.id_factura, new Date()]
         );
         if ((reclamo as any).affectedRows !== 1) continue;
-        await ejecutarCicloEnvio(r.id_factura);
+        await ejecutarCicloEnvio(r.id_factura, lease);
+      }
+
+      // Notas que Hacienda recibió y cuyos efectos no se aplicaron (el proceso se cayó en medio).
+      const [notas] = await pool.query(
+        `SELECT id_factura FROM facturas WHERE tipoDocumento IN ('02', '03') AND estado IN ('ENVIADA', 'ACEPTADA')
+            AND efectos_aplicados = 0 AND nota_efecto IS NOT NULL LIMIT ?`,
+        [p.cola.lote]
+      );
+      for (const n of notas as any[]) await aplicarEfectosNota(n.id_factura);
+
+      // Correos automáticos "en curso" con un reclamo vencido: el proceso que los tomó se cayó.
+      const [correos] = await pool.query(
+        `SELECT id_factura FROM facturas WHERE estado = 'ACEPTADA' AND correo_enviado = 2
+            AND (correo_reclamado_en IS NULL OR correo_reclamado_en < ?) LIMIT ?`,
+        [new Date(Date.now() - p.correoBloqueoSeg * 1000), p.cola.lote]
+      );
+      for (const c of correos as any[]) {
+        await enviarCorreoComprobante(c.id_factura, true).catch(err => console.warn(`[Correo] Reenvío automático del comprobante ${c.id_factura} falló:`, err?.message || err));
       }
     } catch (err: any) {
       console.error("[Hacienda] Cola de transmisión:", err?.message || err);
@@ -4499,6 +4753,8 @@ async function startServer() {
 
     if (automatico) {
       if (factura.estado !== "ACEPTADA" || factura.ambiente === "PRUEBAS_LOCAL" || esCompaniaPlataforma(idCompania)) return null;
+      // Un comprobante anterior a la cola que se resuelve ahora no dispara un correo sorpresa.
+      if (Number(leerCampo(factura, "hacienda_origen_legado", "haciendaOrigenLegado") ?? 0)) return null;
       const { correoAutomatico } = await estadoConfigEmision(idCompania);
       if (!correoAutomatico) return null;
     }
@@ -4543,14 +4799,23 @@ async function startServer() {
     }
 
     // Envío automático: se reclama con un UPDATE condicional (0 → 2 "en curso") para no enviarlo dos veces.
+    // El reclamo lleva fecha: si el proceso que lo tomó se cae, la cola lo recupera cuando vence
+    // hacienda_correo_bloqueo_seg (correoReclamable). En operación normal se envía una sola vez.
     if (automatico) {
+      const { correoBloqueoSeg } = await parametrosFacturacion();
+      const ahora = new Date();
       if (dbConnected && pool) {
-        const [r] = await pool.query("UPDATE facturas SET correo_enviado = 2 WHERE id_factura = ? AND correo_enviado = 0", [id]);
+        const [r] = await pool.query(
+          `UPDATE facturas SET correo_enviado = 2, correo_reclamado_en = ? WHERE id_factura = ?
+             AND (correo_enviado = 0 OR (correo_enviado = 2 AND (correo_reclamado_en IS NULL OR correo_reclamado_en < ?)))`,
+          [ahora, id, new Date(ahora.getTime() - correoBloqueoSeg * 1000)]
+        );
         if ((r as any).affectedRows !== 1) return null;
       } else {
         const local: any = localFacturas.find(f => f.id === id);
-        if (!local || local.correoEnviado) return null;
+        if (!local || !correoReclamable(Number(local.correoEnviado) || 0, local.correoReclamadoEn ? new Date(local.correoReclamadoEn) : null, ahora, correoBloqueoSeg)) return null;
         local.correoEnviado = 2;
+        local.correoReclamadoEn = ahora;
       }
     }
 
@@ -4863,7 +5128,7 @@ async function startServer() {
           `SELECT f.id_factura, f.id_consulta, f.idCompania, f.idCita, f.idPaciente, f.clave, f.consecutivo, f.fechaEmision, f.ambiente, f.subtotal, f.totalIva, f.total,
                   f.estado, f.mensajeError, f.creadaEn, f.condicionVenta, f.tipoDocumento, f.idFacturaReferencia, f.motivoAnulacion, f.medioPago, f.montoRecibido, f.plazoCredito,
                   f.receptor_tipo_id, f.receptor_numero, f.receptor_nombre, f.receptor_correo, f.receptor_actividad, f.receptor_es_tercero, f.correo_copia_paciente,
-                  f.medios_pago, f.total_descuentos, f.hacienda_intentos, f.hacienda_proximo_intento, f.hacienda_ultimo_intento, f.hacienda_error_detalle,
+                  f.medios_pago, f.total_descuentos, f.hacienda_intentos, f.hacienda_consultas, f.hacienda_proximo_intento, f.hacienda_ultimo_intento, f.hacienda_error_detalle,
                   f.correo_enviado, f.correo_enviado_en, f.correo_error,
                   p.nombreCompleto AS receptorNombre, p.identificacion AS receptorIdentificacion, p.tipoIdentificacion AS receptorTipoIdentificacion, p.nombreCompleto AS pacienteNombre
              FROM facturas f LEFT JOIN pacientes p ON p.id_paciente = f.idPaciente AND p.idCompania = f.idCompania WHERE f.idCompania = ?`,
@@ -4937,7 +5202,7 @@ async function startServer() {
       const idCompania = sessionOf(req).idCompania;
       const paciente = await pacienteDeEmpresa(parseInt(req.params.id), idCompania);
       if (!paciente) return res.status(404).json({ error: "Paciente no encontrado." });
-      const v = validarTercero(req.body);
+      const v = validarTercero(req.body, { paraGuardar: true });
       if ("error" in v) return res.status(400).json({ error: v.error });
       const id = await guardarReceptorDePaciente(null, idCompania, paciente.id, v.tercero);
       res.json((await receptoresDePaciente(idCompania, paciente.id)).find(r => r.id === id) ?? { id, ...v.tercero });
@@ -4977,7 +5242,8 @@ async function startServer() {
       if (!guardado) return { error: "El tercero guardado no existe para este paciente." };
       datos = guardado;
     }
-    const v = validarTercero(datos);
+    // Un tercero que se va a guardar (nuevo) necesita número aunque sea extranjero: se distinguen por él.
+    const v = validarTercero(datos, { paraGuardar: entrada.guardar === true && entrada.idReceptorGuardado == null });
     if ("error" in v) return { error: v.error };
     const t = v.tercero;
     return {
@@ -5052,6 +5318,8 @@ async function startServer() {
       const receptorResuelto = await resolverReceptor(body.receptor, paciente, idCompania);
       if ("error" in receptorResuelto) return res.status(400).json({ error: receptorResuelto.error });
       const receptor = receptorResuelto.snapshot;
+      const errLargo = errorLongitudReceptor(receptor);
+      if (errLargo) return res.status(400).json({ error: errLargo });
       const decision = decidirTipoComprobante(receptor, condicionVenta, p.condicionesExigenReceptor);
       if (decision.error) return res.status(400).json({ error: decision.error });
       const tipoDocumento = decision.tipoDocumento;
@@ -5151,7 +5419,7 @@ async function startServer() {
         ? "Modo prueba activado para este comprobante — no se envió a Hacienda."
         : "Ambiente de pruebas locales — no se envió a Hacienda.";
       // El intento sincrónico "reclama" la fila desde el INSERT: la cola no la toma mientras tanto.
-      const procesandoHasta = omitirEnvioHacienda ? null : new Date(Date.now() + p.cola.bloqueoSeg * 1000);
+      const procesandoHasta = omitirEnvioHacienda ? null : nuevaLease(p.cola.bloqueoSeg);
 
       // Numerar, firmar UNA vez y guardar, todo en la misma transacción: reserva de consecutivo (FOR
       // UPDATE), existencias, XML firmado, comprobante PENDIENTE, líneas y CxC. Si algo local falla
@@ -5227,21 +5495,15 @@ async function startServer() {
 
       let id: number;
       if (dbConnected && pool) {
-        const connection = await pool.getConnection();
         try {
-          await connection.beginTransaction();
-          id = await armarYGuardar(connection);
-          await connection.commit();
+          id = await enTransaccion(armarYGuardar);
         } catch (err: any) {
-          await connection.rollback().catch(() => {});
           // Red de seguridad ante una carrera entre dos solicitudes para la misma consulta.
           if (err.code === "ER_DUP_ENTRY" && idConsulta != null) {
             return res.status(409).json({ error: "Esta consulta ya fue facturada." });
           }
           if (err.status) return res.status(err.status).json({ error: err.message });
           throw err;
-        } finally {
-          connection.release();
         }
       } else {
         try {
@@ -5258,7 +5520,7 @@ async function startServer() {
       }
       // Ya está guardado (PENDIENTE, con su XML firmado): un intento de transmisión ahora mismo. Si
       // no se resuelve, la cola lo sigue en segundo plano.
-      res.json(await transmitirYRecargar(id));
+      res.json(await transmitirYRecargar(id, procesandoHasta as Date));
     } catch (err: any) {
       console.error("[Hacienda] Error generando comprobante:", err?.message || err);
       if (err instanceof ParametroFaltanteError) return res.status(503).json({ error: err.message });
@@ -5290,10 +5552,11 @@ async function startServer() {
   // Cuánto se acreditó ya de cada servicio en Notas de Crédito previas sobre esta factura. Las que
   // Hacienda nunca recibió (ERROR) o rechazó no acreditaron nada, así que no cuentan; las que están
   // en cola (PENDIENTE) sí, por prudencia (mientras tanto se bloquean otras notas, ver notaEnEnvioIncierto).
-  async function cantidadesAcreditadas(idFactura: number): Promise<Map<number, number>> {
+  // `db`: conexión de una transacción en curso (lecturas dentro del mismo bloqueo).
+  async function cantidadesAcreditadas(idFactura: number, db?: any): Promise<Map<number, number>> {
     let notas: any[];
     if (dbConnected && pool) {
-      const [rows] = await pool.query("SELECT * FROM facturas WHERE idFacturaReferencia = ? AND tipoDocumento = '03' AND estado NOT IN ('ERROR', 'RECHAZADA')", [idFactura]);
+      const [rows] = await (db || pool).query("SELECT * FROM facturas WHERE idFacturaReferencia = ? AND tipoDocumento = '03' AND estado NOT IN ('ERROR', 'RECHAZADA')", [idFactura]);
       notas = (rows as any[]).map(row => normalizeRow(row, 'id_factura'));
     } else {
       notas = localFacturas.filter(f => f.idFacturaReferencia === idFactura && f.tipoDocumento === "03" && f.estado !== "ERROR" && f.estado !== "RECHAZADA");
@@ -5310,21 +5573,28 @@ async function startServer() {
   }
 
   // Notas (de Crédito o Débito) que referencian una factura.
-  async function notasDeFactura(idFactura: number): Promise<any[]> {
+  async function notasDeFactura(idFactura: number, db?: any): Promise<any[]> {
     if (dbConnected && pool) {
-      const [rows] = await pool.query("SELECT id_factura, consecutivo, tipoDocumento, estado, mensajeError FROM facturas WHERE idFacturaReferencia = ?", [idFactura]);
+      const [rows] = await (db || pool).query("SELECT id_factura, consecutivo, tipoDocumento, estado, mensajeError, nota_efecto, efectos_aplicados FROM facturas WHERE idFacturaReferencia = ?", [idFactura]);
       return (rows as any[]).map(row => normalizeRow(row, 'id_factura'));
     }
     return localFacturas.filter(f => f.idFacturaReferencia === idFactura);
   }
 
+  /** Nota que Hacienda recibió pero cuyos efectos locales todavía no se aplicaron. */
+  const notaConEfectosPendientes = (n: any) => (n.estado === "ENVIADA" || n.estado === "ACEPTADA")
+    && !!leerCampo(n, "nota_efecto", "notaEfecto") && !Number(leerCampo(n, "efectos_aplicados", "efectosAplicados") ?? 1);
+
   // Una Nota en cola (PENDIENTE) o con envío incierto puede terminar recibida por Hacienda: mientras
   // tanto no se emite otra ni se anula la factura.
   function notaEnEnvioIncierto(notas: any[]): any | undefined {
-    return notas.find(n => n.estado === "PENDIENTE" || (n.estado === "ERROR" && String(n.mensajeError || "").startsWith(MARCA_ENVIO_INCIERTO)));
+    return notas.find(n => n.estado === "PENDIENTE" || (n.estado === "ERROR" && String(n.mensajeError || "").startsWith(MARCA_ENVIO_INCIERTO)) || notaConEfectosPendientes(n));
   }
 
   function mensajeEnvioIncierto(nota: any): string {
+    if (notaConEfectosPendientes(nota)) {
+      return `La nota ${nota.consecutivo} de esta factura ya fue recibida por Hacienda y sus efectos (inventario, cuenta por cobrar) se están aplicando. Espere unos minutos antes de emitir otra nota o anular.`;
+    }
     return nota.estado === "PENDIENTE"
       ? `La nota ${nota.consecutivo} de esta factura todavía está en cola de envío a Hacienda: espere a que se resuelva (o use «Consultar estado») antes de emitir otra nota o anular.`
       : `La nota ${nota.consecutivo} de esta factura tiene un envío incierto: use «Consultar estado» sobre ella antes de emitir otra nota o anular. Si Hacienda sí la recibió, emitir otra la duplicaría.`;
@@ -5440,18 +5710,26 @@ async function startServer() {
     return { estado, mensajeError };
   }
 
-  async function guardarEstadoConsultado(id: number, estado: string, mensajeError: string | null, respuestaXmlBase64: string | null, estadoHacienda?: EstadoHaciendaResultado["estado"]): Promise<void> {
+  /**
+   * Guarda lo que se supo al consultar a Hacienda fuera de la cola («Consultar estado», anular).
+   * Quien llama debe tener el reclamo (`lease`, ver reclamarDocumento): la escritura solo se aplica
+   * si lo sigue teniendo, así nunca pisa lo que la cola escribió en paralelo. Libera el reclamo.
+   */
+  async function guardarEstadoConsultado(id: number, estado: string, mensajeError: string | null, respuestaXmlBase64: string | null, estadoHacienda: EstadoHaciendaResultado["estado"] | undefined, lease: Date, liberar = true): Promise<boolean> {
     // Si Hacienda lo tiene, la cola solo debe consultarlo; si confirmó que no lo tiene, se puede reenviar.
     const postRealizado = estadoHacienda === "no_encontrado" ? false
       : estadoHacienda && estadoHacienda !== "error" ? true : undefined;
-    await guardarCambiosEnvio(id, { estado, mensajeError, respuestaHacienda: respuestaXmlBase64, postRealizado, ...(estado === "ACEPTADA" || estado === "RECHAZADA" ? { proximoIntento: null } : {}) });
+    return guardarCambiosEnvio(id, { estado, mensajeError, respuestaHacienda: respuestaXmlBase64, postRealizado, liberar, ...(estado === "ACEPTADA" || estado === "RECHAZADA" ? { proximoIntento: null } : {}) }, lease);
   }
+
+  const MENSAJE_EN_PROCESO = "El sistema está transmitiendo o consultando este comprobante en este momento. Intente de nuevo en unos segundos.";
 
   // Anula una Factura o Tiquete Electrónico. Son tres efectos independientes (mismo criterio que el
   // POS): reponer existencias y anular la CxC pendiente siempre, y emitir la Nota de Crédito
   // (código '01') SOLO si Hacienda ACEPTÓ el comprobante. Una NC sobre algo que Hacienda nunca
   // aceptó (SIMULADA, RECHAZADA, ERROR) la haría rechazar también.
   app.post("/api/facturas/:id/anular", requireAuth, unaOperacionALaVez(candadoPorFactura, async (req, res) => {
+    let leaseAnulacion: Date | null = null;
     try {
       const id = parseInt(req.params.id);
       const session = sessionOf(req);
@@ -5511,6 +5789,10 @@ async function startServer() {
       // ERROR puede ser "nunca le llegó a Hacienda" o "sí le llegó y se cortó la respuesta". Antes de
       // anularla sin Nota de Crédito se le pregunta.
       if (factura.estado === "ERROR" && credenciales && credenciales.ambiente === factura.ambiente) {
+        // Se reclama el comprobante (la cola puede estar consultándolo) y el reclamo se conserva
+        // hasta terminar la anulación: así la cola no lo toca entre la consulta y la anulación.
+        leaseAnulacion = await reclamarDocumento(factura.id, "ERROR");
+        if (!leaseAnulacion) return res.status(409).json({ error: MENSAJE_EN_PROCESO });
         let consulta;
         try {
           const endpoints = await endpointsHaciendaPara(credenciales.ambiente);
@@ -5524,7 +5806,10 @@ async function startServer() {
           return res.status(503).json({ error: `No se pudo confirmar con Hacienda si recibió esta factura${consulta.detalleMensaje ? ` (${consulta.detalleMensaje})` : ""}. Intente de nuevo en unos minutos.` });
         }
         const sincronizado = estadoTrasConsulta(factura, consulta);
-        await guardarEstadoConsultado(factura.id, sincronizado.estado, sincronizado.mensajeError, consulta.respuestaXmlBase64, consulta.estado);
+        if (!(await guardarEstadoConsultado(factura.id, sincronizado.estado, sincronizado.mensajeError, consulta.respuestaXmlBase64, consulta.estado, leaseAnulacion, false))) {
+          return res.status(409).json({ error: MENSAJE_EN_PROCESO });
+        }
+        if (sincronizado.estado !== "ERROR") await trasCambioDeEstado(factura.id, "ERROR", sincronizado.estado);
         factura.estado = sincronizado.estado;
         factura.mensajeError = sincronizado.mensajeError;
         if (factura.estado === "ENVIADA") {
@@ -5594,6 +5879,8 @@ async function startServer() {
     } catch (err: any) {
       console.error("[Hacienda] Error anulando factura:", err?.message || err);
       res.status(err.status || (err instanceof ParametroFaltanteError ? 503 : 500)).json({ error: err.message });
+    } finally {
+      if (leaseAnulacion) await guardarCambiosEnvio(parseInt(req.params.id), { liberar: true }, leaseAnulacion).catch(() => {});
     }
   }));
 
@@ -5682,13 +5969,22 @@ async function startServer() {
     p: ParametrosFacturacion;
   }): Promise<any> {
     const { tipoDocumento, factura, company, paciente, lineas, resumen, motivo, codigoReferencia, notaEfecto, medioPago, cert, credenciales, p } = params;
-    const receptor = receptorGuardado(factura) ?? receptorDesdePaciente(paciente);
+    const receptor = receptorDeOriginal(factura, paciente);
     const condicionVenta = factura.condicionVenta || "01";
     const plazoCredito = condicionVenta === "02" ? factura.plazoCredito ?? null : null;
     const mediosPago: MedioPagoComprobante[] = condicionVenta === "02" ? [] : [{ tipo: medioPago, monto: resumen.totalComprobante }];
-    const procesandoHasta = new Date(Date.now() + p.cola.bloqueoSeg * 1000);
+    const procesandoHasta = nuevaLease(p.cola.bloqueoSeg);
 
     const armar = async (connection: any | null): Promise<number> => {
+      if (connection) {
+        // El comprobante original se bloquea mientras se emite la Nota: dos Notas (o una Nota y un
+        // reintento con clave nueva) sobre el mismo original quedan en serie, y se revisa de nuevo
+        // que no haya otra en cola o con efectos pendientes.
+        const [orig] = await connection.query("SELECT estado FROM facturas WHERE id_factura = ? FOR UPDATE", [factura.id]);
+        if ((orig as any[])[0]?.estado !== "ACEPTADA") throw Object.assign(new Error("El comprobante original cambió de estado mientras tanto; recargue la página."), { status: 409 });
+        const incierta = notaEnEnvioIncierto(await notasDeFactura(factura.id, connection));
+        if (incierta) throw Object.assign(new Error(mensajeEnvioIncierto(incierta)), { status: 409 });
+      }
       const consecutivo = await reservarConsecutivo(connection, factura.idCompania, tipoDocumento);
       const fechaEmision = new Date();
       const clave = generarClaveNumerica(company.identificacion, consecutivo, fechaEmision);
@@ -5711,23 +6007,25 @@ async function startServer() {
       });
     };
 
-    let id: number;
-    if (dbConnected && pool) {
-      const connection = await pool.getConnection();
-      try {
-        await connection.beginTransaction();
-        id = await armar(connection);
-        await connection.commit();
-      } catch (err) {
-        await connection.rollback().catch(() => {});
-        throw err;
-      } finally {
-        connection.release();
-      }
-    } else {
-      id = await armar(null);
+    const id = dbConnected && pool ? await enTransaccion(armar) : await armar(null);
+    return transmitirYRecargar(id, procesandoHasta);
+  }
+
+  /**
+   * Receptor de una Nota: la copia guardada en el comprobante original; si el original es anterior a
+   * esa copia, el receptor que quedó en su XML firmado (aunque los datos del paciente hayan cambiado
+   * después); y solo si no hay XML, el paciente.
+   */
+  function receptorDeOriginal(factura: any, paciente: Patient): ReceptorSnapshot {
+    const guardado = receptorGuardado(factura);
+    if (guardado) return guardado;
+    const desdeXml = receptorDesdeXml(leerCampo(factura, "xml_firmado", "xmlFirmado"));
+    if (desdeXml.encontrado) {
+      if (!desdeXml.receptor) return { tipoIdentificacion: null, identificacion: null, nombre: paciente?.nombreCompleto ?? "", correo: paciente?.correoElectronico || null, codigoActividad: null, esTercero: false };
+      const r = desdeXml.receptor;
+      return { tipoIdentificacion: r.tipoIdentificacion, identificacion: r.identificacion, nombre: r.nombre, correo: r.correoElectronico ?? null, codigoActividad: r.codigoActividad ?? null, esTercero: false };
     }
-    return transmitirYRecargar(id);
+    return receptorDesdePaciente(paciente);
   }
 
   // Ajuste de la CxC de una factura a crédito por una Nota (montos en colones, `delta` > 0 aumenta).
@@ -5981,6 +6279,10 @@ async function startServer() {
         return res.status(400).json({ error: `Este comprobante se emitió en ${factura.ambiente} y la empresa está configurada en ${credenciales.ambiente}: no se puede consultar con estas credenciales.` });
       }
 
+      // Se reclama el comprobante en el estado leído: si la cola lo está trabajando, no se toca.
+      const lease = await reclamarDocumento(id, factura.estado);
+      if (!lease) return res.status(409).json({ error: MENSAJE_EN_PROCESO });
+
       let consulta: EstadoHaciendaResultado;
       try {
         const endpoints = await endpointsHaciendaPara(credenciales.ambiente);
@@ -5988,14 +6290,23 @@ async function startServer() {
         consulta = await consultarEstadoHacienda(endpoints, token, factura.clave, (await parametrosFacturacion()).fetchTimeoutMs);
         if (consulta.httpStatus === 401 || consulta.httpStatus === 403) invalidarTokenHacienda(factura.idCompania, credenciales);
       } catch (err: any) {
+        await guardarCambiosEnvio(id, { liberar: true }, lease);
         return res.status(502).json({ error: `No se pudo consultar a Hacienda en este momento (${err.message}). Intente de nuevo en unos minutos.` });
       }
       if (consulta.estado === "error") {
+        await guardarCambiosEnvio(id, { liberar: true }, lease);
         return res.status(502).json({ error: `No se pudo consultar a Hacienda en este momento${consulta.detalleMensaje ? ` (${consulta.detalleMensaje})` : ""}. Intente de nuevo en unos minutos.` });
       }
 
-      const { estado: nuevoEstado, mensajeError } = estadoTrasConsulta(factura, consulta);
-      await guardarEstadoConsultado(id, nuevoEstado, mensajeError, consulta.respuestaXmlBase64, consulta.estado);
+      let { estado: nuevoEstado, mensajeError } = estadoTrasConsulta(factura, consulta);
+      // Un estado final (ACEPTADA/RECHAZADA) nunca retrocede por una consulta.
+      if ((factura.estado === "ACEPTADA" || factura.estado === "RECHAZADA") && nuevoEstado !== factura.estado) {
+        nuevoEstado = factura.estado;
+        mensajeError = factura.mensajeError ?? null;
+      }
+      // Un comprobante anterior a la cola que Hacienda no tiene no se debe reenviar solo.
+      const guardado = await guardarEstadoConsultado(id, nuevoEstado, mensajeError, consulta.respuestaXmlBase64, consulta.estado, lease);
+      if (!guardado) return res.status(409).json({ error: MENSAJE_EN_PROCESO });
       if (nuevoEstado !== factura.estado) await trasCambioDeEstado(id, factura.estado, nuevoEstado);
 
       const actualizada = await cargarFacturaPorId(id);
@@ -6021,11 +6332,30 @@ async function startServer() {
       if (esCompaniaPlataforma(doc.idCompania)) return res.status(403).json({ error: MENSAJE_PLATAFORMA_SIN_COMPROBANTES });
       if (doc.estado !== "ERROR") return res.status(400).json({ error: "Solo se puede reintentar el envío de un comprobante en ERROR." });
       if (!leerCampo(doc, "xml_firmado", "xmlFirmado")) return res.status(400).json({ error: "Este comprobante no tiene XML firmado guardado: emítalo de nuevo." });
-      const postRealizado = !!Number(leerCampo(doc, "hacienda_post_realizado", "haciendaPostRealizado") ?? 0);
       const p = await parametrosFacturacion();
-      await guardarCambiosEnvio(id, { estado: postRealizado ? "ERROR" : "PENDIENTE", intentos: 0, proximoIntento: null, errorDetalle: null });
-      if (dbConnected && pool) await pool.query("UPDATE facturas SET hacienda_procesando_hasta = ? WHERE id_factura = ?", [new Date(Date.now() + p.cola.bloqueoSeg * 1000), id]);
-      res.json(await transmitirYRecargar(id));
+      // Un solo UPDATE condicional reclama la fila y la devuelve a la cola: solo gana si sigue en
+      // ERROR y nadie la tiene reclamada. Si su POST pudo haber llegado, sigue en ERROR (la cola solo
+      // consulta); si no, vuelve a PENDIENTE. El administrador decide: ya no se trata como legado.
+      const lease = nuevaLease(p.cola.bloqueoSeg);
+      let reclamado = false;
+      if (dbConnected && pool) {
+        const [r] = await pool.query(
+          `UPDATE facturas SET estado = IF(hacienda_post_realizado = 1, 'ERROR', 'PENDIENTE'), hacienda_intentos = 0, hacienda_consultas = 0,
+             hacienda_proximo_intento = NULL, hacienda_error_detalle = NULL, hacienda_origen_legado = 0, hacienda_procesando_hasta = ?
+           WHERE id_factura = ? AND estado = 'ERROR' AND (hacienda_procesando_hasta IS NULL OR hacienda_procesando_hasta < ?)`,
+          [lease, id, new Date()]
+        );
+        reclamado = (r as any).affectedRows === 1;
+      } else {
+        const local: any = localFacturas.find(f => f.id === id);
+        const libre = !local?.haciendaProcesandoHasta || new Date(local.haciendaProcesandoHasta).getTime() < Date.now();
+        if (local && local.estado === "ERROR" && libre) {
+          Object.assign(local, { estado: local.haciendaPostRealizado ? "ERROR" : "PENDIENTE", haciendaIntentos: 0, haciendaConsultas: 0, haciendaProximoIntento: null, haciendaErrorDetalle: null, haciendaOrigenLegado: false, haciendaProcesandoHasta: lease });
+          reclamado = true;
+        }
+      }
+      if (!reclamado) return res.status(409).json({ error: MENSAJE_EN_PROCESO });
+      res.json(await transmitirYRecargar(id, lease));
     } catch (err: any) {
       res.status(err instanceof ParametroFaltanteError ? 503 : 500).json({ error: err.message });
     }
@@ -6092,10 +6422,17 @@ async function startServer() {
       const xmlViejo = leerCampo(doc, "xml_firmado", "xmlFirmado") ?? null;
       const respuestaVieja = leerCampo(doc, "respuesta_hacienda", "respuestaHacienda") ?? null;
 
+      const lease = nuevaLease(p.cola.bloqueoSeg);
       const rehacer = async (connection: any | null) => {
         if (connection) {
           const [rows] = await connection.query("SELECT estado FROM facturas WHERE id_factura = ? FOR UPDATE", [id]);
           if ((rows as any[])[0]?.estado !== "RECHAZADA") throw Object.assign(new Error("El comprobante cambió de estado mientras tanto; recargue la página."), { status: 409 });
+        }
+        // Una Nota se revisa de nuevo DENTRO del bloqueo: el original sigue aceptado (no anulado),
+        // no hay otra nota en cola, incierta o con efectos pendientes, y lo acreditado no supera
+        // el comprobante original (pudo haber otras Notas de Crédito desde el rechazo).
+        if (esNota) await verificarReintentoNota(connection, doc, notaEfecto, lineas);
+        if (connection) {
           await connection.query(
             "INSERT INTO factura_historial_rechazos (id_factura, idCompania, tipoDocumento, clave, consecutivo, fechaEmision, mensajeError, respuesta_hacienda, xml_firmado, reemplazadaEn, reemplazadaPor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [id, idCompania, tipoOriginal, doc.clave, doc.consecutivo, doc.fechaEmision, doc.mensajeError ?? null, respuestaVieja, xmlViejo, new Date(), session.userId]
@@ -6115,46 +6452,77 @@ async function startServer() {
           throw Object.assign(new Error(`No se pudo firmar el comprobante: ${err.message}`), { status: 400 });
         }
         const fechaTexto = fechaEmisionCR(fechaEmision);
-        const lease = new Date(Date.now() + p.cola.bloqueoSeg * 1000);
         if (connection) {
           await connection.query(
             `UPDATE facturas SET tipoDocumento = ?, clave = ?, consecutivo = ?, fechaEmision = ?, xml_firmado = ?, respuesta_hacienda = NULL, estado = 'PENDIENTE', mensajeError = NULL,
-               medios_pago = ?, hacienda_intentos = 0, hacienda_post_realizado = 0, hacienda_proximo_intento = NULL, hacienda_error_detalle = NULL, hacienda_procesando_hasta = ?,
-               correo_enviado = 0, correo_error = NULL WHERE id_factura = ?`,
+               medios_pago = ?, hacienda_intentos = 0, hacienda_consultas = 0, hacienda_post_realizado = 0, hacienda_ultimo_post = NULL, hacienda_origen_legado = 0,
+               hacienda_proximo_intento = NULL, hacienda_error_detalle = NULL, hacienda_procesando_hasta = ?,
+               correo_enviado = 0, correo_reclamado_en = NULL, correo_error = NULL WHERE id_factura = ?`,
             [tipoNuevo, clave, consecutivo, fechaTexto, xmlFirmado, JSON.stringify(medios), lease, id]
           );
           await connection.query("UPDATE cuentas_cobrar SET facturaConsecutivo = ? WHERE idFactura = ?", [consecutivo, id]);
         } else {
           const local: any = localFacturas.find(f => f.id === id);
           local.historialRechazos = [...(local.historialRechazos || []), { tipoDocumento: tipoOriginal, clave: doc.clave, consecutivo: doc.consecutivo, fechaEmision: doc.fechaEmision, mensajeError: doc.mensajeError ?? null, reemplazadaEn: new Date().toISOString(), reemplazadaPor: session.userId }];
-          Object.assign(local, { tipoDocumento: tipoNuevo, clave, consecutivo, fechaEmision: fechaTexto, xmlFirmado, respuestaHacienda: null, estado: "PENDIENTE", mensajeError: null, mediosPago: medios, haciendaIntentos: 0, haciendaPostRealizado: false, haciendaProximoIntento: null, haciendaErrorDetalle: null, haciendaProcesandoHasta: lease, correoEnviado: 0, correoError: null });
+          Object.assign(local, { tipoDocumento: tipoNuevo, clave, consecutivo, fechaEmision: fechaTexto, xmlFirmado, respuestaHacienda: null, estado: "PENDIENTE", mensajeError: null, mediosPago: medios, haciendaIntentos: 0, haciendaConsultas: 0, haciendaPostRealizado: false, haciendaUltimoPost: null, haciendaOrigenLegado: false, haciendaProximoIntento: null, haciendaErrorDetalle: null, haciendaProcesandoHasta: lease, correoEnviado: 0, correoError: null });
           const cxc = localCuentasCobrar.find(c => c.idFactura === id);
           if (cxc) cxc.facturaConsecutivo = consecutivo;
         }
       };
-      if (dbConnected && pool) {
-        const connection = await pool.getConnection();
-        try {
-          await connection.beginTransaction();
-          await rehacer(connection);
-          await connection.commit();
-        } catch (err: any) {
-          await connection.rollback().catch(() => {});
-          if (err.status) return res.status(err.status).json({ error: err.message });
-          throw err;
-        } finally {
-          connection.release();
-        }
-      } else {
-        await rehacer(null);
+      try {
+        if (dbConnected && pool) await enTransaccion(rehacer);
+        else await rehacer(null);
+      } catch (err: any) {
+        if (err.status) return res.status(err.status).json({ error: err.message });
+        throw err;
       }
       console.log(`[Hacienda] Comprobante ${id} reintentado con clave nueva (rechazada: ${doc.clave}) por el usuario ${session.userId}.`);
-      res.json(await transmitirYRecargar(id));
+      res.json(await transmitirYRecargar(id, lease));
     } catch (err: any) {
       console.error("[Hacienda] Error reintentando con clave nueva:", err?.message || err);
       res.status(err.status || (err instanceof ParametroFaltanteError ? 503 : 500)).json({ error: err.message });
     }
   }));
+
+  /**
+   * Revisión de un reintento con clave nueva de una Nota (dentro de la transacción, con el original
+   * bloqueado): lanza un error 409 con el motivo si ya no se puede.
+   */
+  async function verificarReintentoNota(connection: any | null, nota: any, notaEfecto: string, lineasNota: any[]): Promise<void> {
+    const falla = (mensaje: string) => Object.assign(new Error(mensaje), { status: 409 });
+    let estadoOriginal: string | undefined;
+    if (connection) {
+      const [rows] = await connection.query("SELECT estado FROM facturas WHERE id_factura = ? AND idCompania = ? FOR UPDATE", [nota.idFacturaReferencia, nota.idCompania]);
+      estadoOriginal = (rows as any[])[0]?.estado;
+    } else {
+      estadoOriginal = localFacturas.find(f => f.id === nota.idFacturaReferencia && f.idCompania === nota.idCompania)?.estado;
+    }
+    if (!estadoOriginal) throw falla("No se encontró el comprobante que referencia esta nota.");
+    if (estadoOriginal === "ANULADA") throw falla("El comprobante original ya está anulado: esta nota ya no se puede reintentar.");
+    if (estadoOriginal !== "ACEPTADA") throw falla(`El comprobante original está ${estadoOriginal}: esta nota ya no se puede reintentar.`);
+    const hermanas = (await notasDeFactura(nota.idFacturaReferencia, connection)).filter(n => n.id !== nota.id);
+    const incierta = notaEnEnvioIncierto(hermanas);
+    if (incierta) throw falla(mensajeEnvioIncierto(incierta));
+    if (notaEfecto === "CREDITO" || notaEfecto === "ANULACION") {
+      // Esta nota está RECHAZADA, así que cantidadesAcreditadas ya no la cuenta.
+      const acreditado = await cantidadesAcreditadas(nota.idFacturaReferencia, connection);
+      const original = await cargarFacturaPorId(nota.idFacturaReferencia);
+      const vendido = new Map<number, number>();
+      for (const l of await lineasDeFactura(original)) if (l.idServicio != null) vendido.set(l.idServicio, (vendido.get(l.idServicio) || 0) + Number(l.cantidad));
+      const pedido = new Map<number, { cantidad: number; detalle: string }>();
+      for (const l of lineasNota) {
+        if (l.idServicio == null) continue;
+        const actual = pedido.get(l.idServicio);
+        pedido.set(l.idServicio, { cantidad: (actual?.cantidad || 0) + Number(l.cantidad), detalle: l.detalle });
+      }
+      for (const [idServicio, { cantidad, detalle }] of pedido) {
+        const disponible = (vendido.get(idServicio) || 0) - (acreditado.get(idServicio) || 0);
+        if (cantidad > disponible + 1e-9) {
+          throw falla(`"${detalle}": desde el rechazo se acreditó más de este servicio y solo quedan ${Math.max(0, disponible)} unidad(es) por acreditar. Esta nota ya no se puede reintentar; emita una nota nueva por lo que falte.`);
+        }
+      }
+    }
+  }
 
   // Historial de claves rechazadas de un comprobante (auditoría del reintento con clave nueva).
   app.get("/api/facturas/:id/historial-rechazos", requireAuth, async (req, res) => {
@@ -8813,6 +9181,9 @@ async function startServer() {
     // Cola de transmisión a Hacienda (comprobantes PENDIENTE / ENVIADA / envío incierto). El
     // intervalo sale de parametros_sistema (hacienda_cola_intervalo_seg) y se relee en cada vuelta.
     baseDeDatosLista.then(() => setTimeout(() => { programarColaHacienda().catch(() => {}); }, 30_000));
+    // Integración con el ERP: reintenta sincronizaciones pendientes, refresca estados de cuenta y
+    // aplica la suspensión por mora. Intervalo y activación en parametros_sistema (erp_sync_*).
+    baseDeDatosLista.then(() => setTimeout(() => { erpServicio.programarJob().catch(() => {}); }, 120_000));
   }
 }
 

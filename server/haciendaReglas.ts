@@ -180,24 +180,44 @@ export interface TerceroNormalizado {
  * tipo 01-04 la identificación debe calzar con el tipo; 'EXT' (pasaporte) se acepta pero el
  * comprobante sale como Tiquete sin <Receptor>. Devuelve el error o el tercero normalizado.
  */
-export function validarTercero(d: any): { error: string } | { tercero: TerceroNormalizado } {
+/** Largos máximos de la copia del receptor (columnas facturas.receptor_* y XML v4.4). */
+export const LARGOS_RECEPTOR = { nombre: 150, numero: 50, correo: 160 } as const;
+/** Largos de paciente_receptores_factura (y de validarTercero). */
+export const LARGOS_TERCERO = { numero: 20, nombre: 100, correo: 160, telefono: 20 } as const;
+
+/** Error si la copia del receptor no cabe en sus columnas (antes de llegar a un error de SQL). */
+export function errorLongitudReceptor(r: { nombre?: string | null; identificacion?: string | null; correo?: string | null }): string | null {
+  if (String(r.nombre ?? "").length > LARGOS_RECEPTOR.nombre) return `El nombre del receptor supera los ${LARGOS_RECEPTOR.nombre} caracteres.`;
+  if (String(r.identificacion ?? "").length > LARGOS_RECEPTOR.numero) return `La identificación del receptor supera los ${LARGOS_RECEPTOR.numero} caracteres.`;
+  if (String(r.correo ?? "").length > LARGOS_RECEPTOR.correo) return `El correo del receptor supera los ${LARGOS_RECEPTOR.correo} caracteres.`;
+  return null;
+}
+
+/**
+ * `paraGuardar`: el tercero se va a guardar para reusarlo. Los terceros se distinguen por número,
+ * así que un extranjero (EXT) guardado necesita su pasaporte (si no, dos sin número se pisarían).
+ */
+export function validarTercero(d: any, opciones: { paraGuardar?: boolean } = {}): { error: string } | { tercero: TerceroNormalizado } {
   const tipo = String(d?.tipoIdentificacion ?? "").trim();
   if (!["01", "02", "03", "04", "EXT"].includes(tipo)) return { error: "Tipo de identificación del tercero inválido." };
   const numeroCrudo = String(d?.numero ?? d?.identificacion ?? "").trim();
   let numero: string;
   if (tipo === "EXT") {
-    if (!/^[A-Za-z0-9-]{0,20}$/.test(numeroCrudo)) return { error: "El pasaporte o identificación extranjera solo lleva letras, números y guiones (máximo 20)." };
+    if (!/^[A-Za-z0-9-]{0,20}$/.test(numeroCrudo)) return { error: `El pasaporte o identificación extranjera solo lleva letras, números y guiones (máximo ${LARGOS_TERCERO.numero}).` };
+    if (opciones.paraGuardar && !numeroCrudo) return { error: "Para guardar un tercero extranjero indique su pasaporte o identificación (o no lo guarde)." };
     numero = numeroCrudo.toUpperCase();
   } else {
     if (!identificacionReceptorValida(tipo, numeroCrudo)) return { error: "La identificación del tercero no calza con su tipo (física 9 dígitos, jurídica 10, DIMEX 11-12, NITE 10)." };
     numero = limpiarIdentificacion(numeroCrudo);
   }
   const nombre = String(d?.nombre ?? "").trim();
-  if (nombre.length < 3 || nombre.length > 100) return { error: "El nombre o razón social del tercero debe tener entre 3 y 100 caracteres." };
+  if (nombre.length < 3 || nombre.length > LARGOS_TERCERO.nombre) return { error: `El nombre o razón social del tercero debe tener entre 3 y ${LARGOS_TERCERO.nombre} caracteres.` };
   const correo = String(d?.correo ?? "").trim();
-  if (correo && (!CORREO_RE.test(correo) || correo.length > 160)) return { error: "El correo del tercero no es válido." };
+  if (correo.length > LARGOS_TERCERO.correo) return { error: `El correo del tercero supera los ${LARGOS_TERCERO.correo} caracteres.` };
+  if (correo && !CORREO_RE.test(correo)) return { error: "El correo del tercero no es válido." };
+  // Con el "+" opcional el total cabe en la columna de 20 caracteres.
   const telefono = String(d?.telefono ?? "").replace(/[\s-]/g, "");
-  if (telefono && !/^\+?\d{8,20}$/.test(telefono)) return { error: "El teléfono del tercero debe tener entre 8 y 20 dígitos." };
+  if (telefono && !/^\+?\d{8,19}$/.test(telefono)) return { error: "El teléfono del tercero debe tener entre 8 y 19 dígitos (con + opcional)." };
   const actividad = String(d?.codigoActividad ?? "").trim();
   if (actividad && !/^\d{6}$/.test(actividad)) return { error: "El código de actividad del receptor debe tener 6 dígitos." };
   return { tercero: { tipoIdentificacion: tipo, numero, nombre, correo: correo || null, telefono: telefono || null, codigoActividad: actividad || null } };

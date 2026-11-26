@@ -4,7 +4,8 @@ import {
   renderCitaEmail,
   renderCitaEmailProfesional,
   renderPasswordResetEmail,
-  renderEmailPreviews
+  renderEmailPreviews,
+  renderAvisoSuspensionMoraEmail
 } from './emailTemplates';
 import { defaultCompanies, defaultPatients, defaultUsers } from '../src/data/mockData';
 import type { CasoLegal, DocumentoCaso, Cita, Company } from '../src/data/mockData';
@@ -176,5 +177,27 @@ describe('renderEmailPreviews', () => {
       expect(p.subject).toBeTruthy();
       expect(p.html).toContain('<!doctype html>');
     }
+  });
+});
+
+describe('renderAvisoSuspensionMoraEmail', () => {
+  const plataforma = { ...defaultCompanies[0], nombreComercial: 'TuanisBooking' } as Company;
+  const clinica = { ...defaultCompanies[0], nombreComercial: 'Clínica <Demo>' } as Company;
+
+  it('indica días de atraso, plazo y saldo vencido, con el nombre escapado', () => {
+    const r = renderAvisoSuspensionMoraEmail({ platformCompany: plataforma, tenantCompany: clinica, diasMora: 25, diasHastaSuspension: 5, saldoVencido: 25000, moneda: 'CRC' });
+    expect(r.subject).toContain('Aviso de suspensión por mora');
+    expect(r.text).toContain('25 días de atraso');
+    expect(r.text).toContain('se suspenderá en 5 días');
+    expect(r.text).toMatch(/Saldo vencido: ₡25/);
+    expect(r.html).toContain('Clínica &lt;Demo&gt;');
+    expect(r.html).not.toContain('Clínica <Demo>');
+  });
+
+  it('sin plazo restante avisa la suspensión inminente y usa US$ en dólares', () => {
+    const r = renderAvisoSuspensionMoraEmail({ platformCompany: plataforma, tenantCompany: clinica, diasMora: 1, diasHastaSuspension: 0, saldoVencido: 50, moneda: 'USD' });
+    expect(r.text).toContain('1 día de atraso');
+    expect(r.text).toContain('próximas horas');
+    expect(r.text).toContain('US$50');
   });
 });

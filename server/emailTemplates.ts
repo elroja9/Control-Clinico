@@ -749,6 +749,56 @@ export function renderAccountStatusEmail(params: {
   return { subject, html: emailShell(platformCompany, title, bodyHtml, mensaje), text };
 }
 
+/**
+ * Aviso de suspensión por mora (suscripción facturada por el ERP). Sale una sola vez por periodo de
+ * mora, antes de que la suspensión automática corte el acceso.
+ */
+export function renderAvisoSuspensionMoraEmail(params: {
+  platformCompany: Company;
+  tenantCompany: Company;
+  diasMora: number;
+  diasHastaSuspension: number;
+  saldoVencido: number | null;
+  moneda: string | null;
+}): RenderedEmail {
+  const { platformCompany, tenantCompany, diasMora, diasHastaSuspension, saldoVencido, moneda } = params;
+  const title = "Aviso de suspensión por mora";
+  const subject = `${title} - ${tenantCompany.nombreComercial}`;
+  const simbolo = moneda === "USD" ? "US$" : "₡";
+  const saldoTexto = saldoVencido != null && saldoVencido > 0
+    ? `${simbolo}${saldoVencido.toLocaleString("es-CR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : null;
+  const plazo = diasHastaSuspension <= 0
+    ? "Si el pago no se registra, el acceso se suspenderá en las próximas horas."
+    : `Si el pago no se registra, el acceso se suspenderá en ${diasHastaSuspension} ${diasHastaSuspension === 1 ? "día" : "días"}.`;
+  const mensaje = `Tu suscripción tiene facturas vencidas con ${diasMora} ${diasMora === 1 ? "día" : "días"} de atraso. ${plazo}`;
+  const filas: FilaDetalle[] = [
+    { etiqueta: "Empresa", texto: tenantCompany.nombreComercial },
+    { etiqueta: "Días de atraso", texto: String(diasMora) },
+    { etiqueta: "Saldo vencido", texto: saldoTexto }
+  ];
+  const cierre = "Si ya pagaste, ignora este mensaje: el pago se reflejará en la próxima actualización. Para cualquier consulta, responde a este correo o contacta al administrador de la plataforma.";
+  const bodyHtml = `
+    ${parrafo(`Estimado(a) equipo de ${escapeHtml(tenantCompany.nombreComercial)},`)}
+    ${parrafo(escapeHtml(mensaje))}
+    ${tarjetaDetalles(filas)}
+    ${parrafo(escapeHtml(cierre))}
+    ${firma(platformCompany.nombreComercial)}
+  `;
+  const text = `${title}
+
+${mensaje}
+
+${textoDetalles(filas)}
+
+${cierre}
+
+${platformCompany.nombreComercial}
+
+Este es un correo automático.`;
+  return { subject, html: emailShell(platformCompany, title, bodyHtml, mensaje), text };
+}
+
 export function renderNuevaEmpresaEmail(params: {
   platformCompany: Company;
   nuevaEmpresa: Company;
@@ -920,6 +970,7 @@ export function renderEmailPreviews(): Array<{ nombre: string; subject: string; 
     { nombre: "Documentos pendientes", email: renderRecordatorioDocumentosEmail({ company: clinica, patient: paciente, caso, pendientes }) },
     { nombre: "Cuenta aprobada", email: renderAccountStatusEmail({ platformCompany: plataforma, tenantCompany: clinica, nuevoEstado: "ACTIVA", estadoAnterior: "PENDIENTE" }) },
     { nombre: "Nueva empresa", email: renderNuevaEmpresaEmail({ platformCompany: plataforma, nuevaEmpresa: clinica }) },
+    { nombre: "Aviso de suspensión por mora", email: renderAvisoSuspensionMoraEmail({ platformCompany: plataforma, tenantCompany: clinica, diasMora: 25, diasHastaSuspension: 5, saldoVencido: 25000, moneda: "CRC" }) },
     { nombre: "Prueba SMTP", email: renderSmtpTestEmail({ company: clinica }) },
     { nombre: "Contraseña temporal", email: renderPasswordResetEmail({ company: clinica, user: profesional, nuevaContrasena: "Tmp-4x9K2mQ7" }) }
   ];
