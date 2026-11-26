@@ -92,7 +92,7 @@ function crearClienteImap(config: ConfigImap): ImapFlow {
   }
   // secure = TLS directo (993). Con false, imapflow negocia STARTTLS si el servidor lo ofrece (143):
   // en ninguno de los dos caminos viajan las credenciales en claro.
-  return new ImapFlow({
+  const cliente = new ImapFlow({
     host: config.imapHost,
     port: config.imapPort || (config.imapSeguro ? 993 : 143),
     secure: config.imapSeguro,
@@ -103,6 +103,15 @@ function crearClienteImap(config: ConfigImap): ImapFlow {
     connectionTimeout: IMAP_TIMEOUT_MS,
     tls: { rejectUnauthorized: true }
   } as any);
+  // Sin listener, un 'error' asíncrono del socket (p. ej. ETIMEOUT) tumba todo el proceso Node.
+  // La promesa en curso ya se rechaza por su cuenta; aquí solo se evita la excepción no controlada.
+  cliente.on('error', (err: any) => console.warn('[CORREO PROVEEDORES] Error de conexión IMAP (' + config.imapHost + '):', err?.code || '', err?.message || err));
+  return cliente;
+}
+
+/** Cierra la sesión sin lanzar: si el socket ya murió, fuerza el cierre. */
+async function cerrarClienteImap(cliente: ImapFlow): Promise<void> {
+  try { await cliente.logout(); } catch { try { (cliente as any).close?.(); } catch { /* ya cerrada */ } }
 }
 
 /**
@@ -128,7 +137,7 @@ export async function verificarConexionImap(config: ConfigImap): Promise<void> {
       }
     }
   } finally {
-    try { await client.logout(); } catch { /* la conexión ya pudo haberse caído */ }
+    await cerrarClienteImap(client);
   }
 }
 
@@ -143,7 +152,7 @@ export async function listarCarpetas(config: ConfigImap): Promise<{ ruta: string
       .map((b: any) => ({ ruta: b.path as string, seleccionable: !(b.flags?.has?.("\\Noselect") || b.listed === false) }))
       .sort((a, b) => a.ruta.localeCompare(b.ruta));
   } finally {
-    try { await client.logout(); } catch { /* ya cerrada */ }
+    await cerrarClienteImap(client);
   }
 }
 
@@ -299,8 +308,8 @@ export async function recolectarComprobantes(
   // El presupuesto de tiempo es de la EMPRESA, no de cada carpeta.
   const limiteTiempo = Date.now() + PRESUPUESTO_MS_POR_BUZON;
 
-  await client.connect();
   try {
+    await client.connect();
     for (const carpeta of carpetasDe(config.imapCarpeta)) {
       if (Date.now() > limiteTiempo) { buzonAlDia = false; break; }
       let lock;
@@ -327,7 +336,7 @@ export async function recolectarComprobantes(
     }
     return { comprobantes, avance, carpetasRevisadas, carpetasConError, mensajesRevisados, descartados, buzonAlDia };
   } finally {
-    try { await client.logout(); } catch { /* ya cerrada */ }
+    await cerrarClienteImap(client);
   }
 }
 
