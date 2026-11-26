@@ -8,5 +8,7 @@ process.env.TZ = 'Asia/Tokyo';
 export default defineConfig({
   test: {
     environment: 'node',
+    // Con Node 26 + vitest 4 el pool por defecto (forks) falla con 'Cannot read properties of undefined (reading config)'; vmThreads funciona.
+    pool: 'vmThreads',
   },
 });

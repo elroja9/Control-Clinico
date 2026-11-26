@@ -18,6 +18,7 @@ import {
   SAAS_ADMIN_COMPANY_ID,
   type SessionPayload
 } from "./server/auth";
+import { crearCacheUsuarios, decidirAccesoContador, sesionDesdeUsuario, type UsuarioVigente } from "./server/accesoContador";
 import { obtenerCertificadoHttps } from "./server/httpsCert";
 import { verificarLlaveP12, firmarXadesEpes } from "./server/haciendaSigner";
 import {
@@ -1184,7 +1185,53 @@ async function startServer() {
     return localCompanies.find(c => c.id === id);
   }
 
+  // El rol viaja en el token firmado (TTL 7 días), así que un usuario desactivado o con el rol
+  // cambiado conservaría sus permisos. Por eso se consulta el usuario vigente en la base, con una
+  // caché de 60 s por userId (se invalida al guardar el usuario en POST /api/users).
+  const cacheUsuariosVigentes = crearCacheUsuarios(60_000);
+
+  async function cargarUsuarioVigente(id: number): Promise<UsuarioVigente | null> {
+    const enCache = cacheUsuariosVigentes.get(id);
+    if (enCache !== undefined) return enCache;
+    let vigente: UsuarioVigente | null = null;
+    if (dbConnected && pool) {
+      const [rows] = await pool.query("SELECT id_usuario, rol, idCompania, activo FROM usuarios WHERE id_usuario = ?", [id]);
+      const r = (rows as any[])[0];
+      if (r) vigente = { id: r.id_usuario, rol: r.rol, idCompania: r.idCompania, activo: !!r.activo };
+    } else {
+      const u = localUsers.find(x => x.id === id);
+      if (u) vigente = { id: u.id, rol: u.rol as UsuarioVigente["rol"], idCompania: u.idCompania, activo: u.activo !== false };
+    }
+    cacheUsuariosVigentes.set(id, vigente);
+    return vigente;
+  }
+
+  // Resuelve la sesión una sola vez por petición /api: token válido + usuario vigente en la base.
+  // getSession() devuelve el resultado (rol e idCompania de la BASE, no del token).
+  app.use("/api", async (req, res, next) => {
+    const token = readCookie(req.headers.cookie, "cc_session");
+    const payload = token ? verifySessionToken(token) : null;
+    (req as any).sesionResuelta = true;
+    (req as any).session = null;
+    if (!payload) return next();
+    try {
+      const vigente = await cargarUsuarioVigente(payload.userId);
+      const sesion = sesionDesdeUsuario(vigente);
+      if (!sesion) {
+        // Usuario inexistente o desactivado: se limpia la cookie, igual que el logout.
+        (req as any).sesionRevocada = true;
+        return next();
+      }
+      (req as any).session = sesion as SessionPayload;
+      next();
+    } catch (err) {
+      console.error("[Auth] No se pudo validar el usuario vigente:", err);
+      res.status(503).json({ error: "No se pudo validar la sesión. Intente de nuevo." });
+    }
+  });
+
   function getSession(req: express.Request): SessionPayload | null {
+    if ((req as any).sesionResuelta) return ((req as any).session as SessionPayload | null) ?? null;
     const token = readCookie(req.headers.cookie, "cc_session");
     if (!token) return null;
     return verifySessionToken(token);
@@ -1193,6 +1240,7 @@ async function startServer() {
   function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
     const session = getSession(req);
     if (!session) {
+      if ((req as any).sesionRevocada) res.setHeader("Set-Cookie", serializeSessionCookie("", 0));
       return res.status(401).json({ error: "No autenticado. Inicie sesión de nuevo." });
     }
     (req as any).session = session as SessionPayload;
@@ -1225,23 +1273,18 @@ async function startServer() {
   // Quedan bloqueados, entre otros: pacientes, consultas, casos/expedientes, citas, calendario,
   // dietas, plantillas, notificaciones, usuarios (GET), SMTP, IMAP config, hacienda firmar y
   // config POST, crear/anular facturas, notas de crédito/débito, pagos CxC/CxP y cierres.
-  const RUTAS_CONTADOR: Array<{ metodo: string; patron: RegExp }> = [
-    { metodo: "GET", patron: /^\/api\/(me|db-status|companies|servicios|facturas|cxc|cxp|proveedores|parametros-renta|facturas-correo)$/ },
-    { metodo: "GET", patron: /^\/api\/reportes\/(clientes-sesiones|d104|d101|cierres)$/ },
-    { metodo: "GET", patron: /^\/api\/hacienda-config\/\d+$/ },
-    { metodo: "GET", patron: /^\/api\/facturas-correo\/\d+\/xml$/ },
-    { metodo: "POST", patron: /^\/api\/(logout|users)$/ },
-    { metodo: "POST", patron: /^\/api\/facturas\/\d+\/reenviar-correo$/ },
-    { metodo: "ANY", patron: /^\/api\/(login|forgot-password|public\/.*)$/ },
-  ];
-
+  // La lista blanca vive en server/accesoContador.ts. Express enruta sin distinguir mayúsculas y
+  // minúsculas, así que la ruta se normaliza (minúsculas, sin barra final, decodificada si trae %)
+  // antes de compararla: si no, GET /API/patients se saltaría el filtro y llegaría al handler.
+  // El rol sale de la base (ver resolución de sesión arriba), no del token.
   app.use((req, res, next) => {
-    if (!req.path.startsWith("/api/")) return next();
     const session = getSession(req);
     if (!session || session.rol !== "Contador") return next();
-    const ruta = req.path.length > 1 ? req.path.replace(/\/+$/, "") : req.path;
-    const permitido = RUTAS_CONTADOR.some(r => (r.metodo === "ANY" || r.metodo === req.method) && r.patron.test(ruta));
-    if (!permitido) {
+    const decision = decidirAccesoContador(req.method, req.path);
+    if (decision === "invalida") {
+      return res.status(400).json({ error: "Ruta no válida." });
+    }
+    if (decision === "prohibido") {
       return res.status(403).json({ error: "Su rol (Contador) no tiene acceso a esta sección." });
     }
     next();
@@ -1487,13 +1530,8 @@ async function startServer() {
 
   // DB Connection Status Endpoint
   app.get("/api/db-status", (req, res) => {
-    res.json({
-      connected: dbConnected,
-      error: dbError,
-      server: process.env.DB_HOST,
-      port: process.env.DB_PORT,
-      database: process.env.DB_NAME
-    });
+    // Público: solo el estado, nunca host, puerto, base ni el texto del error.
+    res.json({ connected: dbConnected });
   });
 
   // --- API Routes for Database Management (Dual Mode) ---
@@ -1797,6 +1835,12 @@ async function startServer() {
   app.post("/api/users", async (req, res) => {
     try {
       const u = req.body;
+      // Invalida la caché de sesión vigente del usuario editado (rol/activo pudieron cambiar).
+      const idUsuarioEditado = parseInt(u?.id);
+      if (Number.isFinite(idUsuarioEditado)) {
+        res.on("finish", () => cacheUsuariosVigentes.invalidate(idUsuarioEditado));
+        cacheUsuariosVigentes.invalidate(idUsuarioEditado);
+      }
       const sessionUsuarios = getSession(req);
       // Solo el SaaS admin (o el alta pública de la primera empresa, sin sesión) elige la empresa
       // desde el body. Con sesión de empresa, el idCompania es SIEMPRE el de la sesión: así un
@@ -2230,6 +2274,8 @@ async function startServer() {
       if (!idPaciente || !idProf) return res.status(400).json({ error: "Falta el paciente o el profesional de la cita." });
       if (!(duracion > 0)) return res.status(400).json({ error: "La duración de la cita no es válida." });
       if (ct.idServicio && !idServicio) return res.status(400).json({ error: "Servicio inválido." });
+      const profesionalCita = await fetchUserById(idProf);
+      if (profesionalCita?.rol === "Contador") return res.status(400).json({ error: "El usuario seleccionado no puede atender citas." });
       const fecha: string = ct.fechaHora.slice(0, 10);
 
       // Reglas de agenda (transición de estado, fecha pasada, solape con otras citas del profesional).
@@ -3582,14 +3628,19 @@ async function startServer() {
         // Sin xml_firmado ni respuesta_hacienda: pesan varios KB por fila, la pantalla no los usa y
         // ahora se llenan en cada envío. Solo los lee el reenvío por correo, que carga la fila por id.
         const [rows] = await pool.query(
-          "SELECT id_factura, id_consulta, idCompania, idCita, idPaciente, clave, consecutivo, fechaEmision, ambiente, subtotal, totalIva, total, estado, mensajeError, creadaEn, condicionVenta, tipoDocumento, idFacturaReferencia, motivoAnulacion, medioPago, montoRecibido FROM facturas WHERE idCompania = ?",
+          // Receptor visible para el Contador (que no carga pacientes): SOLO nombre e identificación,
+          // con el JOIN acotado a la misma empresa. Nada clínico.
+          "SELECT f.id_factura, f.id_consulta, f.idCompania, f.idCita, f.idPaciente, f.clave, f.consecutivo, f.fechaEmision, f.ambiente, f.subtotal, f.totalIva, f.total, f.estado, f.mensajeError, f.creadaEn, f.condicionVenta, f.tipoDocumento, f.idFacturaReferencia, f.motivoAnulacion, f.medioPago, f.montoRecibido, p.nombreCompleto AS receptorNombre, p.identificacion AS receptorIdentificacion, p.tipoIdentificacion AS receptorTipoIdentificacion FROM facturas f LEFT JOIN pacientes p ON p.id_paciente = f.idPaciente AND p.idCompania = f.idCompania WHERE f.idCompania = ?",
           [idCompania]
         );
         const facturas = (rows as any[]).map(row => normalizeRow(row, 'id_factura'));
         const lineasPorFactura = await fetchLineasPorFactura(facturas.map(f => f.id_factura));
         res.json(facturas.map(r => ({ ...r, idConsulta: r.id_consulta, lineas: lineasPorFactura.get(r.id_factura) || [] })));
       } else {
-        res.json(localFacturas.filter(f => f.idCompania === idCompania).map(({ xmlFirmado, respuestaHacienda, ...f }: any) => f));
+        res.json(localFacturas.filter(f => f.idCompania === idCompania).map(({ xmlFirmado, respuestaHacienda, ...f }: any) => {
+          const pac = localPatients.find(p => p.id === f.idPaciente && p.idCompania === idCompania);
+          return { ...f, receptorNombre: pac?.nombreCompleto ?? null, receptorIdentificacion: pac?.identificacion ?? null, receptorTipoIdentificacion: pac?.tipoIdentificacion ?? null };
+        }));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -4867,7 +4918,8 @@ async function startServer() {
     try {
       const idCompania = sessionOf(req).idCompania;
       if (dbConnected && pool) {
-        const [cuentas] = await pool.query("SELECT * FROM cuentas_cobrar WHERE idCompania = ? ORDER BY fechaEmision DESC", [idCompania]);
+        // receptorNombre/receptorIdentificacion: el Contador no carga pacientes; solo esos dos campos, misma empresa.
+        const [cuentas] = await pool.query("SELECT c.*, p.nombreCompleto AS receptorNombre, p.identificacion AS receptorIdentificacion FROM cuentas_cobrar c LEFT JOIN pacientes p ON p.id_paciente = c.idPaciente AND p.idCompania = c.idCompania WHERE c.idCompania = ? ORDER BY c.fechaEmision DESC", [idCompania]);
         const [pagos] = await pool.query("SELECT * FROM cxc_pagos WHERE idCompania = ? ORDER BY fecha ASC", [idCompania]);
         const pagosPorCuenta = new Map<number, any[]>();
         for (const p of pagos as any[]) {
@@ -4878,7 +4930,10 @@ async function startServer() {
       } else {
         res.json(localCuentasCobrar
           .filter(c => c.idCompania === idCompania)
-          .map(c => ({ ...c, pagos: localCxcPagos.filter(p => p.idCuentaCobrar === c.id) })));
+          .map(c => {
+            const pac = localPatients.find(p => p.id === c.idPaciente && p.idCompania === idCompania);
+            return { ...c, receptorNombre: pac?.nombreCompleto ?? null, receptorIdentificacion: pac?.identificacion ?? null, pagos: localCxcPagos.filter(p => p.idCuentaCobrar === c.id) };
+          }));
       }
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -6642,10 +6697,10 @@ async function startServer() {
       const idCompania = parseInt(req.params.id);
       let users: any[];
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM usuarios WHERE idCompania = ? AND activo = 1", [idCompania]);
+        const [rows] = await pool.query("SELECT * FROM usuarios WHERE idCompania = ? AND activo = 1 AND rol <> 'Contador'", [idCompania]);
         users = (rows as any[]).map(row => normalizeRow(row, 'id_usuario'));
       } else {
-        users = localUsers.filter(u => u.idCompania === idCompania && u.activo);
+        users = localUsers.filter(u => u.idCompania === idCompania && u.activo && u.rol !== "Contador");
       }
       res.json(users.map(u => ({
         id: u.id,
@@ -6810,7 +6865,7 @@ async function startServer() {
       }
       if (!user) return res.status(404).json({ error: "Profesional no encontrado." });
       // El profesional debe pertenecer a la empresa indicada y estar activo.
-      if (user.idCompania !== idCompania || !user.activo) {
+      if (user.idCompania !== idCompania || !user.activo || user.rol === "Contador") {
         return res.status(400).json({ error: "El profesional seleccionado no está disponible en esta empresa." });
       }
 

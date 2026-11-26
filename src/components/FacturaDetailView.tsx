@@ -147,11 +147,11 @@ export default function FacturaDetailView({ factura, patient, company, referenci
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
               <span className="text-slate-600 block text-[11px]">Nombre:</span>
-              <span className="font-bold text-slate-800 block">{patient.nombreCompleto}</span>
+              <span className="font-bold text-slate-800 block">{patient.nombreCompleto || factura.receptorNombre || `Receptor #${factura.idPaciente}`}</span>
             </div>
             <div>
               <span className="text-slate-600 block text-[11px]">Identificación:</span>
-              <span className="font-semibold text-slate-800 block font-mono">{patient.identificacion}</span>
+              <span className="font-semibold text-slate-800 block font-mono">{patient.identificacion || factura.receptorIdentificacion || '—'}</span>
             </div>
             <div>
               <span className="text-slate-600 block text-[11px]">Correo:</span>

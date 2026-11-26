@@ -122,7 +122,9 @@ export default function FacturacionManager({ facturas, patients, company, servic
     }
   };
 
-  const nombrePaciente = (idPaciente: number) => patients.find(p => p.id === idPaciente)?.nombreCompleto || `Paciente #${idPaciente}`;
+  // Si el paciente no está en la lista cargada (p. ej. el Contador no carga pacientes), se usa el receptor que trae la factura.
+  const nombrePaciente = (idPaciente: number, factura?: Factura) =>
+    patients.find(p => p.id === idPaciente)?.nombreCompleto || factura?.receptorNombre || `Paciente #${idPaciente}`;
   const referenciaFactura = (idFacturaReferencia: number | null) => {
     if (idFacturaReferencia == null) return null;
     return facturas.find(f => f.id === idFacturaReferencia)?.consecutivo || `#${idFacturaReferencia}`;
@@ -132,7 +134,7 @@ export default function FacturacionManager({ facturas, patients, company, servic
   const texto = busqueda.trim().toLowerCase();
   const delMes = facturas.filter(f => !mes || f.fechaEmision.startsWith(mes));
   const ordenadas = delMes
-    .filter(f => !texto || f.consecutivo.includes(texto) || nombrePaciente(f.idPaciente).toLowerCase().includes(texto))
+    .filter(f => !texto || f.consecutivo.includes(texto) || nombrePaciente(f.idPaciente, f).toLowerCase().includes(texto))
     .sort((a, b) => b.creadaEn.localeCompare(a.creadaEn));
 
   // Mismo criterio que el D-104 (SQL_FACTURA_DECLARABLE en server.ts): una factura anulada con Nota de
@@ -251,7 +253,7 @@ export default function FacturacionManager({ facturas, patients, company, servic
                     {tipoTexto} {f.consecutivo}
                   </span>
                   <span className="text-[11px] text-slate-600 block truncate">
-                    {nombrePaciente(f.idPaciente)} &middot; {new Date(f.fechaEmision).toLocaleString('es-CR')} &middot;{' '}
+                    {nombrePaciente(f.idPaciente, f)} &middot; {new Date(f.fechaEmision).toLocaleString('es-CR')} &middot;{' '}
                     <span className={`font-semibold tabular-nums ${esNotaCredito ? 'text-rose-700' : 'text-slate-800'}`}>{esNotaCredito ? '−' : ''}{colones(f.total)}</span>
                     {f.condicionVenta === '02' ? ' · Crédito' : !esNotaCredito ? ` · ${MEDIO_PAGO_HACIENDA[f.medioPago] || f.medioPago}` : ''}
                     {!esNota && f.montoRecibido != null && ` · Vuelto ${colones(f.montoRecibido - f.total)}`}
@@ -380,7 +382,7 @@ export default function FacturacionManager({ facturas, patients, company, servic
       {viewingFactura && (() => {
         // El Contador no carga pacientes (datos clínicos): se muestra un receptor genérico, sin datos personales.
         const pacienteFactura = patients.find(p => p.id === viewingFactura.idPaciente)
-          ?? (soloLectura ? ({ id: viewingFactura.idPaciente, nombreCompleto: `Receptor #${viewingFactura.idPaciente}`, identificacion: '—', correoElectronico: '' } as Patient) : undefined);
+          ?? (soloLectura ? ({ id: viewingFactura.idPaciente, nombreCompleto: viewingFactura.receptorNombre || `Receptor #${viewingFactura.idPaciente}`, identificacion: viewingFactura.receptorIdentificacion || '—', tipoIdentificacion: viewingFactura.receptorTipoIdentificacion || '', correoElectronico: '' } as Patient) : undefined);
         if (!pacienteFactura) return null;
         return (
           <FacturaDetailView

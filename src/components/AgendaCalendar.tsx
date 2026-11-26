@@ -519,6 +519,11 @@ export default function AgendaCalendar({
     if (!cita || cita.estadoCita !== 'COMPLETADA' || cita.estadoCita === nuevoEstado) return true;
     const factura = facturaVigenteDeCita(cita.id);
     if (!factura) return true;
+    // El servidor rechaza cancelar una cita facturada: no se ofrece "Cambiar de todos modos".
+    if (nuevoEstado === 'CANCELADA') {
+      notify.warning(`Esta cita ya fue facturada (factura ${factura.consecutivo}). Para cancelarla primero hay que anular la factura o hacer una nota de crédito.`);
+      return false;
+    }
     return confirmar({
       title: 'Esta cita ya fue facturada',
       message: `Factura ${factura.consecutivo} (estado ${factura.estado}). Cambiar el estado de la cita NO anula esa factura.`,
@@ -950,7 +955,7 @@ export default function AgendaCalendar({
               className="flex-1 sm:flex-none min-h-10 bg-slate-50 border border-slate-200 rounded-xl px-2.5 text-xs text-slate-800 font-semibold"
             >
               <option value={0}>Todos los especialistas</option>
-              {users.filter(u => u.idCompania === activeCompanyId).map(doc => (
+              {users.filter(u => u.idCompania === activeCompanyId && u.rol !== 'Contador').map(doc => (
                 <option key={doc.id} value={doc.id}>{doc.nombre}</option>
               ))}
             </select>
@@ -1286,7 +1291,7 @@ export default function AgendaCalendar({
                     onChange={(e) => setFormDoctorId(parseInt(e.target.value))}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-teal-500 focus:outline-hidden"
                   >
-                    {users.filter(u => u.idCompania === activeCompanyId).map(doc => (
+                    {users.filter(u => u.idCompania === activeCompanyId && u.rol !== 'Contador').map(doc => (
                       <option key={doc.id} value={doc.id}>{doc.nombre}</option>
                     ))}
                   </select>

@@ -902,6 +902,10 @@ export interface Factura {
   medioPago: string; // '01' Efectivo, '02' Tarjeta, '06' SINPE Móvil — catálogo de Hacienda
   montoRecibido: number | null; // solo informativo, para trazabilidad del vuelto entregado
   plazoCredito?: number | null; // días de crédito con que se emitió (solo condicionVenta '02')
+  // Receptor (solo nombre e identificación, nada clínico): lo agrega GET /api/facturas para el rol Contador, que no carga pacientes.
+  receptorNombre?: string | null;
+  receptorIdentificacion?: string | null;
+  receptorTipoIdentificacion?: string | null;
 }
 
 // CXC — Cuentas por Cobrar. Se crea automáticamente al facturar con condicionVenta='02'
@@ -910,6 +914,9 @@ export interface Factura {
 export type EstadoCuentaCobrar = 'PENDIENTE' | 'PAGADA' | 'ANULADA';
 
 export interface CuentaCobrar {
+  // Receptor que agrega GET /api/cxc (solo nombre e identificación) para el rol Contador, que no carga pacientes.
+  receptorNombre?: string | null;
+  receptorIdentificacion?: string | null;
   id: number;
   idCompania: number;
   idFactura: number;

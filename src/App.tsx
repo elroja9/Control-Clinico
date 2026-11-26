@@ -127,7 +127,7 @@ interface NavItem {
 
 export default function App() {
   // --- Persistent Storage Core (Synced with MySQL Backend) ---
-  const [dbStatus, setDbStatus] = useState<{connected: boolean; error: string | null; server?: string; port?: string; database?: string} | null>(null);
+  const [dbStatus, setDbStatus] = useState<{connected: boolean} | null>(null);
   
   const [companies, setCompanies] = useState<Company[]>(() => {
     const local = localStorage.getItem('fisio_companies');
@@ -1497,7 +1497,7 @@ export default function App() {
           {dbStatus && (
             <div
               className="flex items-center gap-1.5 text-xs font-medium text-fg-muted bg-surface-muted px-2.5 sm:px-3 py-2 rounded-control"
-              title={dbStatus.connected ? `Conectado a la base de datos (${dbStatus.server}:${dbStatus.port})` : `Sin conexión a la base de datos: ${dbStatus.error || 'no se pudo establecer la conexión'}. Los cambios se guardan solo en este equipo.`}
+              title={dbStatus.connected ? 'Conectado a la base de datos' : `Sin conexión a la base de datos. Los cambios se guardan solo en este equipo.`}
             >
               <span className={`w-2 h-2 rounded-full ${dbStatus.connected ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} aria-hidden="true" />
               <span className="sr-only sm:not-sr-only">

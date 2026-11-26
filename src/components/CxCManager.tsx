@@ -36,7 +36,8 @@ export default function CxCManager({ cxc, patients, onRegistrarPago, soloLectura
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
 
-  const nombrePaciente = (idPaciente: number) => patients.find(p => p.id === idPaciente)?.nombreCompleto || `Paciente #${idPaciente}`;
+  const nombrePaciente = (idPaciente: number, cuenta?: CuentaCobrar) =>
+    patients.find(p => p.id === idPaciente)?.nombreCompleto || cuenta?.receptorNombre || `Paciente #${idPaciente}`;
 
   // Las vencidas primero (por fecha de vencimiento): es lo que tesorería tiene que gestionar hoy.
   const ordenadas = [...cxc].sort((a, b) =>
@@ -130,7 +131,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago, soloLectura
             <li key={c.id} className="p-2.5 bg-white border border-slate-200 rounded-lg">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
-                  <span className="font-semibold text-slate-800 text-xs block">{nombrePaciente(c.idPaciente)}</span>
+                  <span className="font-semibold text-slate-800 text-xs block">{nombrePaciente(c.idPaciente, c)}</span>
                   <span className="text-[11px] text-slate-600 block">
                     Factura {c.facturaConsecutivo} &middot; Emitida {fechaCorta(c.fechaEmision)} &middot; {c.plazoDias} días &middot; Vence {fechaCorta(c.fechaVencimiento)}
                     {plazo && <span className={`font-semibold ${plazo.vencida ? 'text-rose-700' : 'text-slate-700'}`}> ({plazo.texto})</span>}
@@ -147,7 +148,7 @@ export default function CxCManager({ cxc, patients, onRegistrarPago, soloLectura
                       onClick={() => abrirAbono(c)}
                       title="Registrar abono"
                       className="w-10 h-10 flex items-center justify-center rounded-lg text-emerald-700 hover:bg-emerald-50"
-                      aria-label={`Registrar abono de ${nombrePaciente(c.idPaciente)}, factura ${c.facturaConsecutivo}`}
+                      aria-label={`Registrar abono de ${nombrePaciente(c.idPaciente, c)}, factura ${c.facturaConsecutivo}`}
                     >
                       <DollarSign className="w-4 h-4" aria-hidden="true" />
                     </button>
