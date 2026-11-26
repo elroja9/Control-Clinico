@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Check, FolderSearch, Inbox, PlugZap } from 'lucide-react';
 import { CompaniaImapConfig } from '../data/mockData';
 import { notify } from './ui/Feedback';
-import { Badge, Button, Card, CardBody, CardFooter, CardHeader, Field, Input, Select } from './ui';
+import { Badge, Button, Card, CardBody, CardFooter, CardHeader, CollapsibleSection, Field, Input, Select } from './ui';
 
 // Buzón IMAP donde los proveedores envían sus facturas electrónicas. El servidor lo revisa cada 5
 // minutos y deja las compras en la bandeja de Cuentas por Pagar (no crea nada por su cuenta).
@@ -10,7 +10,18 @@ import { Badge, Button, Card, CardBody, CardFooter, CardHeader, Field, Input, Se
 
 interface Props {
   themeColor: string;
+  /** Si viene, la tarjeta se muestra como sección plegable (Personalizar → índice de secciones). */
+  plegable?: {
+    id: string;
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    onLockedToggle?: () => void;
+  };
 }
+
+const TITULO = 'Correo entrante (facturas de proveedores)';
+const DESCRIPCION = 'Cada 5 minutos se revisa este buzón (solo lectura: no marca, mueve ni borra correos) y las facturas XML de sus proveedores aparecen en Cuentas por Pagar para importarlas con un clic.';
+const camposEditables = (c: CompaniaImapConfig | null) => (c ? JSON.stringify({ ...c, verificadaEn: null }) : '');
 
 async function pedir<T>(url: string, method = 'GET', body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -25,8 +36,10 @@ async function pedir<T>(url: string, method = 'GET', body?: unknown): Promise<T>
 
 // El color de marca de la clínica llega por el token --brand del contenedor raíz, así que
 // `themeColor` ya no se usa para pintar; se conserva en las props para no cambiar la interfaz.
-export default function CorreoEntranteSettings(_props: Props) {
+export default function CorreoEntranteSettings({ plegable }: Props) {
   const [config, setConfig] = useState<CompaniaImapConfig | null>(null);
+  // Última versión guardada, para saber si hay cambios sin guardar (la sección no se pliega).
+  const [configGuardada, setConfigGuardada] = useState<CompaniaImapConfig | null>(null);
   const [errorCarga, setErrorCarga] = useState('');
   const [password, setPassword] = useState('');
   const [carpetasDisponibles, setCarpetasDisponibles] = useState<{ ruta: string; seleccionable: boolean }[] | null>(null);
@@ -35,20 +48,32 @@ export default function CorreoEntranteSettings(_props: Props) {
 
   useEffect(() => {
     pedir<CompaniaImapConfig>('/api/imap-config')
-      .then(setConfig)
+      .then(c => { setConfig(c); setConfigGuardada(c); })
       .catch(err => setErrorCarga(err.message));
   }, []);
 
+  // Sección plegable (Personalizar) o tarjeta normal, con el mismo contenido.
+  const envolver = (contenido: React.ReactNode, opciones: { badge?: React.ReactNode; bloqueada?: boolean } = {}) => plegable ? (
+    <CollapsibleSection
+      id={plegable.id}
+      icon={<Inbox />}
+      title={TITULO}
+      description={DESCRIPCION}
+      badge={opciones.badge}
+      open={plegable.open}
+      onOpenChange={plegable.onOpenChange}
+      locked={opciones.bloqueada}
+      onLockedToggle={plegable.onLockedToggle}
+    >
+      {contenido}
+    </CollapsibleSection>
+  ) : null;
+
   if (errorCarga) {
-    return (
-      <Card>
-        <CardBody>
-          <p className="text-sm text-fg-muted">Correo entrante: {errorCarga}</p>
-        </CardBody>
-      </Card>
-    );
+    const mensaje = <CardBody><p className="text-sm text-fg-muted">Correo entrante: {errorCarga}</p></CardBody>;
+    return envolver(mensaje) ?? <Card>{mensaje}</Card>;
   }
-  if (!config) return null;
+  if (!config) return envolver(<CardBody><p className="text-sm text-fg-muted" role="status">Cargando…</p></CardBody>);
 
   const set = <K extends keyof CompaniaImapConfig>(k: K, v: CompaniaImapConfig[K]) => setConfig({ ...config, [k]: v });
 
@@ -58,6 +83,7 @@ export default function CorreoEntranteSettings(_props: Props) {
     try {
       const guardada = await pedir<CompaniaImapConfig>('/api/imap-config', 'POST', { ...config, ...(password.trim() ? { imapPassword: password.trim() } : {}) });
       setConfig(guardada);
+      setConfigGuardada(guardada);
       setPassword('');
       notify.success('Configuración del correo entrante guardada.');
     } catch (err: any) {
@@ -99,20 +125,11 @@ export default function CorreoEntranteSettings(_props: Props) {
     if (!actuales.includes(ruta)) set('imapCarpeta', [...actuales, ruta].join(', '));
   };
 
-  return (
-    <form onSubmit={guardar}>
-      <Card>
-        <CardHeader
-          title={
-            <span className="inline-flex items-center gap-2">
-              <Inbox className="w-5 h-5 text-brand-ink" aria-hidden="true" />
-              Correo entrante (facturas de proveedores)
-            </span>
-          }
-          description="Cada 5 minutos se revisa este buzón (solo lectura: no marca, mueve ni borra correos) y las facturas XML de sus proveedores aparecen en Cuentas por Pagar para importarlas con un clic."
-          actions={<div className="flex"><Badge tone={config.activo ? 'success' : 'neutral'}>{config.activo ? 'Activo' : 'Apagado'}</Badge></div>}
-        />
+  const badgeEstado = <Badge tone={config.activo ? 'success' : 'neutral'}>{config.activo ? 'Activo' : 'Apagado'}</Badge>;
+  const sinGuardar = password.trim() !== '' || !!errorProbar || ocupado !== '' || camposEditables(config) !== camposEditables(configGuardada);
 
+  const contenido = (
+      <>
         <CardBody className="space-y-5">
           <label className="flex items-center justify-between gap-4 bg-surface-muted/60 p-4 rounded-control cursor-pointer">
             <span className="min-w-0">
@@ -254,7 +271,26 @@ export default function CorreoEntranteSettings(_props: Props) {
             </Button>
           </div>
         </CardFooter>
-      </Card>
+      </>
+  );
+
+  return (
+    <form onSubmit={guardar}>
+      {envolver(contenido, { badge: badgeEstado, bloqueada: sinGuardar }) ?? (
+        <Card>
+          <CardHeader
+            title={
+              <span className="inline-flex items-center gap-2">
+                <Inbox className="w-5 h-5 text-brand-ink" aria-hidden="true" />
+                {TITULO}
+              </span>
+            }
+            description={DESCRIPCION}
+            actions={<div className="flex">{badgeEstado}</div>}
+          />
+          {contenido}
+        </Card>
+      )}
     </form>
   );
 }

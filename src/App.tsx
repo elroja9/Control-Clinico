@@ -87,7 +87,7 @@ import CompanySettings from './components/CompanySettings';
 import PatientForm from './components/PatientForm';
 import ConsultationForm from './components/ConsultationForm';
 import ReportView from './components/ReportView';
-import LoginView from './components/LoginView';
+import LoginView, { type BanderasSesion } from './components/LoginView';
 import AgendaCalendar from './components/AgendaCalendar';
 import SaasAdminPanel from './components/SaasAdminPanel';
 import MyProfile from './components/MyProfile';
@@ -123,12 +123,16 @@ const TAB_IDS: TabId[] = ['dashboard', 'patients', 'consultations', 'agenda', 'b
 // Pestañas permitidas al rol Contador (finanzas + perfil + manual).
 const TABS_CONTADOR: TabId[] = ['facturacion', 'cxp', 'reportes-fiscales', 'consultas-hacienda', 'mi-perfil', 'manual'];
 
+const SIN_BANDERAS: BanderasSesion = { esSaasAdmin: false, esCompaniaPlataforma: false };
+
 // La pestaña activa vive en el hash (#/agenda): refrescar la página no la pierde, se puede
 // enlazar directo a una sección y el botón "Atrás" del navegador vuelve a la anterior.
-const tabFromHash = (): TabId => {
+// null = el hash no trae una pestaña válida (p. ej. recién abierta la app).
+const tabDelHash = (): TabId | null => {
   const h = window.location.hash.replace(/^#\/?/, '');
-  return (TAB_IDS as string[]).includes(h) ? (h as TabId) : 'dashboard';
+  return (TAB_IDS as string[]).includes(h) ? (h as TabId) : null;
 };
+const tabFromHash = (): TabId => tabDelHash() ?? 'dashboard';
 
 // Fecha local YYYY-MM-DD (toISOString() usa UTC y en Costa Rica adelanta el día después de las 6 p. m.)
 const hoyLocal = () => {
@@ -180,6 +184,10 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   // Contador: solo finanzas, en solo lectura y sin datos clínicos (el servidor lo hace cumplir).
   const esContador = currentUser?.rol === 'Contador';
+  // Banderas calculadas por el servidor (el id de la empresa de plataforma no se conoce aquí).
+  const [banderasSesion, setBanderasSesion] = useState<BanderasSesion>(SIN_BANDERAS);
+  const esSaasAdmin = !!currentUser && banderasSesion.esSaasAdmin;
+  const esCompaniaPlataforma = !!currentUser && banderasSesion.esCompaniaPlataforma;
   const [authChecked, setAuthChecked] = useState(false);
 
   const [citas, setCitas] = useState<Cita[]>(() => {
@@ -237,6 +245,10 @@ export default function App() {
         return res.json();
       })
       .then(data => {
+        setBanderasSesion({ esSaasAdmin: !!data.esSaasAdmin, esCompaniaPlataforma: !!data.esCompaniaPlataforma });
+        // El SaaS admin aterriza en Administración SaaS si la URL no trae otra pestaña válida
+        // (el listener de hashchange actualiza la pestaña activa).
+        if (data.esSaasAdmin && !tabDelHash()) window.location.hash = '/saas-admin';
         setCurrentUser(data.user);
         setSelectedCompanyId(data.user.idCompania);
         if (data.company) {
@@ -463,13 +475,15 @@ export default function App() {
   }, [isMobileMenuOpen]);
 
   // --- Login and Company Registration Handlers ---
-  const handleLoginSuccess = (user: User, company: Company | undefined) => {
+  const handleLoginSuccess = (user: User, company: Company | undefined, banderas: BanderasSesion) => {
+    setBanderasSesion(banderas);
     setCurrentUser(user);
     setSelectedCompanyId(user.idCompania);
     if (company) {
       setCompanies(prev => prev.some(c => c.id === company.id) ? prev.map(c => c.id === company.id ? company : c) : [...prev, company]);
     }
-    setActiveTab('dashboard');
+    // El SaaS admin aterriza en Administración SaaS; los demás, en el resumen.
+    setActiveTab(banderas.esSaasAdmin ? 'saas-admin' : 'dashboard');
   };
 
   // Registro público de empresa nueva: ninguna de las dos llamadas manda un `id` real (ver
@@ -556,6 +570,7 @@ export default function App() {
   const handleLogout = () => {
     fetch('/api/logout', { method: 'POST' }).catch(() => {});
     setCurrentUser(null);
+    setBanderasSesion(SIN_BANDERAS);
   };
 
   // Search & Filtering Queries
@@ -1234,7 +1249,6 @@ export default function App() {
   const citasDeLaCompania = citas.filter(c => c.idCompania === selectedCompanyId);
   const citasProgramadas = citasDeLaCompania.filter(c => c.estadoCita === 'PROGRAMADA').length;
   const citasHoy = citasDeLaCompania.filter(c => c.fechaHora.startsWith(hoy) && c.estadoCita !== 'CANCELADA').length;
-  const esSaasAdmin = currentUser.idCompania === 7 && currentUser.rol === 'Administrador';
   // Perfil Legal: los "pacientes" son clientes y en lugar de consultas clínicas hay casos.
   const esLegal = activeCompany.perfilCompania === 'Legal';
   const persona = terminoPersona(activeCompany.perfilCompania);
@@ -1265,6 +1279,11 @@ export default function App() {
   const hayConsultasFisio = filteredConsultationsByCompany.some(c => c.tipo === 'Fisioterapia');
 
   const navGroupsTodos: { label: string; items: NavItem[] }[] = [
+    // El SaaS admin ve primero la administración de la plataforma.
+    ...(esSaasAdmin ? [{
+      label: 'Plataforma SaaS',
+      items: [{ id: 'saas-admin' as TabId, label: 'Administración SaaS', icon: Lock, iconClass: 'text-amber-600' }]
+    }] : []),
     {
       label: esLegal ? 'Despacho' : 'Clínica',
       items: [
@@ -1293,8 +1312,7 @@ export default function App() {
         { id: 'branding', label: esLegal ? 'Personalizar Despacho' : 'Personalizar Clínica', icon: Building2 },
         { id: 'mi-perfil', label: 'Mi Perfil', icon: UserCircle },
         { id: 'reservas-online', label: 'Reservas en Línea', icon: Share2 },
-        { id: 'manual', label: 'Manual de Usuario', icon: BookOpen },
-        ...(esSaasAdmin ? [{ id: 'saas-admin' as TabId, label: 'Administración SaaS', icon: Lock, iconClass: 'text-amber-600' }] : [])
+        { id: 'manual', label: 'Manual de Usuario', icon: BookOpen }
       ]
     }
   ];
@@ -1406,7 +1424,9 @@ export default function App() {
         />
         <div className="min-w-0 flex-1">
           <p className="font-semibold text-sm tracking-tight text-fg truncate">{activeCompany.nombreComercial}</p>
-          <p className="text-caption text-fg-subtle truncate">Cédula {activeCompany.identificacion}</p>
+          <p className="text-caption text-fg-subtle truncate">
+            {esCompaniaPlataforma ? 'Plataforma SaaS' : `Cédula ${activeCompany.identificacion}`}
+          </p>
         </div>
         {mobile && (
           <button
@@ -1512,6 +1532,12 @@ export default function App() {
           </div>
           )}
 
+          {/* Deja claro que se está en la empresa de plataforma (datos de demostración, sin comprobantes) */}
+          {esCompaniaPlataforma && (
+            <Badge tone="warning" className="hidden sm:inline-flex" title="Empresa de plataforma: administración SaaS y demostración; no emite comprobantes electrónicos">
+              Plataforma SaaS
+            </Badge>
+          )}
           <Badge tone="brand" className="hidden sm:inline-flex">Hacienda CR</Badge>
 
           {/* Estado de la conexión con la base de datos */}
@@ -2193,12 +2219,14 @@ export default function App() {
                 plantillasDieta={plantillasDieta}
                 onSavePlantillaDieta={handleSavePlantillaDieta}
                 onDeletePlantillaDieta={handleDeletePlantillaDieta}
+                esCompaniaPlataforma={esCompaniaPlataforma}
               />
             )}
 
             {activeTab === 'saas-admin' && esSaasAdmin && (
               <SaasAdminPanel
-                companies={companies.filter(c => c.id !== 7)}
+                // El SaaS admin pertenece a la empresa de plataforma: se excluye su propia empresa.
+                companies={companies.filter(c => c.id !== currentUser.idCompania)}
                 users={users}
                 payments={companyPayments}
                 onUpdateEstadoSaas={handleUpdateEstadoSaas}

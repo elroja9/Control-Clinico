@@ -6,7 +6,7 @@ import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 import { Plus, Check, Settings, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X, Palette, CalendarCheck } from 'lucide-react';
 import { notify, confirmar } from './ui/Feedback';
 import { baseDesdePrecioConIva, formatearColones, ivaEfectivo, precioConIva } from '../utils/precios';
-import { Avatar, Badge, Button, Card, CardBody, CardFooter, CardHeader, EmptyState, Field, IconButton, Input, SegmentedControl, Select, Textarea, cx } from './ui';
+import { Avatar, Badge, Button, Card, CardBody, CardFooter, CardHeader, CollapsibleSection, EmptyState, Field, IconButton, Input, SegmentedControl, Select, Textarea, cx } from './ui';
 import { buttonSizes, buttonVariants } from './ui/Button';
 
 // MySQL devuelve tinyint (0/1) y en memoria boolean; sin dato = reserva automática activa.
@@ -86,9 +86,29 @@ const textoAdaptable = (corto: string, largo: string) => (
  *  (mismo patrón que el formulario de servicio); desde sm vuelve a ser el pie normal. */
 const pieFijoMovil = 'max-sm:sticky max-sm:bottom-0 max-sm:z-10 max-sm:bg-surface-muted! max-sm:pb-[calc(1rem+env(safe-area-inset-bottom,0px))]!';
 
-/** Envuelve un Badge usado como acción de CardHeader: en móvil las acciones se estiran
- *  (flex-1) y el badge quedaba como una barra; así conserva su ancho natural. */
-const badgeAccion = (badge: React.ReactNode) => <div className="flex">{badge}</div>;
+// --- Secciones plegables: cuáles están abiertas se recuerda por empresa en este navegador ---
+const claveSeccionesAbiertas = (idCompania: number) => `cc_config_secciones_abiertas_${idCompania}`;
+
+function leerSeccionesAbiertas(idCompania: number): SeccionId[] {
+  try {
+    const valor = JSON.parse(localStorage.getItem(claveSeccionesAbiertas(idCompania)) || '[]');
+    return Array.isArray(valor) ? valor.filter((s): s is SeccionId => typeof s === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+// Horas comparables aunque una venga como "08:00:00" y la otra como "08:00".
+const hhmm = (h: string | null | undefined) => (h ? h.slice(0, 5) : null);
+
+function mismoHorarioAtencion(a: HorarioAtencion, b: HorarioAtencion): boolean {
+  return DIAS_HORARIO.every(d => hhmm(a[d]?.abre) === hhmm(b[d]?.abre) && hhmm(a[d]?.cierra) === hhmm(b[d]?.cierra));
+}
+
+function mismoHorarioDomicilio(a: HorarioDomicilio, b: HorarioDomicilio): boolean {
+  return DIAS_HORARIO.every(d => a[d].length === b[d].length
+    && a[d].every((t, i) => hhmm(t.abre) === hhmm(b[d][i].abre) && hhmm(t.cierra) === hhmm(b[d][i].cierra)));
+}
 
 const tituloConIcono = (icono: React.ReactNode, texto: string) => (
   <span className="inline-flex items-center gap-2">
@@ -126,6 +146,8 @@ interface CompanySettingsProps {
   plantillasDieta: PlantillaDieta[];
   onSavePlantillaDieta: (plantilla: PlantillaDieta) => void;
   onDeletePlantillaDieta: (id: number) => void;
+  /** Empresa de plataforma (lo decide el servidor): no emite comprobantes electrónicos. */
+  esCompaniaPlataforma?: boolean;
 }
 
 export default function CompanySettings({
@@ -148,7 +170,8 @@ export default function CompanySettings({
   onDeletePorcentajeDieta,
   plantillasDieta,
   onSavePlantillaDieta,
-  onDeletePlantillaDieta
+  onDeletePlantillaDieta,
+  esCompaniaPlataforma = false
 }: CompanySettingsProps) {
   const currentCompany = companies.find(c => c.id === selectedCompanyId) || companies[0];
 
@@ -217,6 +240,11 @@ export default function CompanySettings({
 
   // Índice de secciones: sección resaltada en el índice (solo navegación, no afecta datos).
   const [seccionActiva, setSeccionActiva] = useState<SeccionId>('empresa');
+  // Secciones abiertas (todas empiezan cerradas); se recuerdan por empresa en localStorage.
+  const [seccionesAbiertas, setSeccionesAbiertas] = useState<SeccionId[]>(() => leerSeccionesAbiertas(selectedCompanyId));
+  useEffect(() => {
+    setSeccionesAbiertas(leerSeccionesAbiertas(selectedCompanyId));
+  }, [selectedCompanyId]);
 
   useEffect(() => {
     setIsAddingUser(false);
@@ -309,6 +337,8 @@ export default function CompanySettings({
   const [haciendaConsecutivos, setHaciendaConsecutivos] = useState({ ultimoConsecutivo: 0, ultimoConsecutivoNc: 0, ultimoConsecutivoNd: 0 });
   const [haciendaCorreccion, setHaciendaCorreccion] = useState({ ultimoConsecutivo: '', ultimoConsecutivoNc: '', ultimoConsecutivoNd: '' });
   const [smtpTieneContrasena, setSmtpTieneContrasena] = useState(false);
+  // Ambiente y usuario ATV tal como están guardados (para detectar cambios sin guardar).
+  const [haciendaGuardada, setHaciendaGuardada] = useState<{ ambiente: string; usuarioAtv: string } | null>(null);
 
   // Sync SMTP fields when company changes
   useEffect(() => {
@@ -353,6 +383,7 @@ export default function CompanySettings({
       .then((data: HaciendaConfig) => {
         setHaciendaAmbiente(data.ambiente);
         setHaciendaUsuarioAtv(data.usuarioAtv);
+        setHaciendaGuardada({ ambiente: data.ambiente, usuarioAtv: data.usuarioAtv });
         setHaciendaTienePasswordAtv(data.tienePasswordAtv);
         setHaciendaTieneCertificado(data.tieneCertificado);
         setHaciendaCertificadoNombreArchivo(data.certificadoNombreArchivo);
@@ -433,6 +464,7 @@ export default function CompanySettings({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'No se pudo guardar la configuración.');
+      setHaciendaGuardada({ ambiente: payload.ambiente, usuarioAtv: payload.usuarioAtv });
       setHaciendaTienePasswordAtv(data.tienePasswordAtv);
       setHaciendaTieneCertificado(data.tieneCertificado);
       setHaciendaCertificadoNombreArchivo(data.certificadoNombreArchivo);
@@ -967,12 +999,73 @@ export default function CompanySettings({
         { id: 'reservas', label: 'Reservas en línea' }
       ];
 
+  // --- Secciones plegables ---
+  const cambiarSeccionAbierta = (id: SeccionId, abierta: boolean) => {
+    const siguientes = abierta
+      ? (seccionesAbiertas.includes(id) ? seccionesAbiertas : [...seccionesAbiertas, id])
+      : seccionesAbiertas.filter(s => s !== id);
+    setSeccionesAbiertas(siguientes);
+    try {
+      localStorage.setItem(claveSeccionesAbiertas(selectedCompanyId), JSON.stringify(siguientes));
+    } catch {
+      // Sin almacenamiento (modo privado lleno, etc.): solo no se recuerda tras recargar.
+    }
+  };
+
+  // Secciones que no se pueden plegar: edición en curso, cambios sin guardar o un error a la vista.
+  const smtpGuardado = smtpConfigs.find(s => s.idCompania === selectedCompanyId);
+  const smtpSinGuardar = smtpPassword.trim() !== '' || (smtpGuardado
+    ? smtpProveedor !== smtpGuardado.proveedor || smtpHost !== smtpGuardado.smtpHost || String(smtpPort) !== String(smtpGuardado.smtpPort)
+      || smtpSeguridad !== smtpGuardado.smtpSeguridad || smtpUsuario !== smtpGuardado.smtpUsuario
+      || smtpRemitenteNombre !== smtpGuardado.remitenteNombre || smtpRemitenteCorreo !== smtpGuardado.remitenteCorreo
+      || String(smtpRecordatorioHoras) !== String(smtpGuardado.recordatorioHorasAntes) || smtpActivo !== !!smtpGuardado.activo
+    : smtpHost !== '' || smtpUsuario !== '' || smtpRemitenteNombre !== '' || smtpRemitenteCorreo !== '' || smtpActivo);
+  const horarioDomEfectivo = domicilioActivo && DIAS_ORDEN.some(d => horarioDom[d].length > 0) ? horarioDom : horarioDomicilioVacio();
+  const horariosSinGuardar = !mismoHorarioAtencion(horario, currentCompany.horarioAtencion || DEFAULT_HORARIO_ATENCION)
+    || !mismoHorarioDomicilio(horarioDomEfectivo, horarioDomicilioDesdeEmpresa(currentCompany.horarioDomicilio));
+  const haciendaSinGuardar = haciendaPasswordAtv.trim() !== '' || haciendaCertificadoBase64 !== '' || haciendaCertificadoPin.trim() !== ''
+    || CAMPOS_CONSECUTIVO.some(({ campo }) => haciendaCorreccion[campo].trim() !== '')
+    || (haciendaGuardada !== null && (haciendaAmbiente !== haciendaGuardada.ambiente || haciendaUsuarioAtv !== haciendaGuardada.usuarioAtv));
+  const seccionBloqueada: Partial<Record<SeccionId, boolean>> = {
+    horarios: hayErroresDomicilio || horariosSinGuardar,
+    servicios: isServicioFormOpen || ajustandoStockId !== null,
+    usuarios: isAddingUser,
+    smtp: smtpSinGuardar,
+    hacienda: haciendaSinGuardar || haciendaGuardando || haciendaMensaje?.tipo === 'error',
+    dietas: nuevoPorcentaje.trim() !== ''
+  };
+
+  // La empresa de plataforma ve la sección como cualquier otra, pero el servidor le rechaza emitir.
+  const avisoPlataformaSinComprobantes = esCompaniaPlataforma ? (
+    <p className="p-3 rounded-control bg-info-soft border border-info/20 text-info text-sm flex items-start gap-2" role="note">
+      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+      <span className="min-w-0">Esta es la empresa de plataforma: es para administración SaaS y demostración, y no emite comprobantes electrónicos ante Hacienda.</span>
+    </p>
+  ) : null;
+
+  const avisarSeccionBloqueada = () => {
+    notify.warning('Guarde o cancele los cambios de esta sección antes de cerrarla.');
+  };
+
+  /** Props comunes de una sección plegable de la vista de lectura. */
+  const plegable = (id: SeccionId) => ({
+    id: `${SECCION_PREFIJO}${id}-plegable`,
+    open: seccionesAbiertas.includes(id),
+    onOpenChange: (abierta: boolean) => cambiarSeccionAbierta(id, abierta),
+    locked: !!seccionBloqueada[id],
+    onLockedToggle: avisarSeccionBloqueada
+  });
+
+  // El índice abre la sección (si estaba cerrada) y la lleva a la vista.
   const irASeccion = (id: SeccionId) => {
     setSeccionActiva(id);
-    const el = document.getElementById(`${SECCION_PREFIJO}${id}`);
-    if (!el) return;
-    const sinMovimiento = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    el.scrollIntoView({ behavior: sinMovimiento ? 'auto' : 'smooth', block: 'start' });
+    if (enVista && !seccionesAbiertas.includes(id)) cambiarSeccionAbierta(id, true);
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`${SECCION_PREFIJO}${id}`);
+      if (!el) return;
+      const sinMovimiento = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      el.scrollIntoView({ behavior: sinMovimiento ? 'auto' : 'smooth', block: 'start' });
+    });
   };
 
   // Resalta en el índice la sección que está a la vista mientras se hace scroll.
@@ -1128,16 +1221,17 @@ export default function CompanySettings({
           <>
             {/* Empresa */}
             <Seccion id="empresa">
-              <Card>
-                <CardHeader
-                  title={tituloConIcono(<Building />, 'Empresa')}
-                  description="Datos fiscales y de facturación de la clínica."
-                  actions={
-                    <Button variant="outline" size="sm" onClick={() => setIsEditing(true)} icon={<Settings className="w-4 h-4" aria-hidden="true" />}>
-                      Editar
-                    </Button>
-                  }
-                />
+              <CollapsibleSection
+                {...plegable('empresa')}
+                icon={<Building />}
+                title="Empresa"
+                description="Datos fiscales y de facturación de la clínica."
+                actions={
+                  <Button variant="outline" size="sm" onClick={() => setIsEditing(true)} icon={<Settings className="w-4 h-4" aria-hidden="true" />}>
+                    Editar
+                  </Button>
+                }
+              >
                 <CardBody>
                   <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
                     {renderDato('Razón social', currentCompany.razonSocial)}
@@ -1148,21 +1242,22 @@ export default function CompanySettings({
                     {renderDato('Plazos de crédito', `Clientes ${currentCompany.plazoCreditoClientesDias ?? '—'} días · Proveedores ${currentCompany.plazoCreditoProveedoresDias ?? '—'} días`)}
                   </dl>
                 </CardBody>
-              </Card>
+              </CollapsibleSection>
             </Seccion>
 
             {/* Marca */}
             <Seccion id="marca">
-              <Card>
-                <CardHeader
-                  title={tituloConIcono(<Palette />, 'Marca')}
-                  description="Logo y colores que identifican a la clínica en la aplicación."
-                  actions={
-                    <Button variant="outline" size="sm" onClick={() => setIsEditing(true)} icon={<Settings className="w-4 h-4" aria-hidden="true" />}>
-                      Editar marca
-                    </Button>
-                  }
-                />
+              <CollapsibleSection
+                {...plegable('marca')}
+                icon={<Palette />}
+                title="Marca"
+                description="Logo y colores que identifican a la clínica en la aplicación."
+                actions={
+                  <Button variant="outline" size="sm" onClick={() => setIsEditing(true)} icon={<Settings className="w-4 h-4" aria-hidden="true" />}>
+                    Editar marca
+                  </Button>
+                }
+              >
                 <CardBody>
                   <dl className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-4">
                     {renderDato('Logo', currentCompany.logoUrl
@@ -1182,17 +1277,18 @@ export default function CompanySettings({
                     ))}
                   </dl>
                 </CardBody>
-              </Card>
+              </CollapsibleSection>
             </Seccion>
 
             {/* Horarios (solo Administrador) */}
             {esAdmin && (
               <Seccion id="horarios">
-                <Card>
-                  <CardHeader
-                    title={tituloConIcono(<Clock />, 'Horarios')}
-                    description="Se usan para calcular los horarios disponibles en la página pública de citas."
-                  />
+                <CollapsibleSection
+                  {...plegable('horarios')}
+                  icon={<Clock />}
+                  title="Horarios"
+                  description="Atención y citas a domicilio; se usan para las horas disponibles en la página pública de citas."
+                >
                   <CardBody className="space-y-8">
                     <div className="space-y-3">
                       <div>
@@ -1326,18 +1422,19 @@ export default function CompanySettings({
                       Guardar horarios
                     </Button>
                   </CardFooter>
-                </Card>
+                </CollapsibleSection>
               </Seccion>
             )}
 
             {/* Servicios (solo Administrador) */}
             {esAdmin && (
               <Seccion id="servicios">
-                <Card>
-                  <CardHeader
-                    title={tituloConIcono(<Receipt />, 'Servicios y tarifas')}
-                    description={`Precio e IVA por servicio prestado. Si dejas el IVA en blanco, se usa el ${currentCompany.ivaPorDefecto}% por defecto de la empresa.`}
-                    actions={!isServicioFormOpen ? (
+                <CollapsibleSection
+                  {...plegable('servicios')}
+                  icon={<Receipt />}
+                  title="Servicios y tarifas"
+                  description={`Precio e IVA por servicio prestado. Si dejas el IVA en blanco, se usa el ${currentCompany.ivaPorDefecto}% por defecto de la empresa.`}
+                  actions={!isServicioFormOpen ? (
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 w-full [&>*]:w-full sm:[&>*]:w-auto">
                         {currentCompany.perfilCompania !== 'Spa' && currentCompany.perfilCompania !== 'Legal' && (
                           <Button variant="outline" size="sm" onClick={handleCargarServiciosDefecto} loading={cargandoServiciosDefecto}>
@@ -1349,7 +1446,7 @@ export default function CompanySettings({
                         </Button>
                       </div>
                     ) : undefined}
-                  />
+                >
                   <CardBody className="space-y-5">
                     {mensajeServiciosDefecto && (
                       <p className="text-sm text-fg-muted bg-surface-muted rounded-control px-3 py-2" role="status">{mensajeServiciosDefecto}</p>
@@ -1594,23 +1691,24 @@ export default function CompanySettings({
                       </ul>
                     )}
                   </CardBody>
-                </Card>
+                </CollapsibleSection>
               </Seccion>
             )}
 
             {/* Usuarios (solo Administrador) */}
             {esAdmin && (
               <Seccion id="usuarios">
-                <Card>
-                  <CardHeader
-                    title={tituloConIcono(<UsersIcon />, 'Usuarios y colaboradores')}
-                    description={`${activeUserCount} de ${currentCompany.maxUsuarios} usuarios activos permitidos por tu plan.`}
-                    actions={!isAddingUser ? (
-                      <Button size="sm" onClick={() => setIsAddingUser(true)} disabled={userLimitReached} icon={<UserPlus className="w-4 h-4" aria-hidden="true" />}>
-                        Nuevo colaborador
-                      </Button>
-                    ) : undefined}
-                  />
+                <CollapsibleSection
+                  {...plegable('usuarios')}
+                  icon={<UsersIcon />}
+                  title="Usuarios y colaboradores"
+                  description={`${activeUserCount} de ${currentCompany.maxUsuarios} usuarios activos permitidos por tu plan.`}
+                  actions={!isAddingUser ? (
+                    <Button size="sm" onClick={() => setIsAddingUser(true)} disabled={userLimitReached} icon={<UserPlus className="w-4 h-4" aria-hidden="true" />}>
+                      Nuevo colaborador
+                    </Button>
+                  ) : undefined}
+                >
                   <CardBody className="space-y-5">
                     {userLimitReached && !isAddingUser && (
                       <div className="p-3 rounded-control bg-warning-soft border border-warning/25 text-warning text-sm flex items-start gap-2">
@@ -1688,19 +1786,20 @@ export default function CompanySettings({
                       ))}
                     </ul>
                   </CardBody>
-                </Card>
+                </CollapsibleSection>
               </Seccion>
             )}
 
             {/* Correo SMTP */}
             <Seccion id="smtp">
               <form onSubmit={handleSaveSmtp}>
-                <Card>
-                  <CardHeader
-                    title={tituloConIcono(<Mail />, 'Parámetros SMTP y alertas por correo')}
-                    description="Configura las credenciales de correo de la clínica para enviar recordatorios y confirmaciones automáticas de citas."
-                    actions={badgeAccion(<Badge tone={smtpActivo ? 'success' : 'neutral'}>{smtpActivo ? 'Activo' : 'Apagado'}</Badge>)}
-                  />
+                <CollapsibleSection
+                  {...plegable('smtp')}
+                  icon={<Mail />}
+                  title="Parámetros SMTP y alertas por correo"
+                  description="Configura las credenciales de correo de la clínica para enviar recordatorios y confirmaciones automáticas de citas."
+                  badge={<Badge tone={smtpActivo ? 'success' : 'neutral'}>{smtpActivo ? 'Activo' : 'Apagado'}</Badge>}
+                >
                   <CardBody className="space-y-5">
                     <label className="flex items-center justify-between gap-4 bg-surface-muted/60 p-4 rounded-control cursor-pointer">
                       <span className="min-w-0">
@@ -1811,35 +1910,51 @@ export default function CompanySettings({
                       {textoAdaptable('Guardar', 'Guardar configuración SMTP')}
                     </Button>
                   </CardFooter>
-                </Card>
+                </CollapsibleSection>
               </form>
             </Seccion>
 
-            {/* Correo entrante */}
+            {/* Correo entrante (la sección decide sola si tiene cambios sin guardar) */}
             <Seccion id="correo-entrante">
-              <CorreoEntranteSettings themeColor={currentCompany.colorPrimario} />
+              <CorreoEntranteSettings
+                themeColor={currentCompany.colorPrimario}
+                plegable={{
+                  id: `${SECCION_PREFIJO}correo-entrante-plegable`,
+                  open: seccionesAbiertas.includes('correo-entrante'),
+                  onOpenChange: (abierta: boolean) => cambiarSeccionAbierta('correo-entrante', abierta),
+                  onLockedToggle: avisarSeccionBloqueada
+                }}
+              />
             </Seccion>
 
             {/* Hacienda — solo Administrador (el servidor también lo exige): credenciales, certificado
                 y ambiente deciden qué se declara a Hacienda. */}
             <Seccion id="hacienda">
               {!esAdmin ? (
-                <Card>
-                  <CardBody>
+                <CollapsibleSection
+                  {...plegable('hacienda')}
+                  icon={<ShieldCheck />}
+                  title="Firma digital Hacienda (facturación electrónica)"
+                  description="Solo un usuario Administrador puede ver y cambiar esta configuración."
+                >
+                  <CardBody className="space-y-4">
+                    {avisoPlataformaSinComprobantes}
                     <p className="text-sm text-fg-muted">
                       La configuración de Hacienda (credenciales ATV, firma digital y ambiente) solo la puede ver y cambiar un usuario Administrador.
                     </p>
                   </CardBody>
-                </Card>
+                </CollapsibleSection>
               ) : (
                 <form onSubmit={handleSaveHacienda}>
-                  <Card>
-                    <CardHeader
-                      title={tituloConIcono(<ShieldCheck />, 'Firma digital Hacienda (facturación electrónica)')}
-                      description="Certificado criptográfico (.p12) y credenciales ATV para firmar comprobantes electrónicos."
-                      actions={badgeAccion(<Badge tone={haciendaTieneCertificado ? 'success' : 'warning'}>{haciendaTieneCertificado ? 'Certificado cargado' : 'Sin certificado'}</Badge>)}
-                    />
+                  <CollapsibleSection
+                    {...plegable('hacienda')}
+                    icon={<ShieldCheck />}
+                    title="Firma digital Hacienda (facturación electrónica)"
+                    description="Certificado criptográfico (.p12) y credenciales ATV para firmar comprobantes electrónicos."
+                    badge={<Badge tone={haciendaTieneCertificado ? 'success' : 'warning'}>{haciendaTieneCertificado ? 'Certificado cargado' : 'Sin certificado'}</Badge>}
+                  >
                     <CardBody className="space-y-5">
+                      {avisoPlataformaSinComprobantes}
                       {haciendaMensaje && (
                         <div
                           role={haciendaMensaje.tipo === 'error' ? 'alert' : 'status'}
@@ -1970,23 +2085,24 @@ export default function CompanySettings({
                         {haciendaGuardando ? 'Guardando...' : textoAdaptable('Guardar', 'Guardar configuración Hacienda')}
                       </Button>
                     </CardFooter>
-                  </Card>
+                  </CollapsibleSection>
                 </form>
               )}
             </Seccion>
 
             {/* Reservas en línea (lectura; se edita junto con los datos de la empresa) */}
             <Seccion id="reservas">
-              <Card>
-                <CardHeader
-                  title={tituloConIcono(<CalendarCheck />, 'Reservas en línea')}
-                  description="Cómo se confirman las citas que los pacientes reservan desde la página pública."
-                  actions={
-                    <Button variant="outline" size="sm" onClick={() => setIsEditing(true)} icon={<Settings className="w-4 h-4" aria-hidden="true" />}>
-                      Editar
-                    </Button>
-                  }
-                />
+              <CollapsibleSection
+                {...plegable('reservas')}
+                icon={<CalendarCheck />}
+                title="Reservas en línea"
+                description="Cómo se confirman las citas que los pacientes reservan desde la página pública."
+                actions={
+                  <Button variant="outline" size="sm" onClick={() => setIsEditing(true)} icon={<Settings className="w-4 h-4" aria-hidden="true" />}>
+                    Editar
+                  </Button>
+                }
+              >
                 <CardBody>
                   <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
                     {renderDato('Citas en línea', currentCompany.requiereConfirmacionCitas ? 'Requieren confirmación manual' : 'Se auto-confirman')}
@@ -2003,13 +2119,20 @@ export default function CompanySettings({
                     {renderDato('WhatsApp para solicitudes', currentCompany.whatsappReservas || 'No configurado')}
                   </dl>
                 </CardBody>
-              </Card>
+              </CollapsibleSection>
             </Seccion>
 
             {/* Dietas (solo Administrador y perfiles con nutrición) */}
             {esAdmin && muestraDietas && (
               <Seccion id="dietas">
-                <div className="space-y-6">
+                <CollapsibleSection
+                  {...plegable('dietas')}
+                  icon={<Sparkles />}
+                  title="Dietas"
+                  description="Porcentajes de déficit/superávit y plantillas de dieta de los nutricionistas."
+                >
+                {/* Dos bloques propios (porcentajes y plantillas) sobre fondo atenuado dentro de la sección. */}
+                <div className="p-3 sm:p-6 space-y-6 bg-surface-muted/40 rounded-b-card">
                   <Card>
                     <CardHeader
                       title={tituloConIcono(<Sparkles />, 'Porcentajes de déficit/superávit para dietas')}
@@ -2060,6 +2183,7 @@ export default function CompanySettings({
                     themeColor={currentCompany.colorPrimario}
                   />
                 </div>
+                </CollapsibleSection>
               </Seccion>
             )}
           </>

@@ -16,9 +16,9 @@ import {
   serializeSessionCookie,
   generateNumericPassword,
   SESSION_MAX_AGE_SECONDS,
-  SAAS_ADMIN_COMPANY_ID,
   type SessionPayload
 } from "./server/auth";
+import { idCompaniaPlataforma, establecerIdCompaniaPlataforma, idPlataformaDesdeParametros, esCompaniaPlataforma, CLAVE_ID_COMPANIA_PLATAFORMA, MENSAJE_PLATAFORMA_SIN_COMPROBANTES } from "./server/companiaPlataforma";
 import { crearCacheUsuarios, decidirAccesoContador, sesionDesdeUsuario, type UsuarioVigente } from "./server/accesoContador";
 import { politicaDesdeParametros, validarNuevaContrasena, crearLimiteIntentos } from "./server/contrasena";
 import { obtenerCertificadoHttps } from "./server/httpsCert";
@@ -1150,8 +1150,9 @@ function construirReporteD101(anio: number, company: Company, facturasAnio: any[
   };
 }
 
-// Ensure database setup starts asynchronously
-setupDatabase();
+// Ensure database setup starts asynchronously (startServer espera esta promesa solo para cargar
+// los parámetros del sistema en cuanto la BD está lista; no la bloquea).
+const baseDeDatosLista = setupDatabase();
 
 async function startServer() {
   const app = express();
@@ -1227,6 +1228,9 @@ async function startServer() {
   // Resuelve la sesión una sola vez por petición /api: token válido + usuario vigente en la base.
   // getSession() devuelve el resultado (rol e idCompania de la BASE, no del token).
   app.use("/api", async (req, res, next) => {
+    // Mantiene al día el id de la empresa de plataforma (parametros_sistema, caché de 60 s) antes
+    // de cualquier isSaasAdmin()/esCompaniaPlataforma() de la petición. No lanza errores.
+    await leerParametrosSistema();
     const token = readCookie(req.headers.cookie, "cc_session");
     const payload = token ? verifySessionToken(token) : null;
     (req as any).sesionResuelta = true;
@@ -1310,7 +1314,6 @@ async function startServer() {
     }
     next();
   });
-
   function sessionOf(req: express.Request): SessionPayload {
     return (req as any).session as SessionPayload;
   }
@@ -1326,6 +1329,15 @@ async function startServer() {
     // El calendarioToken es una credencial (suscripción ICS): solo lo ve su dueño en /api/mi-calendario.
     const { contrasena, calendarioToken, ...safeUser } = u;
     return safeUser;
+  }
+
+  // Banderas para el navegador (login y GET /api/me): el id de la empresa de plataforma no se
+  // calcula en el cliente, sale de parametros_sistema aquí en el servidor.
+  function banderasPlataforma(u: Pick<SessionPayload, "idCompania" | "rol">): { esSaasAdmin: boolean; esCompaniaPlataforma: boolean } {
+    return {
+      esSaasAdmin: isSaasAdmin({ userId: 0, idCompania: Number(u.idCompania), rol: u.rol }),
+      esCompaniaPlataforma: esCompaniaPlataforma(u.idCompania)
+    };
   }
 
   app.post("/api/login", async (req, res) => {
@@ -1377,7 +1389,7 @@ async function startServer() {
       const token = createSessionToken({ userId: user.id, idCompania: user.idCompania, rol: user.rol, sv: Number(user.sesionVersion) || 0 });
       res.setHeader("Set-Cookie", serializeSessionCookie(token, SESSION_MAX_AGE_SECONDS));
 
-      res.json({ user: sanitizeUser(user), company });
+      res.json({ user: sanitizeUser(user), company, ...banderasPlataforma(user) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1483,11 +1495,11 @@ async function startServer() {
         return res.json(respuestaGenerica);
       }
 
-      // El correo se envía SIEMPRE a través del SMTP de la empresa 7 (la empresa de la
-      // plataforma) — no del SMTP de la empresa del usuario, que en la práctica casi nunca
+      // El correo se envía SIEMPRE a través del SMTP de la empresa de plataforma (id en
+      // parametros_sistema) — no del SMTP de la empresa del usuario, que en la práctica casi nunca
       // está configurado por cada clínica. `company` (la empresa real del usuario) se sigue
       // usando para el nombre que aparece en el correo, solo cambia el transporte SMTP.
-      const SMTP_COMPANIA_PLATAFORMA = 7;
+      const SMTP_COMPANIA_PLATAFORMA = idCompaniaPlataforma();
       const company = await fetchCompanyById(user.idCompania);
       let smtpConfig: CompaniaSmtpConfig | undefined;
       if (dbConnected && pool) {
@@ -1548,13 +1560,22 @@ async function startServer() {
     if (!user || user.activo === false) return res.status(401).json({ error: "No autenticado." });
     const company = await fetchCompanyById(session.idCompania);
 
-    res.json({ user: sanitizeUser(user), company });
+    res.json({ user: sanitizeUser(user), company, ...banderasPlataforma(session) });
   });
 
   // --- Parámetros del sistema (tabla parametros_sistema; caché de 60 s) ---
   let cacheParametros: { filas: Array<{ clave: string; valor: string }>; expira: number } | null = null;
-  async function leerParametrosSistema(): Promise<Array<{ clave: string; valor: string }>> {
-    if (cacheParametros && cacheParametros.expira > Date.now()) return cacheParametros.filas;
+  // Se lee en cada petición /api: al vencer la caché, las peticiones simultáneas comparten una sola consulta.
+  let lecturaParametrosEnCurso: Promise<Array<{ clave: string; valor: string }>> | null = null;
+  function leerParametrosSistema(): Promise<Array<{ clave: string; valor: string }>> {
+    if (cacheParametros && cacheParametros.expira > Date.now()) return Promise.resolve(cacheParametros.filas);
+    if (!lecturaParametrosEnCurso) {
+      lecturaParametrosEnCurso = leerParametrosSistemaDeBd().finally(() => { lecturaParametrosEnCurso = null; });
+    }
+    return lecturaParametrosEnCurso;
+  }
+
+  async function leerParametrosSistemaDeBd(): Promise<Array<{ clave: string; valor: string }>> {
     let filas: Array<{ clave: string; valor: string }> = [];
     if (dbConnected && pool) {
       try {
@@ -1567,10 +1588,36 @@ async function startServer() {
         console.warn("[Parametros] No se pudieron leer parametros_sistema:", err?.code || err?.message);
         return cacheParametros?.filas ?? [];
       }
+      aplicarIdCompaniaPlataforma(filas);
     }
     cacheParametros = { filas, expira: Date.now() + 60_000 };
     return filas;
   }
+
+  // Id de la empresa de plataforma: se aplica en cada lectura buena de parametros_sistema. Si el
+  // parámetro falta o es inválido se conserva el vigente (al arrancar, el valor de arranque de
+  // server/companiaPlataforma.ts) y se avisa una sola vez en el registro.
+  let avisoIdPlataformaFaltante = false;
+  function aplicarIdCompaniaPlataforma(filas: Array<{ clave: string; valor: string }>) {
+    const id = idPlataformaDesdeParametros(filas);
+    if (id === null) {
+      if (!avisoIdPlataformaFaltante) {
+        console.warn(`[Parametros] Falta o es inválido «${CLAVE_ID_COMPANIA_PLATAFORMA}»; se usa la empresa de plataforma ${idCompaniaPlataforma()}. Aplique docs/sql/2026-11-26-saas-compania-plataforma.sql.`);
+        avisoIdPlataformaFaltante = true;
+      }
+      return;
+    }
+    avisoIdPlataformaFaltante = false;
+    if (id !== idCompaniaPlataforma()) console.log(`[Parametros] Empresa de plataforma: ${id}.`);
+    establecerIdCompaniaPlataforma(id);
+  }
+
+  // Carga inicial en cuanto la BD está lista (antes de eso pudo quedar en caché la lista vacía
+  // del modo sin conexión, por eso se descarta la caché).
+  baseDeDatosLista.then(() => {
+    cacheParametros = null;
+    return leerParametrosSistema();
+  }).catch(err => console.error("[Parametros] Carga inicial fallida:", err));
 
   /** Valor de un parámetro del sistema (undefined si no existe), con la misma caché de 60 s. */
   async function parametro(clave: string): Promise<string | undefined> {
@@ -1780,17 +1827,18 @@ async function startServer() {
           );
         }
 
-        // Avisar a los administradores de la empresa 7 (la plataforma) de que
+        // Avisar a los administradores de la empresa de plataforma de que
         // hay una empresa nueva pendiente de revisión/aprobación. Best-effort:
         // un fallo de correo no debe impedir que la empresa quede creada.
-        if (c.id !== 7) {
+        const idPlataforma = idCompaniaPlataforma();
+        if (c.id !== idPlataforma) {
           try {
-            const [platRows] = await pool.query("SELECT * FROM companias WHERE id_compania = 7");
+            const [platRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idPlataforma]);
             const platformCompany: Company | undefined = (platRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
-            const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = 7");
+            const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [idPlataforma]);
             const smtpRow = (smtpRows as any[])[0];
             const platformSmtp: CompaniaSmtpConfig | undefined = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
-            const [adminRows] = await pool.query("SELECT * FROM usuarios WHERE idCompania = 7 AND rol = 'Administrador'");
+            const [adminRows] = await pool.query("SELECT * FROM usuarios WHERE idCompania = ? AND rol = 'Administrador'", [idPlataforma]);
             const adminUsers = (adminRows as any[]).map(row => normalizeRow(row, 'id_usuario'));
 
             if (platformCompany && platformSmtp && platformSmtp.activo && adminUsers.length > 0) {
@@ -1859,17 +1907,18 @@ async function startServer() {
           let platformSmtp: CompaniaSmtpConfig | undefined;
           let adminUser: any;
 
+          const idPlataforma = idCompaniaPlataforma();
           if (dbConnected && pool) {
-            const [platRows] = await pool.query("SELECT * FROM companias WHERE id_compania = 7");
+            const [platRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [idPlataforma]);
             platformCompany = (platRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
-            const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = 7");
+            const [smtpRows] = await pool.query("SELECT * FROM compania_smtp_config WHERE idCompania = ?", [idPlataforma]);
             const smtpRow = (smtpRows as any[])[0];
             platformSmtp = smtpRow ? { ...smtpRow, activo: !!smtpRow.activo } : undefined;
             const [userRows] = await pool.query("SELECT * FROM usuarios WHERE idCompania = ? AND rol = 'Administrador' LIMIT 1", [companyId]);
             adminUser = (userRows as any[]).map(row => normalizeRow(row, 'id_usuario'))[0];
           } else {
-            platformCompany = localCompanies.find(c => c.id === 7);
-            platformSmtp = localSmtpConfigs.find(s => s.idCompania === 7);
+            platformCompany = localCompanies.find(c => c.id === idPlataforma);
+            platformSmtp = localSmtpConfigs.find(s => s.idCompania === idPlataforma);
             adminUser = localUsers.find(u => u.idCompania === companyId && u.rol === "Administrador");
           }
 
@@ -2827,6 +2876,8 @@ async function startServer() {
     try {
       const ahora = new Date();
       for (const caso of await fetchCasos({ soloAbiertos: true })) {
+        // La empresa de plataforma no es una clínica: nunca se le envían recordatorios.
+        if (esCompaniaPlataforma(caso.idCompania)) continue;
         const pendientes = caso.documentos.filter(d => d.estado === 'PENDIENTE').length;
         if (!tocaRecordatorio(caso, pendientes, ahora)) continue;
         try {
@@ -3554,6 +3605,9 @@ async function startServer() {
       if (session.rol !== "Administrador" && !isSaasAdmin(session)) {
         return res.status(403).json({ error: "Solo un usuario Administrador puede firmar con el certificado de la empresa." });
       }
+      if (esCompaniaPlataforma(idCompania)) {
+        return res.status(403).json({ error: MENSAJE_PLATAFORMA_SIN_COMPROBANTES });
+      }
       const xml = req.body.xml;
       if (!xml || typeof xml !== 'string') {
         return res.status(400).json({ error: "Falta el XML a firmar." });
@@ -4054,6 +4108,12 @@ async function startServer() {
       // procesarse contra Hacienda.
       const omitirEnvioHacienda = modoPrueba || credenciales?.ambiente === "PRUEBAS_LOCAL";
 
+      // La empresa de plataforma puede tener datos de demostración, pero nunca emite ante Hacienda
+      // (un comprobante de prueba que no sale del servidor sí se permite).
+      if (!omitirEnvioHacienda && esCompaniaPlataforma(idCompania)) {
+        return res.status(403).json({ error: MENSAJE_PLATAFORMA_SIN_COMPROBANTES });
+      }
+
       if (!omitirEnvioHacienda) {
         if (!cert) {
           return res.status(400).json({ error: "Configure primero la Firma Digital de Hacienda (certificado .p12) en Configuración de Empresa." });
@@ -4502,6 +4562,10 @@ async function startServer() {
       if (!canAccessCompany(session, factura.idCompania)) {
         return res.status(403).json({ error: "No autorizado." });
       }
+      // Anular emite una Nota de Crédito ante Hacienda: la empresa de plataforma no emite comprobantes.
+      if (esCompaniaPlataforma(factura.idCompania)) {
+        return res.status(403).json({ error: MENSAJE_PLATAFORMA_SIN_COMPROBANTES });
+      }
       if (factura.tipoDocumento && factura.tipoDocumento !== "01") {
         return res.status(400).json({ error: "Solo se pueden anular Facturas Electrónicas (no Notas de Crédito/Débito)." });
       }
@@ -4668,6 +4732,8 @@ async function startServer() {
     const factura = await cargarFacturaPorId(parseInt(req.params.id));
     if (!factura) { res.status(404).json({ error: "Factura no encontrada." }); return null; }
     if (!canAccessCompany(sessionOf(req), factura.idCompania)) { res.status(403).json({ error: "No autorizado." }); return null; }
+    // Las Notas siempre se transmiten a Hacienda: la empresa de plataforma no emite comprobantes.
+    if (esCompaniaPlataforma(factura.idCompania)) { res.status(403).json({ error: MENSAJE_PLATAFORMA_SIN_COMPROBANTES }); return null; }
     if (factura.tipoDocumento !== "01") { res.status(400).json({ error: "Solo se pueden ajustar Facturas Electrónicas (no otras Notas de Crédito/Débito)." }); return null; }
     // Solo ACEPTADA (antes también ENVIADA): una Nota referencia la factura por su clave, y si
     // Hacienda todavía no la aceptó —o termina rechazándola— rechaza también la Nota.
@@ -6775,7 +6841,10 @@ async function startServer() {
         `SELECT i.* FROM compania_imap_config i JOIN companias c ON c.id_compania = i.idCompania
           WHERE i.activo = 1 AND c.estadoSaas = 'ACTIVA'
             AND i.imapHost <> '' AND i.imapUsuario <> '' AND i.imapPasswordCifrado IS NOT NULL
-            AND i.verificadaEn IS NOT NULL`
+            AND i.verificadaEn IS NOT NULL
+            AND i.idCompania <> ?`,
+        // La empresa de plataforma no es una clínica: su buzón (si lo tuviera) no se revisa.
+        [idCompaniaPlataforma()]
       );
       for (const row of filas as any[]) {
         try {
@@ -7177,6 +7246,8 @@ async function startServer() {
   };
   const ERROR_SOLO_WHATSAPP = "Esta clínica recibe solicitudes de este tipo de cita por WhatsApp.";
   const ERROR_SERVICIO_INCOMPATIBLE = "El servicio elegido no está disponible para este tipo de cita.";
+  // La empresa de plataforma responde igual que una clínica que no existe.
+  const ERROR_CLINICA_NO_ENCONTRADA = "Clínica no encontrada.";
 
   app.get("/api/public/config", (req, res) => {
     res.json({ googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || "" });
@@ -7186,10 +7257,11 @@ async function startServer() {
     try {
       let companies: Company[];
       if (dbConnected && pool) {
-        const [rows] = await pool.query("SELECT * FROM companias WHERE estadoSaas = 'ACTIVA'");
+        // La empresa de plataforma (administración SaaS) nunca se ofrece como clínica.
+        const [rows] = await pool.query("SELECT * FROM companias WHERE estadoSaas = 'ACTIVA' AND id_compania <> ?", [idCompaniaPlataforma()]);
         companies = (rows as any[]).map(row => normalizeRow(row, 'id_compania'));
       } else {
-        companies = localCompanies.filter(c => c.estadoSaas === "ACTIVA");
+        companies = localCompanies.filter(c => c.estadoSaas === "ACTIVA" && !esCompaniaPlataforma(c.id));
       }
       res.json(companies.map(c => ({
         id: c.id,
@@ -7212,6 +7284,7 @@ async function startServer() {
   app.get("/api/public/clinicas/:id/profesionales", async (req, res) => {
     try {
       const idCompania = parseInt(req.params.id);
+      if (esCompaniaPlataforma(idCompania)) return res.status(404).json({ error: ERROR_CLINICA_NO_ENCONTRADA });
       let users: any[];
       if (dbConnected && pool) {
         const [rows] = await pool.query("SELECT * FROM usuarios WHERE idCompania = ? AND activo = 1 AND rol <> 'Contador'", [idCompania]);
@@ -7233,6 +7306,7 @@ async function startServer() {
   app.get("/api/public/clinicas/:id/servicios", async (req, res) => {
     try {
       const idCompania = parseInt(req.params.id);
+      if (esCompaniaPlataforma(idCompania)) return res.status(404).json({ error: ERROR_CLINICA_NO_ENCONTRADA });
       let servicios: Servicio[];
       if (dbConnected && pool) {
         const [rows] = await pool.query("SELECT * FROM servicios WHERE idCompania = ? AND activo = 1", [idCompania]);
@@ -7264,6 +7338,7 @@ async function startServer() {
         return res.status(429).json({ error: "Demasiadas consultas. Intente de nuevo en unos minutos." });
       }
       const idCompania = parseInt(req.params.id);
+      if (esCompaniaPlataforma(idCompania)) return res.status(404).json({ error: ERROR_CLINICA_NO_ENCONTRADA });
       const identificacion = req.params.identificacion;
       let patient: Patient | undefined;
       if (dbConnected && pool) {
@@ -7293,7 +7368,8 @@ async function startServer() {
       if (dbConnected && pool) {
         const [userRows] = await pool.query("SELECT * FROM usuarios WHERE id_usuario = ?", [idUsuario]);
         user = (userRows as any[]).map(row => normalizeRow(row, 'id_usuario'))[0];
-        if (!user) return res.status(404).json({ error: "Profesional no encontrado." });
+        // Los usuarios de la empresa de plataforma no atienden citas.
+        if (!user || esCompaniaPlataforma(user.idCompania)) return res.status(404).json({ error: "Profesional no encontrado." });
 
         const [companyRows] = await pool.query("SELECT * FROM companias WHERE id_compania = ?", [user.idCompania]);
         company = (companyRows as any[]).map(row => normalizeRow(row, 'id_compania'))[0];
@@ -7309,7 +7385,7 @@ async function startServer() {
         bloqueosDelDia = blockRows as any[];
       } else {
         user = localUsers.find(u => u.id === idUsuario);
-        if (!user) return res.status(404).json({ error: "Profesional no encontrado." });
+        if (!user || esCompaniaPlataforma(user.idCompania)) return res.status(404).json({ error: "Profesional no encontrado." });
         company = localCompanies.find(c => c.id === user.idCompania);
         citasDelDia = localCitas.filter(c => c.idUsuarioNutricionista === idUsuario && c.fechaHora.startsWith(fecha) && c.estadoCita !== "CANCELADA");
         bloqueosDelDia = localCalendarBlocks.filter(b => b.idUsuarioNutricionista === idUsuario);
@@ -7356,6 +7432,7 @@ async function startServer() {
     try {
       const body = req.body;
       const idCompania = parseInt(body.idCompania);
+      if (esCompaniaPlataforma(idCompania)) return res.status(404).json({ error: ERROR_CLINICA_NO_ENCONTRADA });
       const idUsuarioNutricionista = parseInt(body.idUsuarioNutricionista);
       const tipoVisita: "CONSULTORIO" | "DOMICILIO" = body.tipoVisita === "DOMICILIO" ? "DOMICILIO" : "CONSULTORIO";
       if (!esFechaHoraValida(body.fechaHora)) return res.status(400).json({ error: "Fecha y hora de la cita inválidas." });

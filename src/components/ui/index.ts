@@ -6,6 +6,7 @@ export { Textarea, type TextareaProps } from './Textarea';
 export { Select, type SelectProps } from './Select';
 export { Field, type FieldProps, type FieldControlProps } from './Field';
 export { Card, CardHeader, CardBody, CardFooter, type CardHeaderProps } from './Card';
+export { CollapsibleSection, type CollapsibleSectionProps } from './CollapsibleSection';
 export { Badge, type BadgeProps, type BadgeTone } from './Badge';
 export { Avatar, getInitials, type AvatarProps, type AvatarSize } from './Avatar';
 export { EmptyState, type EmptyStateProps } from './EmptyState';

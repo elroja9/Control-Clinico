@@ -8,8 +8,14 @@ import { Input } from './ui/Input';
 import { Select } from './ui/Select';
 import { SegmentedControl } from './ui/SegmentedControl';
 
+/** Banderas que el servidor calcula para la sesión (login y GET /api/me). */
+export interface BanderasSesion {
+  esSaasAdmin: boolean;
+  esCompaniaPlataforma: boolean;
+}
+
 interface LoginViewProps {
-  onLoginSuccess: (user: User, company: Company | undefined) => void;
+  onLoginSuccess: (user: User, company: Company | undefined, banderas: BanderasSesion) => void;
   onRegisterCompany: (company: Company, adminUser: User) => Promise<{ ok: boolean; error?: string }>;
 }
 
@@ -88,7 +94,7 @@ export default function LoginView({
         setLoginError(data.error || 'No se pudo iniciar sesión.');
         return;
       }
-      onLoginSuccess(data.user, data.company);
+      onLoginSuccess(data.user, data.company, { esSaasAdmin: !!data.esSaasAdmin, esCompaniaPlataforma: !!data.esCompaniaPlataforma });
     } catch (err: any) {
       setLoginError('No se pudo conectar con el servidor. Intente de nuevo.');
     } finally {

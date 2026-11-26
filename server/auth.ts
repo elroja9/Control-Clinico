@@ -4,6 +4,7 @@
 
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import { esCompaniaPlataforma } from "./companiaPlataforma";
 
 export const SESSION_COOKIE = "cc_session";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
@@ -83,10 +84,10 @@ export function generateNumericPassword(digits: number): string {
   return crypto.randomInt(min, max + 1).toString();
 }
 
-export const SAAS_ADMIN_COMPANY_ID = 7;
-
+/** Administrador de la empresa de plataforma (id configurable en parametros_sistema, ver
+ * server/companiaPlataforma.ts). Síncrono: usa el id vigente ya cargado en memoria. */
 export function isSaasAdmin(session: SessionPayload | null | undefined): boolean {
-  return !!session && session.idCompania === SAAS_ADMIN_COMPANY_ID && session.rol === "Administrador";
+  return !!session && esCompaniaPlataforma(session.idCompania) && session.rol === "Administrador";
 }
 
 /** Lee el valor de una cookie puntual del header `Cookie` de la petición. */
