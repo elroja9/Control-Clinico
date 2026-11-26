@@ -1443,7 +1443,7 @@ export default function App() {
   );
 
   return (
-    <div style={brandStyle} className="min-h-screen bg-bg text-fg font-sans antialiased flex print:bg-white print:p-0">
+    <div style={brandStyle} className="min-h-screen min-h-dvh bg-bg text-fg font-sans antialiased flex print:bg-white print:p-0">
 
       <a
         href="#contenido"
@@ -1454,7 +1454,7 @@ export default function App() {
       </a>
 
       {/* Barra lateral fija (escritorio) */}
-      <aside className="hidden lg:flex flex-col w-64 shrink-0 sticky top-0 h-screen bg-surface border-r border-border print:hidden">
+      <aside className="hidden lg:flex flex-col w-64 shrink-0 sticky top-0 h-screen h-dvh bg-surface border-r border-border print:hidden">
         {renderSidebarContent(false)}
       </aside>
 
@@ -1468,7 +1468,7 @@ export default function App() {
           />
           <div
             id="menu-movil"
-            className="lg:hidden fixed inset-y-0 left-0 z-50 w-80 max-w-[85vw] flex flex-col bg-surface border-r border-border shadow-lg animate-fade-in print:hidden"
+            className="lg:hidden fixed inset-y-0 left-0 z-50 w-80 max-w-[85vw] flex flex-col bg-surface border-r border-border shadow-lg animate-fade-in pt-safe pb-safe print:hidden"
           >
             {renderSidebarContent(true)}
           </div>
@@ -1477,7 +1477,7 @@ export default function App() {
 
       <div className="flex-1 min-w-0 flex flex-col">
 
-      <header className="sticky top-0 z-30 h-16 px-4 sm:px-6 lg:px-8 bg-surface/80 backdrop-blur-md border-b border-border flex items-center justify-between gap-3 print:hidden">
+      <header className="sticky top-0 z-30 h-[calc(4rem+env(safe-area-inset-top,0px))] pt-safe px-4 sm:px-6 lg:px-8 bg-surface/80 backdrop-blur-md border-b border-border flex items-center justify-between gap-3 print:hidden">
         <div className="flex items-center gap-3 min-w-0">
           {/* Botón de menú para móvil/tablet */}
           <button
@@ -1579,7 +1579,7 @@ export default function App() {
         />
       ) : (
         // Main Workspace Dashboard & Tab Controls
-        <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-6 sm:px-6 lg:px-8 lg:py-8 print:hidden">
+        <div className="flex-1 max-w-7xl mx-auto w-full px-4 pt-6 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:px-6 lg:px-8 lg:py-8 print:hidden">
 
           {/* Core Content Region */}
           <main className="space-y-6 min-w-0">
@@ -2242,7 +2242,7 @@ export default function App() {
       </div>
 
       {/* Persistent Page Footer */}
-      <footer className="mt-auto py-5 px-4 bg-surface text-fg-subtle text-xs text-center border-t border-border shrink-0 print:hidden">
+      <footer className="mt-auto pt-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] px-4 bg-surface text-fg-subtle text-xs text-center border-t border-border shrink-0 print:hidden">
         <p className="font-semibold text-fg-muted">TuanisBooking © {new Date().getFullYear()}</p>
         <p className="text-xs mt-1">Plataforma clínica para el control integral de pacientes con facturación digital autorizada</p>
       </footer>

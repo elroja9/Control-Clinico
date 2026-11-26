@@ -39,10 +39,11 @@ export function PageHeader({ title, description, actions, breadcrumbs }: PageHea
       )}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-title font-semibold tracking-tight text-fg">{title}</h2>
+          <h2 className="text-title font-semibold tracking-tight text-fg text-balance">{title}</h2>
           {description && <p className="mt-1 text-body text-fg-muted">{description}</p>}
         </div>
-        {actions && <div className="flex flex-wrap items-center gap-2 shrink-0">{actions}</div>}
+        {/* En móvil las acciones se reparten el ancho en vez de quedar apiñadas a la izquierda. */}
+        {actions && <div className="flex flex-wrap items-center gap-2 sm:shrink-0 [&>*]:flex-1 sm:[&>*]:flex-none">{actions}</div>}
       </div>
     </div>
   );

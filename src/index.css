@@ -117,6 +117,35 @@
 
   body {
     text-rendering: optimizeLegibility;
+    /* Red de seguridad: un elemento que se pase del ancho no debe permitir arrastrar toda la
+       página de lado en el iPhone. No sustituye arreglar el desborde de origen. */
+    overflow-x: clip;
+  }
+
+  button,
+  [role="button"],
+  a {
+    touch-action: manipulation;
+  }
+
+  /* iOS dibuja fecha/hora con un ancho interno propio y recorta el texto ("08:00 a.") cuando
+     la columna es estrecha: se quita la apariencia nativa y se alinea el valor a la izquierda. */
+  input[type="time"],
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="month"] {
+    -webkit-appearance: none;
+    appearance: none;
+    min-width: 0;
+  }
+  input::-webkit-date-and-time-value {
+    text-align: left;
+    margin: 0;
+  }
+  input[type="time"]::-webkit-calendar-picker-indicator,
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    margin-left: 2px;
+    padding: 0;
   }
 
   /* Tailwind v4 deja los botones con cursor por defecto: se restaura la mano en todo lo clicable */
@@ -171,6 +200,27 @@
 
 .scrollbar-thin {
   scrollbar-width: thin;
+}
+
+/* Zonas seguras de iOS (Dynamic Island, barra de inicio). index.html usa viewport-fit=cover,
+   así que en la PWA instalada el contenido llega a los bordes: estas utilidades devuelven el
+   espacio. Uso: header sticky -> pt-safe; barras/botones fijos abajo -> pb-safe / bottom-safe;
+   contenedores a ancho completo -> px-safe. */
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@utility px-safe {
+  padding-left: max(1rem, env(safe-area-inset-left, 0px));
+  padding-right: max(1rem, env(safe-area-inset-right, 0px));
+}
+@utility bottom-safe {
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+@utility mb-safe {
+  margin-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 @media (prefers-reduced-motion: reduce) {

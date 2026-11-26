@@ -6,7 +6,7 @@ import { COSTA_RICA_PROVINCIAS } from '../data/costaRicaLocations';
 import { Plus, Check, Settings, Sparkles, Building, Mail, ShieldCheck, Upload, AlertCircle, Users as UsersIcon, UserPlus, Power, Clock, Receipt, Edit, X, Palette, CalendarCheck } from 'lucide-react';
 import { notify, confirmar } from './ui/Feedback';
 import { baseDesdePrecioConIva, formatearColones, ivaEfectivo, precioConIva } from '../utils/precios';
-import { Avatar, Badge, Button, Card, CardBody, CardFooter, CardHeader, EmptyState, Field, IconButton, Input, Select, Textarea, cx } from './ui';
+import { Avatar, Badge, Button, Card, CardBody, CardFooter, CardHeader, EmptyState, Field, IconButton, Input, SegmentedControl, Select, Textarea, cx } from './ui';
 import { buttonSizes, buttonVariants } from './ui/Button';
 
 // MySQL devuelve tinyint (0/1) y en memoria boolean; sin dato = reserva automática activa.
@@ -1179,32 +1179,34 @@ export default function CompanySettings({
                         <h4 className="text-sm font-semibold text-fg">Horario de atención</h4>
                         <p className="text-xs text-fg-muted">Horario general de la clínica.</p>
                       </div>
-                      <div className="space-y-2">
+                      {/* Una lista con divisores (no una tarjeta por día) y las horas en una grilla
+                          de 2 columnas flexibles: en el iPhone las horas ya no se cortan ("08:00 a."). */}
+                      <div className="divide-y divide-border border border-border rounded-control bg-surface">
                         {(Object.keys(diasLabel) as Array<keyof HorarioAtencion>).map(dia => {
                           const cerrado = horario[dia].abre == null;
                           return (
-                            <div key={dia} className="flex flex-wrap items-center gap-x-4 gap-y-2 p-3 border border-border rounded-control bg-surface">
-                              <span className="w-24 text-sm font-semibold text-fg">{diasLabel[dia]}</span>
-                              <label className="inline-flex items-center gap-2 min-h-10 text-sm text-fg-muted">
+                            <div key={dia} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2.5">
+                              <span className="flex-1 sm:flex-none sm:w-24 text-sm font-semibold text-fg">{diasLabel[dia]}</span>
+                              <label className="inline-flex items-center gap-2 min-h-11 text-sm text-fg-muted sm:order-last">
                                 <input type="checkbox" checked={cerrado} onChange={(e) => handleToggleCerrado(dia, e.target.checked)} className={cajaCheck.replace('mt-0.5 ', '')} />
                                 Cerrado
                               </label>
                               {!cerrado && (
-                                <div className="flex items-center gap-2">
+                                <div className="w-full sm:w-auto grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:grid-cols-[8.5rem_auto_8.5rem] items-center gap-2">
                                   <Input
                                     type="time"
                                     aria-label={`${diasLabel[dia]}: hora de apertura`}
                                     value={horario[dia].abre || ''}
                                     onChange={(e) => handleCambiarDia(dia, 'abre', e.target.value)}
-                                    wrapperClassName="w-32"
+                                    className="px-2.5!"
                                   />
-                                  <span className="text-sm text-fg-muted">a</span>
+                                  <span className="text-sm text-fg-muted" aria-hidden="true">–</span>
                                   <Input
                                     type="time"
                                     aria-label={`${diasLabel[dia]}: hora de cierre`}
                                     value={horario[dia].cierra || ''}
                                     onChange={(e) => handleCambiarDia(dia, 'cierra', e.target.value)}
-                                    wrapperClassName="w-32"
+                                    className="px-2.5!"
                                   />
                                 </div>
                               )}
@@ -1233,35 +1235,35 @@ export default function CompanySettings({
                             </Button>
                           </div>
 
-                          <div className="space-y-2">
+                          <div className="divide-y divide-border border border-border rounded-control bg-surface">
                             {DIAS_ORDEN.map(dia => {
                               const tramos = horarioDom[dia];
                               const error = erroresDomicilio[dia];
                               return (
                                 <div
                                   key={dia}
-                                  className={cx('p-3 bg-surface border rounded-control space-y-2', error ? 'border-danger' : 'border-border')}
+                                  className={cx('px-3 py-2.5 space-y-2', error && 'bg-danger-soft/40')}
                                 >
                                   <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
                                     <span className="sm:w-24 sm:pt-2.5 text-sm font-semibold text-fg">{diasLabel[dia]}</span>
                                     <div className="flex-1 space-y-2">
                                       {tramos.length === 0 && <p className="sm:pt-2.5 text-sm text-fg-muted">Sin atención a domicilio</p>}
                                       {tramos.map((t, i) => (
-                                        <div key={i} className="flex items-center gap-2">
+                                        <div key={i} className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] sm:grid-cols-[8.5rem_auto_8.5rem_auto] items-center gap-2">
                                           <Input
                                             type="time"
                                             value={t.abre}
                                             aria-label={`${diasLabel[dia]} tramo ${i + 1}: abre`}
                                             onChange={(e) => handleCambiarTramo(dia, i, 'abre', e.target.value)}
-                                            wrapperClassName="w-32"
+                                            className="px-2.5!"
                                           />
-                                          <span className="text-sm text-fg-muted">a</span>
+                                          <span className="text-sm text-fg-muted" aria-hidden="true">–</span>
                                           <Input
                                             type="time"
                                             value={t.cierra}
                                             aria-label={`${diasLabel[dia]} tramo ${i + 1}: cierra`}
                                             onChange={(e) => handleCambiarTramo(dia, i, 'cierra', e.target.value)}
-                                            wrapperClassName="w-32"
+                                            className="px-2.5!"
                                           />
                                           <IconButton
                                             label={`Quitar tramo ${i + 1} de ${diasLabel[dia]}`}
@@ -1316,7 +1318,7 @@ export default function CompanySettings({
                     title={tituloConIcono(<Receipt />, 'Servicios y tarifas')}
                     description={`Precio e IVA por servicio prestado. Si dejas el IVA en blanco, se usa el ${currentCompany.ivaPorDefecto}% por defecto de la empresa.`}
                     actions={!isServicioFormOpen ? (
-                      <div className="flex flex-wrap items-center justify-end gap-2">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 w-full [&>*]:w-full sm:[&>*]:w-auto">
                         {currentCompany.perfilCompania !== 'Spa' && currentCompany.perfilCompania !== 'Legal' && (
                           <Button variant="outline" size="sm" onClick={handleCargarServiciosDefecto} loading={cargandoServiciosDefecto}>
                             {cargandoServiciosDefecto ? 'Cargando...' : 'Cargar servicios por defecto'}
@@ -1334,28 +1336,25 @@ export default function CompanySettings({
                     )}
 
                     {isServicioFormOpen && (
-                      <form onSubmit={handleSubmitServicio} className="p-4 sm:p-5 bg-surface-muted/50 border border-border rounded-card space-y-5">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            aria-pressed={servicioTipo === 'SERVICIO'}
-                            onClick={() => { setServicioTipo('SERVICIO'); if (servicioUnidadMedida === 'Unid') setServicioUnidadMedida('Sp'); }}
-                            className={segmento(servicioTipo === 'SERVICIO')}
-                          >
-                            Servicio (sesión/cita)
-                          </button>
-                          <button
-                            type="button"
-                            aria-pressed={servicioTipo === 'ARTICULO'}
-                            onClick={() => { setServicioTipo('ARTICULO'); setServicioUnidadMedida('Unid'); }}
-                            className={segmento(servicioTipo === 'ARTICULO')}
-                          >
-                            Artículo (con existencias)
-                          </button>
-                        </div>
+                      <form onSubmit={handleSubmitServicio} className="-mx-4 sm:mx-0 px-4 py-5 sm:p-5 bg-surface-muted/50 border-y sm:border border-border sm:rounded-card space-y-5">
+                        <SegmentedControl
+                          ariaLabel="Tipo"
+                          value={servicioTipo}
+                          onChange={(v: 'SERVICIO' | 'ARTICULO') => {
+                            // Mismos efectos que los botones anteriores: la unidad acompaña al tipo.
+                            setServicioTipo(v);
+                            if (v === 'ARTICULO') setServicioUnidadMedida('Unid');
+                            else if (servicioUnidadMedida === 'Unid') setServicioUnidadMedida('Sp');
+                          }}
+                          options={[
+                            { value: 'SERVICIO', label: 'Servicio (sesión/cita)' },
+                            { value: 'ARTICULO', label: 'Artículo (con existencias)' }
+                          ]}
+                        />
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                          <Field label={`Nombre ${servicioTipo === 'ARTICULO' ? 'del artículo' : 'del servicio'}`} required className="sm:col-span-2 lg:col-span-4">
+                        {/* 2 columnas también en el iPhone: precios, IVA y duración caben lado a lado. */}
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+                          <Field label={`Nombre ${servicioTipo === 'ARTICULO' ? 'del artículo' : 'del servicio'}`} required className="col-span-2 lg:col-span-4">
                             <Input
                               type="text"
                               value={servicioNombre}
@@ -1366,10 +1365,10 @@ export default function CompanySettings({
                           <Field label="Precio sin IVA (₡)" required>
                             <Input type="number" min="0" step="any" inputMode="decimal" value={servicioPrecio} onChange={(e) => handlePrecioBaseChange(e.target.value)} />
                           </Field>
-                          <Field label="Precio con IVA (precio final) (₡)">
+                          <Field label="Precio con IVA (₡)" hint="Precio final al cliente">
                             <Input type="number" min="0" step="any" inputMode="decimal" value={servicioPrecioConIva} onChange={(e) => handlePrecioConIvaChange(e.target.value)} />
                           </Field>
-                          <Field label="% IVA (vacío = por defecto)">
+                          <Field label="% IVA" hint="Vacío = el de la empresa">
                             <Input type="number" min="0" max="100" step="0.01" inputMode="decimal" value={servicioIva} onChange={(e) => handleServicioIvaChange(e.target.value)} placeholder={`${currentCompany.ivaPorDefecto}%`} />
                           </Field>
                           {servicioTipo === 'SERVICIO' && (
@@ -1380,26 +1379,23 @@ export default function CompanySettings({
                         </div>
 
                         {servicioTipo === 'SERVICIO' && (
-                          <div role="group" aria-labelledby="companyset-modalidad-label">
+                          <div>
                             <span id="companyset-modalidad-label" className="block text-xs font-semibold text-fg mb-1.5">Disponible en</span>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                              {([['CONSULTORIO', 'Consultorio'], ['DOMICILIO', 'A domicilio'], ['AMBOS', 'Ambos']] as const).map(([valor, etiqueta]) => (
-                                <button
-                                  key={valor}
-                                  type="button"
-                                  onClick={() => setServicioModalidad(valor)}
-                                  aria-pressed={servicioModalidad === valor}
-                                  className={segmento(servicioModalidad === valor)}
-                                >
-                                  {etiqueta}
-                                </button>
-                              ))}
-                            </div>
+                            <SegmentedControl
+                              ariaLabelledBy="companyset-modalidad-label"
+                              value={servicioModalidad}
+                              onChange={(v: 'CONSULTORIO' | 'DOMICILIO' | 'AMBOS') => setServicioModalidad(v)}
+                              options={[
+                                { value: 'CONSULTORIO', label: 'Consultorio' },
+                                { value: 'DOMICILIO', label: 'A domicilio' },
+                                { value: 'AMBOS', label: 'Ambos' }
+                              ]}
+                            />
                           </div>
                         )}
 
                         {servicioTipo === 'ARTICULO' && (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-5 border-t border-border">
+                          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 pt-5 border-t border-border">
                             <Field
                               label={servicioEditId != null ? 'Existencia actual' : 'Existencia inicial'}
                               hint={servicioEditId != null ? 'Use "Ajustar Stock" en la lista para cambiarla.' : undefined}
@@ -1418,9 +1414,9 @@ export default function CompanySettings({
                           </div>
                         )}
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-5 border-t border-border">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 pt-5 border-t border-border">
                           <Field
-                            label="Código CABYS (obligatorio para facturar)"
+                            label="Código CABYS"
                             required
                             hint={
                               (servicioCabys && !/^\d{13}$/.test(servicioCabys.trim())) || buscandoCabys ? (
@@ -1430,7 +1426,7 @@ export default function CompanySettings({
                                   )}
                                   {buscandoCabys && <span className="block">Buscando...</span>}
                                 </>
-                              ) : undefined
+                              ) : 'Obligatorio para facturar: 13 dígitos, o busque por nombre.'
                             }
                           >
                             {(p) => (
@@ -1440,19 +1436,22 @@ export default function CompanySettings({
                                   type="text"
                                   value={servicioCabys}
                                   onChange={(e) => { setServicioCabys(e.target.value); buscarCabys(e.target.value); }}
-                                  placeholder="Digite el código de 13 dígitos o busque por nombre..."
+                                  placeholder="Código o nombre del servicio"
                                 />
                                 {cabysResultados.length > 0 && (
-                                  <div className="absolute z-10 mt-1 w-full max-h-56 overflow-y-auto bg-surface border border-border rounded-control shadow-lg">
-                                    {cabysResultados.map(r => (
+                                  <div className="absolute z-20 mt-1 w-full max-h-[min(18rem,50vh)] overflow-y-auto overscroll-contain bg-surface border border-border rounded-control shadow-lg">
+                                    {cabysResultados.map((r: any) => (
                                       <button
                                         type="button"
                                         key={r.codigo}
                                         onClick={() => { setServicioCabys(r.codigo); setCabysResultados([]); }}
-                                        className="w-full min-h-11 text-left px-3.5 py-2 text-sm hover:bg-surface-muted border-b border-border last:border-b-0"
+                                        className="w-full min-h-12 text-left px-3.5 py-2.5 text-sm hover:bg-surface-muted border-b border-border last:border-b-0"
                                       >
-                                        <span className="font-mono text-xs text-fg-muted block">{r.codigo}</span>
-                                        <span className="text-fg">{r.descripcion}</span>
+                                        <span className="flex items-center gap-2 mb-0.5">
+                                          <span className="font-mono text-xs text-fg-muted">{r.codigo}</span>
+                                          {r.impuesto != null && <Badge tone="neutral">IVA {r.impuesto}%</Badge>}
+                                        </span>
+                                        <span className="block text-fg break-words">{r.descripcion}</span>
                                       </button>
                                     ))}
                                   </div>
@@ -1480,8 +1479,10 @@ export default function CompanySettings({
                           </Field>
                         </div>
 
-                        <div className="flex gap-2 justify-end">
-                          <Button variant="ghost" onClick={() => setIsServicioFormOpen(false)}>
+                        {/* En móvil las acciones quedan fijas abajo (sobre la barra de inicio de iOS)
+                            para no tener que bajar hasta el final del formulario. */}
+                        <div className="sticky bottom-0 z-10 -mx-4 sm:mx-0 px-4 sm:px-0 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] sm:pb-0 bg-surface-muted/95 sm:bg-transparent backdrop-blur-sm sm:backdrop-blur-none border-t border-border sm:border-0 flex gap-2 sm:justify-end [&>*]:flex-1 sm:[&>*]:flex-none">
+                          <Button variant="outline" onClick={() => setIsServicioFormOpen(false)}>
                             Cancelar
                           </Button>
                           <Button type="submit">

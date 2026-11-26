@@ -14,3 +14,4 @@ export { PageHeader, type PageHeaderProps, type Breadcrumb } from './PageHeader'
 export { StatCard, type StatCardProps } from './StatCard';
 export { Tabs, type TabsProps, type TabItem } from './Tabs';
 export { FeedbackHost, notify, confirmar, dismissToast, type ConfirmOptions } from './Feedback';
+export { SegmentedControl, type SegmentedControlProps, type SegmentedOption } from './SegmentedControl';
